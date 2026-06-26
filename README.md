@@ -1,9 +1,17 @@
 # OpenRA
 
+> **AI agents: start here**
+>
+> Before making changes, read [`AI_INDEX.md`](./AI_INDEX.md), then [`AGENTS.md`](./AGENTS.md).
+> The generic first-session prompt is in [`.ai/START_HERE.md`](./.ai/START_HERE.md).
+>
+> These files summarize the repository architecture, commands, conventions, risks, and recommended reading order for a fresh AI session.
+> They are vendor-neutral and intended for any high-end AI coding agent.
+
 A Libre/Free Real Time Strategy game engine supporting early Westwood classics.
 
 * Website: [https://www.openra.net](https://www.openra.net)
-* Chat: [#openra on Libera](ircs://irc.libera.chat:6697/openra) ([web](https://web.libera.chat/#openra)) or [Discord](https://discord.openra.net) ![Discord Badge](https://discordapp.com/api/guilds/153649279762694144/widget.png)
+* Chat: [#openra on Libera](https://web.libera.chat/#openra) or [Discord](https://discord.openra.net)
 * Repository: [https://github.com/OpenRA/OpenRA](https://github.com/OpenRA/OpenRA) ![Continuous Integration](https://github.com/OpenRA/OpenRA/workflows/Continuous%20Integration/badge.svg)
 
 Please read the [FAQ](https://github.com/OpenRA/OpenRA/wiki/FAQ) in our [Wiki](https://github.com/OpenRA/OpenRA/wiki) and report problems at [https://github.com/OpenRA/OpenRA/issues](https://github.com/OpenRA/OpenRA/issues).
