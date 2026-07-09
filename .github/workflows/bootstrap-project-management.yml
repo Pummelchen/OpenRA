@@ -1,0 +1,41 @@
+name: Bootstrap project management
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/bootstrap-project-management.yml
+      - .github/scripts/bootstrap_project_management.py
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run without creating or changing GitHub metadata
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  repository-projects: write
+
+jobs:
+  bootstrap:
+    name: Bootstrap labels, milestones, seed issues, and optional project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bootstrap project management
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PROJECT_TOKEN: ${{ secrets.OPENRA_PROJECT_TOKEN || secrets.GIT_ACCESS_TOKEN || '' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          OPENRA_OWNER: Pummelchen
+          OPENRA_REPO: OpenRA
+          OPENRA_PROJECT_OWNER: Pummelchen
+          OPENRA_PROJECT_TITLE: OpenRA Roadmap
+        run: python3 .github/scripts/bootstrap_project_management.py
