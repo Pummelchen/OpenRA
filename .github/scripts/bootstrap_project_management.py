@@ -333,7 +333,7 @@ def field_map(project: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def ensure_project_fields(project_token: str, project: dict[str, Any]) -> dict[str, dict[str, Any]]:
     fields = field_map(project)
-    mutation = """
+    create_mutation = """
     mutation($input: CreateProjectV2FieldInput!) {
       createProjectV2Field(input: $input) {
         projectV2Field {
@@ -344,20 +344,36 @@ def ensure_project_fields(project_token: str, project: dict[str, Any]) -> dict[s
       }
     }
     """
+    update_mutation = """
+    mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+      updateProjectV2Field(input: {fieldId: $fieldId, singleSelectOptions: $options}) {
+        projectV2Field {
+          __typename
+          ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+        }
+      }
+    }
+    """
     colors = ["GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE"]
     for name, options in PROJECT_SINGLE_SELECT_FIELDS.items():
+        option_inputs = [{"name": option, "color": colors[i % len(colors)], "description": option} for i, option in enumerate(options)]
         if name in fields:
-            SUMMARY["reused"].append(f"project field {name}")
+            existing_options = [option["name"] for option in fields[name].get("options", [])]
+            if existing_options != options:
+                data = graphql(update_mutation, {"fieldId": fields[name]["id"], "options": option_inputs}, project_token)
+                fields[name] = data["updateProjectV2Field"]["projectV2Field"]
+                SUMMARY["created"].append(f"updated project field {name}")
+            else:
+                SUMMARY["reused"].append(f"project field {name}")
             continue
-        option_inputs = [{"name": option, "color": colors[i % len(colors)]} for i, option in enumerate(options)]
-        data = graphql(mutation, {"input": {"projectId": project["id"], "name": name, "dataType": "SINGLE_SELECT", "singleSelectOptions": option_inputs}}, project_token)
+        data = graphql(create_mutation, {"input": {"projectId": project["id"], "name": name, "dataType": "SINGLE_SELECT", "singleSelectOptions": option_inputs}}, project_token)
         fields[name] = data["createProjectV2Field"]["projectV2Field"]
         SUMMARY["created"].append(f"project field {name}")
     for name, data_type in PROJECT_OTHER_FIELDS.items():
         if name in fields:
             SUMMARY["reused"].append(f"project field {name}")
             continue
-        data = graphql(mutation, {"input": {"projectId": project["id"], "name": name, "dataType": data_type}}, project_token)
+        data = graphql(create_mutation, {"input": {"projectId": project["id"], "name": name, "dataType": data_type}}, project_token)
         fields[name] = data["createProjectV2Field"]["projectV2Field"]
         SUMMARY["created"].append(f"project field {name}")
     # Reload so single-select option IDs are complete.
