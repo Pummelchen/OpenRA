@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose new functionality, an enhancement, or an improvement opportunity.
+title: "[Feature]: "
+labels: ["type: feature", "status: needs triage"]
+body:
+  - type: textarea
+    id: problem-opportunity
+    attributes:
+      label: Problem/opportunity
+      description: Describe the user need, opportunity, or pain point this feature addresses.
+      placeholder: What problem should this solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the proposed behavior, implementation direction, or UX.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives considered
+      description: List alternatives, workarounds, or reasons not to use them.
+      placeholder: Include "none" if no alternatives have been considered yet.
+    validations:
+      required: true
+  - type: textarea
+    id: impact-risk
+    attributes:
+      label: Impact/risk
+      description: Describe expected impact, compatibility concerns, gameplay balance risk, migration risk, or maintenance risk.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Define how maintainers can tell this feature is complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
