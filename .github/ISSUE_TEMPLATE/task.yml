@@ -1,0 +1,52 @@
+name: Task
+description: Track implementation, maintenance, planning, or repository work.
+title: "[Task]: "
+labels: ["type: task", "status: needs triage"]
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: State the outcome this task should produce.
+      placeholder: What should be accomplished?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Define what is included and excluded.
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Define verifiable completion criteria.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: List blocking issues, pull requests, decisions, external requirements, or write "none".
+      placeholder: none
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Add implementation notes, context, links, or constraints. Write "none" if not applicable.
+      placeholder: none
+    validations:
+      required: true
