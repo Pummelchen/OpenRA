@@ -66,6 +66,14 @@ The project should maintain these views:
 - `Bugs` — table or board for `type: bug` work, sorted by Priority.
 - `Release View` — table grouped by Milestone or Phase for release readiness.
 
+## Bootstrap automation
+
+The repository includes `.github/workflows/bootstrap-project-management.yml` and `.github/scripts/bootstrap_project_management.py` for idempotent setup.
+
+The workflow creates or reuses repository-level labels, milestones, and starter issues using the workflow `GITHUB_TOKEN`. User-owned GitHub Project v2 setup requires a separate project-capable token stored as a repository secret named `OPENRA_PROJECT_TOKEN` or `GIT_ACCESS_TOKEN`; do not commit tokens to the repository.
+
+Run the workflow manually from **Actions → Bootstrap project management → Run workflow** when metadata needs to be recreated or checked. Use the `dry_run` input to inspect what would happen without making changes.
+
 ## Definition of Ready
 
 An issue is ready when it has:
