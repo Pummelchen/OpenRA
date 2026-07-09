@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a defect, regression, crash, or incorrect behavior.
+title: "[Bug]: "
+labels: ["type: bug", "status: needs triage"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the defect, regression, crash, or incorrect behavior.
+      placeholder: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable reproduction steps.
+      placeholder: |
+        1. Start OpenRA with ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: What actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots-logs
+    attributes:
+      label: Screenshots/logs if relevant
+      description: Attach screenshots, crash logs, replay files, console output, or CI logs when useful.
+      placeholder: Drag files here or paste relevant log excerpts.
+    validations:
+      required: false
+  - type: input
+    id: os-platform
+    attributes:
+      label: OS/platform
+      description: Include OS name, version, architecture, and runtime environment when relevant.
+      placeholder: Windows 11 x64 / Ubuntu 24.04 x64 / macOS 15 arm64
+    validations:
+      required: true
+  - type: input
+    id: openra-version-commit
+    attributes:
+      label: OpenRA version/commit
+      description: Version, tag, branch, or commit SHA where the issue occurs.
+      placeholder: main @ <commit SHA>
+    validations:
+      required: true
+  - type: input
+    id: mod-map-affected
+    attributes:
+      label: Mod or map affected
+      description: Identify the affected mod, map, ruleset, or say "unknown".
+      placeholder: ra / cnc / d2k / ts / custom map name / unknown
+    validations:
+      required: true
