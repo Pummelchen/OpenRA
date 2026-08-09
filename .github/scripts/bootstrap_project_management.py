@@ -685,7 +685,7 @@ def update_project_field(
 
 
 def ensure_project_views(
-    project_token: str, user_database_id: int, project: dict[str, Any]
+    project_token: str, user_owner: str, project: dict[str, Any]
 ) -> None:
     existing = {view["name"] for view in project.get("views", {}).get("nodes", [])}
     for name, layout, filter_query in PROJECT_VIEWS:
@@ -695,7 +695,7 @@ def ensure_project_views(
         try:
             rest(
                 "POST",
-                f"/users/{user_database_id}/projectsV2/{project['number']}/views",
+                f"/users/{user_owner}/projectsV2/{project['number']}/views",
                 project_token,
                 {"name": name, "layout": layout, "filter": filter_query},
             )
@@ -716,7 +716,7 @@ def bootstrap_project(issues: list[dict[str, Any]]) -> None:
         )
         return
     try:
-        user, _, project = ensure_project(PROJECT_TOKEN)
+        _, _, project = ensure_project(PROJECT_TOKEN)
         fields = ensure_project_fields(PROJECT_TOKEN, project)
         issue_by_title = {issue["title"]: issue for issue in issues}
         for spec in SEED_ISSUES:
@@ -737,7 +737,7 @@ def bootstrap_project(issues: list[dict[str, Any]]) -> None:
             SUMMARY["created"].append(f"project item for issue #{issue['number']}")
         # Reload project to include views after field creation.
         _, _, refreshed = load_project(PROJECT_TOKEN)
-        ensure_project_views(PROJECT_TOKEN, int(user["databaseId"]), refreshed)
+        ensure_project_views(PROJECT_TOKEN, PROJECT_OWNER, refreshed)
     except ApiError as exc:
         SUMMARY["failed"].append(f"project setup: {exc}")
 
