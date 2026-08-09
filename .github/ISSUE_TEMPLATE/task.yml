@@ -50,3 +50,34 @@ body:
       placeholder: none
     validations:
       required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this task?
+      options:
+        - critical
+        - high
+        - medium
+        - low
+      default: 2
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which area does this task affect?
+      options:
+        - gameplay
+        - engine
+        - ui
+        - modding
+        - maps
+        - docs
+        - ci
+        - build
+        - unknown
+      default: 8
+    validations:
+      required: true

@@ -18,16 +18,19 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: read
-  repository-projects: write
+
+concurrency:
+  group: bootstrap-project-management
+  cancel-in-progress: true
 
 jobs:
   bootstrap:
     name: Bootstrap labels, milestones, seed issues, and optional project
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Bootstrap project management
         env:

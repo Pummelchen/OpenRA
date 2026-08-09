@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -24,7 +24,9 @@ PROJECT_TITLE = os.getenv("OPENRA_PROJECT_TITLE", "OpenRA Roadmap")
 API_VERSION = os.getenv("GITHUB_API_VERSION", "2022-11-28")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
-REPO_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or os.getenv("GIT_ACCESS_TOKEN")
+REPO_TOKEN = (
+    os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or os.getenv("GIT_ACCESS_TOKEN")
+)
 PROJECT_TOKEN = (
     os.getenv("PROJECT_TOKEN")
     or os.getenv("OPENRA_PROJECT_TOKEN")
@@ -56,11 +58,26 @@ LABELS = [
 ]
 
 MILESTONES = [
-    ("Phase 0 — Triage & Planning", "Classify existing work, define priorities, identify blockers."),
-    ("Phase 1 — Stabilization", "Fix critical bugs, reduce regressions, improve build/test reliability."),
-    ("Phase 2 — Core Improvements", "Engine/gameplay improvements, refactors, and high-priority features."),
-    ("Phase 3 — Content & UX Polish", "Maps, UI, docs, modding polish, usability improvements."),
-    ("Release Candidate", "Final bug fixing, release notes, compatibility checks, packaging."),
+    (
+        "Phase 0 — Triage & Planning",
+        "Classify existing work, define priorities, identify blockers.",
+    ),
+    (
+        "Phase 1 — Stabilization",
+        "Fix critical bugs, reduce regressions, improve build/test reliability.",
+    ),
+    (
+        "Phase 2 — Core Improvements",
+        "Engine/gameplay improvements, refactors, and high-priority features.",
+    ),
+    (
+        "Phase 3 — Content & UX Polish",
+        "Maps, UI, docs, modding polish, usability improvements.",
+    ),
+    (
+        "Release Candidate",
+        "Final bug fixing, release notes, compatibility checks, packaging.",
+    ),
     ("Backlog", "Valid work that is not yet assigned to a release phase."),
 ]
 
@@ -78,7 +95,16 @@ Audit the current OpenRA fork state.
 - [ ] Identify high-risk areas.
 - [ ] Produce next recommended issues.
 """,
-        "project": {"Status": "Ready", "Priority": "High", "Type": "Task", "Phase": "Phase 0 — Triage & Planning", "Area": "Unknown", "Risk": "Medium", "Estimate": 3, "Target Release": "Phase 0 — Triage & Planning"},
+        "project": {
+            "Status": "Ready",
+            "Priority": "High",
+            "Type": "Task",
+            "Phase": "Phase 0 — Triage & Planning",
+            "Area": "Unknown",
+            "Risk": "Medium",
+            "Estimate": 3,
+            "Target Release": "Phase 0 — Triage & Planning",
+        },
     },
     {
         "title": "Set up repository project workflow",
@@ -91,11 +117,26 @@ Set up the repository project workflow.
 - [ ] Labels, milestones, project fields, and views are configured.
 - [ ] CONTRIBUTING or project workflow docs explain how to use issues/milestones/projects.
 """,
-        "project": {"Status": "Ready", "Priority": "High", "Type": "Task", "Phase": "Phase 0 — Triage & Planning", "Area": "Docs", "Risk": "Low", "Estimate": 2, "Target Release": "Phase 0 — Triage & Planning"},
+        "project": {
+            "Status": "Ready",
+            "Priority": "High",
+            "Type": "Task",
+            "Phase": "Phase 0 — Triage & Planning",
+            "Area": "Docs",
+            "Risk": "Low",
+            "Estimate": 2,
+            "Target Release": "Phase 0 — Triage & Planning",
+        },
     },
     {
         "title": "Verify current build and test status",
-        "labels": ["type: bug", "status: needs triage", "priority: high", "area: build", "area: ci"],
+        "labels": [
+            "type: bug",
+            "status: needs triage",
+            "priority: high",
+            "area: build",
+            "area: ci",
+        ],
         "milestone": "Phase 1 — Stabilization",
         "body": """## Objective
 Verify current build and test status.
@@ -105,7 +146,16 @@ Verify current build and test status.
 - [ ] Failing build/test steps are captured.
 - [ ] Follow-up issues are created for failures.
 """,
-        "project": {"Status": "Needs Triage", "Priority": "High", "Type": "Bug", "Phase": "Phase 1 — Stabilization", "Area": "Build", "Risk": "High", "Estimate": 3, "Target Release": "Phase 1 — Stabilization"},
+        "project": {
+            "Status": "Needs Triage",
+            "Priority": "High",
+            "Type": "Bug",
+            "Phase": "Phase 1 — Stabilization",
+            "Area": "Build",
+            "Risk": "High",
+            "Estimate": 3,
+            "Target Release": "Phase 1 — Stabilization",
+        },
     },
     {
         "title": "Define roadmap for fork-specific improvements",
@@ -119,16 +169,50 @@ Define roadmap for fork-specific improvements.
 - [ ] Each accepted improvement has its own issue.
 - [ ] Roadmap view reflects priorities and target phase.
 """,
-        "project": {"Status": "Needs Triage", "Priority": "Medium", "Type": "Feature", "Phase": "Phase 2 — Core Improvements", "Area": "Unknown", "Risk": "Medium", "Estimate": 5, "Target Release": "Phase 2 — Core Improvements"},
+        "project": {
+            "Status": "Needs Triage",
+            "Priority": "Medium",
+            "Type": "Feature",
+            "Phase": "Phase 2 — Core Improvements",
+            "Area": "Unknown",
+            "Risk": "Medium",
+            "Estimate": 5,
+            "Target Release": "Phase 2 — Core Improvements",
+        },
     },
 ]
 
 PROJECT_SINGLE_SELECT_FIELDS = {
-    "Status": ["Inbox", "Needs Triage", "Ready", "In Progress", "In Review", "Blocked", "Done"],
+    "Status": [
+        "Inbox",
+        "Needs Triage",
+        "Ready",
+        "In Progress",
+        "In Review",
+        "Blocked",
+        "Done",
+    ],
     "Priority": ["Critical", "High", "Medium", "Low"],
     "Type": ["Task", "Feature", "Bug"],
-    "Phase": ["Phase 0 — Triage & Planning", "Phase 1 — Stabilization", "Phase 2 — Core Improvements", "Phase 3 — Content & UX Polish", "Release Candidate", "Backlog"],
-    "Area": ["Gameplay", "Engine", "UI", "Modding", "Maps", "Docs", "CI", "Build", "Unknown"],
+    "Phase": [
+        "Phase 0 — Triage & Planning",
+        "Phase 1 — Stabilization",
+        "Phase 2 — Core Improvements",
+        "Phase 3 — Content & UX Polish",
+        "Release Candidate",
+        "Backlog",
+    ],
+    "Area": [
+        "Gameplay",
+        "Engine",
+        "UI",
+        "Modding",
+        "Maps",
+        "Docs",
+        "CI",
+        "Build",
+        "Unknown",
+    ],
     "Risk": ["High", "Medium", "Low"],
 }
 
@@ -145,10 +229,15 @@ PROJECT_VIEWS = [
     ("Roadmap", "roadmap", ""),
     ("Backlog", "table", "-Status:Done"),
     ("Bugs", "table", 'Type:Bug label:"type: bug"'),
-    ("Release View", "table", '-Phase:Backlog'),
+    ("Release View", "table", "-Phase:Backlog"),
 ]
 
-SUMMARY: dict[str, list[str]] = {"created": [], "reused": [], "skipped": [], "failed": []}
+SUMMARY: dict[str, list[str]] = {
+    "created": [],
+    "reused": [],
+    "skipped": [],
+    "failed": [],
+}
 
 
 class ApiError(RuntimeError):
@@ -162,7 +251,13 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def rest(method: str, path: str, token: str, data: Any = None, ok: tuple[int, ...] = (200, 201, 204, 304)) -> Any:
+def rest(
+    method: str,
+    path: str,
+    token: str,
+    data: Any = None,
+    ok: tuple[int, ...] = (200, 201, 204, 304),
+) -> Any:
     url = path if path.startswith("https://") else f"https://api.github.com{path}"
     headers = {
         "Accept": "application/vnd.github+json",
@@ -178,25 +273,55 @@ def rest(method: str, path: str, token: str, data: Any = None, ok: tuple[int, ..
         log(f"DRY-RUN {method} {url}")
         return {}
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            raw = response.read().decode("utf-8")
-            if response.status not in ok:
-                raise ApiError(response.status, raw)
-            return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
+    delay = 1
+    for attempt in range(3):
         try:
-            payload = json.loads(raw) if raw else {}
-            message = payload.get("message", raw)
-        except json.JSONDecodeError:
-            payload = raw
-            message = raw
-        raise ApiError(exc.code, message, payload) from exc
+            with urllib.request.urlopen(req, timeout=30) as response:
+                raw = response.read().decode("utf-8")
+                if response.status not in ok:
+                    raise ApiError(response.status, raw)
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            try:
+                payload = json.loads(raw) if raw else {}
+                message = payload.get("message", raw)
+            except json.JSONDecodeError:
+                payload = raw
+                message = raw
+            if exc.code in (403, 429) or exc.code >= 500:
+                if attempt == 2:
+                    raise ApiError(exc.code, message, payload) from exc
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                wait = (
+                    int(retry_after) if retry_after and retry_after.isdigit() else delay
+                )
+                log(
+                    f"retrying {method} {url} after HTTP {exc.code} (attempt {attempt + 1})"
+                )
+                time.sleep(wait)
+                delay *= 2
+                continue
+            raise ApiError(exc.code, message, payload) from exc
+        except urllib.error.URLError as exc:
+            if method != "GET" or attempt == 2:
+                raise ApiError("network", f"request failed: {exc}") from exc
+            log(f"retrying {method} {url} after network error (attempt {attempt + 1})")
+            time.sleep(delay)
+            delay *= 2
+    raise ApiError("network", f"request failed: {url}")
 
 
 def graphql(query: str, variables: dict[str, Any], token: str) -> dict[str, Any]:
-    payload = rest("POST", "https://api.github.com/graphql", token, {"query": query, "variables": variables}, ok=(200,))
+    if DRY_RUN:
+        raise ApiError("dry-run", "graphql calls are not supported in dry-run mode")
+    payload = rest(
+        "POST",
+        "https://api.github.com/graphql",
+        token,
+        {"query": query, "variables": variables},
+        ok=(200,),
+    )
     if payload.get("errors"):
         raise ApiError("GraphQL", json.dumps(payload["errors"]), payload)
     return payload["data"]
@@ -218,31 +343,61 @@ def paginate(path: str, token: str) -> list[Any]:
 
 
 def ensure_labels() -> None:
-    existing = {label["name"]: label for label in paginate(f"/repos/{FULL_REPO}/labels", REPO_TOKEN)}
+    existing = {
+        label["name"]: label
+        for label in paginate(f"/repos/{FULL_REPO}/labels", REPO_TOKEN)
+    }
     for name, color, description in LABELS:
         if name in existing:
             SUMMARY["reused"].append(f"label {name}")
             continue
-        rest("POST", f"/repos/{FULL_REPO}/labels", REPO_TOKEN, {"name": name, "color": color, "description": description})
+        rest(
+            "POST",
+            f"/repos/{FULL_REPO}/labels",
+            REPO_TOKEN,
+            {"name": name, "color": color, "description": description},
+        )
         SUMMARY["created"].append(f"label {name}")
 
 
+_DRY_RUN_NEXT_ID = 0
+
+
+def _dry_run_id() -> int:
+    """Return a synthetic, monotonically increasing id for dry-run stubs."""
+    global _DRY_RUN_NEXT_ID
+    _DRY_RUN_NEXT_ID += 1
+    return _DRY_RUN_NEXT_ID
+
+
 def ensure_milestones() -> dict[str, int]:
-    existing = {m["title"]: m for m in paginate(f"/repos/{FULL_REPO}/milestones?state=all", REPO_TOKEN)}
+    existing = {
+        m["title"]: m
+        for m in paginate(f"/repos/{FULL_REPO}/milestones?state=all", REPO_TOKEN)
+    }
     for title, description in MILESTONES:
         if title in existing:
             SUMMARY["reused"].append(f"milestone {title}")
             continue
-        created = rest("POST", f"/repos/{FULL_REPO}/milestones", REPO_TOKEN, {"title": title, "description": description, "state": "open"})
+        if DRY_RUN:
+            existing[title] = {"number": _dry_run_id()}
+            SUMMARY["created"].append(f"milestone {title} (dry-run)")
+            continue
+        created = rest(
+            "POST",
+            f"/repos/{FULL_REPO}/milestones",
+            REPO_TOKEN,
+            {"title": title, "description": description, "state": "open"},
+        )
         existing[title] = created
         SUMMARY["created"].append(f"milestone {title}")
     return {title: int(data["number"]) for title, data in existing.items()}
 
 
 def find_issue_by_title(title: str) -> dict[str, Any] | None:
-    q = urllib.parse.quote(f'repo:{FULL_REPO} is:issue in:title "{title}"', safe="")
-    result = rest("GET", f"/search/issues?q={q}", REPO_TOKEN)
-    for item in result.get("items", []):
+    for item in paginate(f"/repos/{FULL_REPO}/issues?state=all", REPO_TOKEN):
+        if item.get("pull_request"):
+            continue
         if item.get("title", "").strip().casefold() == title.casefold():
             return item
     return None
@@ -255,6 +410,16 @@ def ensure_seed_issues(milestone_numbers: dict[str, int]) -> list[dict[str, Any]
         if existing:
             SUMMARY["reused"].append(f"issue #{existing['number']} {spec['title']}")
             issues.append(existing)
+            continue
+        if DRY_RUN:
+            number = _dry_run_id()
+            created = {
+                "number": number,
+                "node_id": f"dry-run-issue-{number}",
+                "title": spec["title"],
+            }
+            SUMMARY["created"].append(f"issue #{number} {spec['title']} (dry-run)")
+            issues.append(created)
             continue
         created = rest(
             "POST",
@@ -272,7 +437,9 @@ def ensure_seed_issues(milestone_numbers: dict[str, int]) -> list[dict[str, Any]
     return issues
 
 
-def load_project(project_token: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def load_project(
+    project_token: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     query = """
     query($login: String!, $repoOwner: String!, $repoName: String!) {
       user(login: $login) {
@@ -288,7 +455,7 @@ def load_project(project_token: str) -> tuple[dict[str, Any], dict[str, Any], di
               nodes {
                 __typename
                 ... on ProjectV2Field { id name dataType }
-                ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+                ... on ProjectV2SingleSelectField { id name dataType options { id name color } }
               }
             }
             views(first: 100) { nodes { id number name layout } }
@@ -298,18 +465,26 @@ def load_project(project_token: str) -> tuple[dict[str, Any], dict[str, Any], di
       repository(owner: $repoOwner, name: $repoName) { id }
     }
     """
-    data = graphql(query, {"login": PROJECT_OWNER, "repoOwner": OWNER, "repoName": REPO}, project_token)
+    data = graphql(
+        query,
+        {"login": PROJECT_OWNER, "repoOwner": OWNER, "repoName": REPO},
+        project_token,
+    )
     user = data.get("user")
     if not user:
         raise ApiError("GraphQL", f"Could not resolve project owner {PROJECT_OWNER}")
     repo = data.get("repository")
     if not repo:
         raise ApiError("GraphQL", f"Could not resolve repository {FULL_REPO}")
-    project = next((p for p in user["projectsV2"]["nodes"] if p["title"] == PROJECT_TITLE), None)
+    project = next(
+        (p for p in user["projectsV2"]["nodes"] if p["title"] == PROJECT_TITLE), None
+    )
     return user, repo, project
 
 
-def ensure_project(project_token: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def ensure_project(
+    project_token: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     user, repo, project = load_project(project_token)
     if project:
         SUMMARY["reused"].append(f"project {PROJECT_TITLE}")
@@ -317,21 +492,29 @@ def ensure_project(project_token: str) -> tuple[dict[str, Any], dict[str, Any], 
     mutation = """
     mutation($ownerId: ID!, $title: String!) {
       createProjectV2(input: {ownerId: $ownerId, title: $title}) {
-        projectV2 { id number title url fields(first: 100) { nodes { __typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } } } views(first: 100) { nodes { id number name layout } } }
+        projectV2 { id number title url fields(first: 100) { nodes { __typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name color } } } } views(first: 100) { nodes { id number name layout } } }
       }
     }
     """
-    data = graphql(mutation, {"ownerId": user["id"], "title": PROJECT_TITLE}, project_token)
+    data = graphql(
+        mutation, {"ownerId": user["id"], "title": PROJECT_TITLE}, project_token
+    )
     project = data["createProjectV2"]["projectV2"]
     SUMMARY["created"].append(f"project {PROJECT_TITLE}")
     return user, repo, project
 
 
 def field_map(project: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {field["name"]: field for field in project["fields"]["nodes"] if field.get("name")}
+    return {
+        field["name"]: field
+        for field in project["fields"]["nodes"]
+        if field.get("name")
+    }
 
 
-def ensure_project_fields(project_token: str, project: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def ensure_project_fields(
+    project_token: str, project: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
     fields = field_map(project)
     create_mutation = """
     mutation($input: CreateProjectV2FieldInput!) {
@@ -349,31 +532,79 @@ def ensure_project_fields(project_token: str, project: dict[str, Any]) -> dict[s
       updateProjectV2Field(input: {fieldId: $fieldId, singleSelectOptions: $options}) {
         projectV2Field {
           __typename
-          ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+          ... on ProjectV2SingleSelectField { id name dataType options { id name color } }
         }
       }
     }
     """
     colors = ["GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE"]
     for name, options in PROJECT_SINGLE_SELECT_FIELDS.items():
-        option_inputs = [{"name": option, "color": colors[i % len(colors)], "description": option} for i, option in enumerate(options)]
+        option_inputs = [
+            {"name": option, "color": colors[i % len(colors)], "description": option}
+            for i, option in enumerate(options)
+        ]
         if name in fields:
-            existing_options = [option["name"] for option in fields[name].get("options", [])]
-            if existing_options != options:
-                data = graphql(update_mutation, {"fieldId": fields[name]["id"], "options": option_inputs}, project_token)
+            existing_options = fields[name].get("options", [])
+            existing_names = [option["name"] for option in existing_options]
+            missing = [option for option in options if option not in existing_names]
+            if missing:
+                merged = [
+                    {
+                        "name": option["name"],
+                        "color": option["color"],
+                        "description": option["name"],
+                    }
+                    for option in existing_options
+                ]
+                merged += [
+                    {
+                        "name": option,
+                        "color": colors[i % len(colors)],
+                        "description": option,
+                    }
+                    for i, option in enumerate(missing)
+                ]
+                data = graphql(
+                    update_mutation,
+                    {"fieldId": fields[name]["id"], "options": merged},
+                    project_token,
+                )
                 fields[name] = data["updateProjectV2Field"]["projectV2Field"]
-                SUMMARY["created"].append(f"updated project field {name}")
+                SUMMARY["created"].append(
+                    f"updated project field {name} (added options: {', '.join(missing)})"
+                )
             else:
                 SUMMARY["reused"].append(f"project field {name}")
             continue
-        data = graphql(create_mutation, {"input": {"projectId": project["id"], "name": name, "dataType": "SINGLE_SELECT", "singleSelectOptions": option_inputs}}, project_token)
+        data = graphql(
+            create_mutation,
+            {
+                "input": {
+                    "projectId": project["id"],
+                    "name": name,
+                    "dataType": "SINGLE_SELECT",
+                    "singleSelectOptions": option_inputs,
+                }
+            },
+            project_token,
+        )
         fields[name] = data["createProjectV2Field"]["projectV2Field"]
         SUMMARY["created"].append(f"project field {name}")
     for name, data_type in PROJECT_OTHER_FIELDS.items():
         if name in fields:
             SUMMARY["reused"].append(f"project field {name}")
             continue
-        data = graphql(create_mutation, {"input": {"projectId": project["id"], "name": name, "dataType": data_type}}, project_token)
+        data = graphql(
+            create_mutation,
+            {
+                "input": {
+                    "projectId": project["id"],
+                    "name": name,
+                    "dataType": data_type,
+                }
+            },
+            project_token,
+        )
         fields[name] = data["createProjectV2Field"]["projectV2Field"]
         SUMMARY["created"].append(f"project field {name}")
     # Reload so single-select option IDs are complete.
@@ -381,14 +612,20 @@ def ensure_project_fields(project_token: str, project: dict[str, Any]) -> dict[s
     return field_map(refreshed)
 
 
-def add_issue_to_project(project_token: str, project_id: str, issue_node_id: str) -> str | None:
+def add_issue_to_project(
+    project_token: str, project_id: str, issue_node_id: str
+) -> str | None:
     mutation = """
     mutation($projectId: ID!, $contentId: ID!) {
       addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) { item { id } }
     }
     """
     try:
-        data = graphql(mutation, {"projectId": project_id, "contentId": issue_node_id}, project_token)
+        data = graphql(
+            mutation,
+            {"projectId": project_id, "contentId": issue_node_id},
+            project_token,
+        )
         return data["addProjectV2ItemById"]["item"]["id"]
     except ApiError as exc:
         if "already" not in str(exc).lower():
@@ -410,13 +647,18 @@ def add_issue_to_project(project_token: str, project_id: str, issue_node_id: str
     return None
 
 
-def update_project_field(project_token: str, project_id: str, item_id: str, field: dict[str, Any], value: Any) -> None:
+def update_project_field(
+    project_token: str, project_id: str, item_id: str, field: dict[str, Any], value: Any
+) -> None:
     if value in (None, ""):
         return
     if field.get("dataType") == "SINGLE_SELECT":
         options = {option["name"]: option["id"] for option in field.get("options", [])}
         option_id = options.get(str(value))
         if not option_id:
+            SUMMARY["skipped"].append(
+                f"project field {field.get('name', '?')}: value {value!r} has no matching option"
+            )
             return
         field_value = {"singleSelectOptionId": option_id}
     elif field.get("dataType") == "NUMBER":
@@ -430,10 +672,21 @@ def update_project_field(project_token: str, project_id: str, item_id: str, fiel
       updateProjectV2ItemFieldValue(input: {projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: $value}) { projectV2Item { id } }
     }
     """
-    graphql(mutation, {"projectId": project_id, "itemId": item_id, "fieldId": field["id"], "value": field_value}, project_token)
+    graphql(
+        mutation,
+        {
+            "projectId": project_id,
+            "itemId": item_id,
+            "fieldId": field["id"],
+            "value": field_value,
+        },
+        project_token,
+    )
 
 
-def ensure_project_views(project_token: str, user_database_id: int, project: dict[str, Any]) -> None:
+def ensure_project_views(
+    project_token: str, user_database_id: int, project: dict[str, Any]
+) -> None:
     existing = {view["name"] for view in project.get("views", {}).get("nodes", [])}
     for name, layout, filter_query in PROJECT_VIEWS:
         if name in existing:
@@ -448,12 +701,19 @@ def ensure_project_views(project_token: str, user_database_id: int, project: dic
             )
             SUMMARY["created"].append(f"project view {name}")
         except ApiError as exc:
-            SUMMARY["skipped"].append(f"project view {name}: {exc}")
+            SUMMARY["failed"].append(f"project view {name}: {exc}")
 
 
 def bootstrap_project(issues: list[dict[str, Any]]) -> None:
     if not PROJECT_TOKEN:
-        SUMMARY["skipped"].append("project setup: no PROJECT_TOKEN/OPENRA_PROJECT_TOKEN/GIT_ACCESS_TOKEN secret provided")
+        SUMMARY["skipped"].append(
+            "project setup: no PROJECT_TOKEN/OPENRA_PROJECT_TOKEN/GIT_ACCESS_TOKEN secret provided"
+        )
+        return
+    if DRY_RUN:
+        log(
+            f"DRY-RUN would create or reuse the {PROJECT_TITLE} project, its fields, items, and views"
+        )
         return
     try:
         user, _, project = ensure_project(PROJECT_TOKEN)
@@ -463,19 +723,23 @@ def bootstrap_project(issues: list[dict[str, Any]]) -> None:
             issue = issue_by_title.get(spec["title"])
             if not issue:
                 continue
-            item_id = add_issue_to_project(PROJECT_TOKEN, project["id"], issue["node_id"])
+            item_id = add_issue_to_project(
+                PROJECT_TOKEN, project["id"], issue["node_id"]
+            )
             if not item_id:
                 continue
             for field_name, value in spec["project"].items():
                 field = fields.get(field_name)
                 if field:
-                    update_project_field(PROJECT_TOKEN, project["id"], item_id, field, value)
+                    update_project_field(
+                        PROJECT_TOKEN, project["id"], item_id, field, value
+                    )
             SUMMARY["created"].append(f"project item for issue #{issue['number']}")
         # Reload project to include views after field creation.
         _, _, refreshed = load_project(PROJECT_TOKEN)
         ensure_project_views(PROJECT_TOKEN, int(user["databaseId"]), refreshed)
     except ApiError as exc:
-        SUMMARY["skipped"].append(f"project setup: {exc}")
+        SUMMARY["failed"].append(f"project setup: {exc}")
 
 
 def main() -> int:
@@ -492,6 +756,8 @@ def main() -> int:
             print(f"\n{section.upper()}:")
             for item in SUMMARY[section]:
                 print(f"- {item}")
+    if SUMMARY["failed"]:
+        print("\nWARNING: some steps failed; review the FAILED section above.")
     return 0
 
 
