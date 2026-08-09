@@ -614,7 +614,22 @@ def ensure_project_fields(
 
 def add_issue_to_project(
     project_token: str, project_id: str, issue_node_id: str
-) -> str | None:
+) -> tuple[str, bool] | None:
+    """Return (item_id, created) for the issue on the project, or None."""
+    query = """
+    query($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          items(first: 100) { nodes { id content { ... on Issue { id } } } }
+        }
+      }
+    }
+    """
+    data = graphql(query, {"projectId": project_id}, project_token)
+    for item in data["node"]["items"]["nodes"]:
+        content = item.get("content") or {}
+        if content.get("id") == issue_node_id:
+            return item["id"], False
     mutation = """
     mutation($projectId: ID!, $contentId: ID!) {
       addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) { item { id } }
@@ -626,24 +641,15 @@ def add_issue_to_project(
             {"projectId": project_id, "contentId": issue_node_id},
             project_token,
         )
-        return data["addProjectV2ItemById"]["item"]["id"]
+        return data["addProjectV2ItemById"]["item"]["id"], True
     except ApiError as exc:
         if "already" not in str(exc).lower():
             raise
-    query = """
-    query($projectId: ID!) {
-      node(id: $projectId) {
-        ... on ProjectV2 {
-          items(first: 100) { nodes { id content { ... on Issue { id title number } } } }
-        }
-      }
-    }
-    """
     data = graphql(query, {"projectId": project_id}, project_token)
     for item in data["node"]["items"]["nodes"]:
         content = item.get("content") or {}
         if content.get("id") == issue_node_id:
-            return item["id"]
+            return item["id"], False
     return None
 
 
@@ -723,18 +729,22 @@ def bootstrap_project(issues: list[dict[str, Any]]) -> None:
             issue = issue_by_title.get(spec["title"])
             if not issue:
                 continue
-            item_id = add_issue_to_project(
+            result = add_issue_to_project(
                 PROJECT_TOKEN, project["id"], issue["node_id"]
             )
-            if not item_id:
+            if not result:
                 continue
+            item_id, item_created = result
+            if item_created:
+                SUMMARY["created"].append(f"project item for issue #{issue['number']}")
+            else:
+                SUMMARY["reused"].append(f"project item for issue #{issue['number']}")
             for field_name, value in spec["project"].items():
                 field = fields.get(field_name)
                 if field:
                     update_project_field(
                         PROJECT_TOKEN, project["id"], item_id, field, value
                     )
-            SUMMARY["created"].append(f"project item for issue #{issue['number']}")
         # Reload project to include views after field creation.
         _, _, refreshed = load_project(PROJECT_TOKEN)
         ensure_project_views(PROJECT_TOKEN, PROJECT_OWNER, refreshed)
