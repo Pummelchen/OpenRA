@@ -65,10 +65,12 @@ Rules:
 - Coordinates are OpenRA map cells. Roles keys must exactly match the player ids in "team".
 
 Reply with ONLY a JSON object of the form:
-{"strategy": "attack|defend|build|turtle", "attack": {"x": 0, "y": 0}, "feint": {"x": 0, "y": 0},
- "counter": {"x": 0, "y": 0}, "roles": {"playerid": "main|escort|naval|defend"},
- "produce": ["unit1", "unit2"], "retreat": false,
- "transport": {"kind": "naval", "to": {"x": 0, "y": 0}}}
+{"posture": "attack|defend|build|turtle", "strategy": "attack|defend|build",
+ "attack": {"x": 0, "y": 0}, "feint": {"x": 0, "y": 0}, "counter": {"x": 0, "y": 0},
+ "roles": {"playerid": "main|escort|naval|defend"}, "produce": ["unit1", "unit2"],
+ "retreat": false, "transport": {"kind": "naval", "to": {"x": 0, "y": 0}},
+ "missions": [{"type": "attack|defend|recon|raid|feint|transport|counterattack|specialops",
+               "x": 0, "y": 0, "priority": 70}]}
 Do not include markdown, comments, or any other text."""
 
 
@@ -143,7 +145,9 @@ def dummy_plan(state: dict) -> dict:
 
     team_ids = [m.get("player") for m in team]
     roles = {team_ids[0]: "main"} if team_ids else {}
+    missions = [{"type": "attack", "x": attack["x"], "y": attack["y"], "priority": 90}] if attack else []
     return {
+        "posture": "attack" if attack else "build",
         "strategy": "attack" if attack else "build",
         "attack": attack,
         "feint": None,
@@ -152,6 +156,7 @@ def dummy_plan(state: dict) -> dict:
         "produce": produce,
         "retreat": retreat,
         "transport": None,
+        "missions": missions,
     }
 
 
@@ -249,6 +254,21 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
     }
     produce = [u for u in plan.get("produce", []) if isinstance(u, str) and u]
 
+    mission_types = {"attack", "defend", "recon", "raid", "feint", "transport", "counterattack", "specialops"}
+    missions = []
+    for m in plan.get("missions", []) or []:
+        if not isinstance(m, dict) or m.get("type") not in mission_types:
+            continue
+        t = target(m.get("target") or m)
+        if t is None:
+            continue
+        missions.append({
+            "type": m["type"],
+            "x": t["x"],
+            "y": t["y"],
+            "priority": int(m.get("priority", 50)) if isinstance(m.get("priority"), (int, float)) else 50,
+        })
+
     transport = plan.get("transport")
     if isinstance(transport, dict) and isinstance(transport.get("to"), dict):
         kind = transport.get("kind") if transport.get("kind") in ("naval", "air") else "naval"
@@ -259,6 +279,7 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
         transport = None
 
     return {
+        "posture": strategy,
         "strategy": strategy,
         "attack": target(plan.get("attack")),
         "feint": target(plan.get("feint")),
@@ -267,11 +288,13 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
         "produce": produce,
         "retreat": bool(plan.get("retreat")),
         "transport": transport,
+        "missions": missions,
     }
 
 
 def empty_team_plan() -> dict:
     return {
+        "posture": "build",
         "strategy": "build",
         "attack": None,
         "feint": None,
@@ -280,6 +303,7 @@ def empty_team_plan() -> dict:
         "produce": [],
         "retreat": False,
         "transport": None,
+        "missions": [],
     }
 
 

@@ -66,6 +66,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			public string Posture { get; set; }
 			public string[] Produce { get; set; }
 			public bool Retreat { get; set; }
+			public LlmMission[] Missions { get; set; }
+		}
+
+		sealed class LlmMission
+		{
+			public string Type { get; set; }
+			public int X { get; set; }
+			public int Y { get; set; }
+			public int Priority { get; set; }
 		}
 
 		readonly CoalitionCommandCenterBotModuleInfo info;
@@ -102,6 +111,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lastBlackboardTick = tick;
 				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify);
+				UpdateOpponentModel();
 			}
 
 			if (tick - lastCommandTick >= info.CommandInterval && blackboard != null)
@@ -170,13 +180,32 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
+			// Enemy models that over-respond to raids make feints more valuable.
 			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
 				&& !missions.Missions.Any(m => m.Type == MissionType.Feint))
 			{
 				var feintTarget = FeintRegionTarget();
 				if (feintTarget != null)
-					EnsureMission(MissionType.Feint, 60, feintTarget, "Divert enemy attention");
+					EnsureMission(MissionType.Feint, blackboard.Opponent.MovesWholeArmyToDefend ? 75 : 60, feintTarget, "Divert enemy attention");
 			}
+
+			// Special operations: if a scarce asset is available and enemy structures are known, insert
+			// it against the least-observed enemy region (lowest static-defense and vision threat).
+			if (!missions.Missions.Any(m => m.Type == MissionType.SpecialOps || m.Type == MissionType.Transport))
+			{
+				var specialTarget = SpecialOpsTarget();
+				if (specialTarget != null)
+					EnsureMission(MissionType.SpecialOps, 70, specialTarget, "Special insertion");
+			}
+
+			// LLM-intended missions override/expand the deterministic set.
+			if (llmIntent?.Missions != null)
+				foreach (var lm in llmIntent.Missions)
+				{
+					var type = ParseMissionType(lm.Type);
+					if (type != null)
+						EnsureMission(type.Value, lm.Priority > 0 ? lm.Priority : 50, new CPos(lm.X, lm.Y), "LLM directive");
+				}
 
 			if (llmIntent?.Retreat == true)
 				EnsureMission(MissionType.Retreat, 100, null, "Withdraw");
@@ -194,9 +223,77 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lastPosture = strategy;
 				blackboard.AddEvent("posture_change", null, strategy);
+				CoalitionTelemetry.Log(world, $"Posture {strategy}; coalition {blackboard.CoalitionArmyStrength:0} vs enemy {blackboard.EnemyArmyStrength:0}");
 			}
 
 			brain?.ApplyTeamPlan(directiveJson);
+		}
+
+		/// <summary>Updates the opponent model from observed enemy composition and deployment patterns.</summary>
+		void UpdateOpponentModel()
+		{
+			var total = blackboard.EnemyIntel.Count;
+			if (total == 0)
+				return;
+
+			blackboard.Opponent.ArmorBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Armor) * 1f / total;
+			blackboard.Opponent.AirBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Air) * 1f / total;
+
+			// If many enemy sightings sit away from their base region, the enemy tends to commit its
+			// whole army to defending - a signal that feints will draw forces away from the main push.
+			blackboard.Opponent.MovesWholeArmyToDefend = blackboard.EnemyRegion >= 0
+				&& blackboard.EnemyIntel.Count(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion) * 2 > total;
+		}
+
+		/// <summary>Selects the least-observed enemy structure position for a special insertion.</summary>
+		CPos? SpecialOpsTarget()
+		{
+			var hasAsset = world.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.SpecialTypes.Contains(a.Info.Name));
+			if (!hasAsset)
+				return null;
+
+			CPos? best = null;
+			var bestThreat = float.MaxValue;
+			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			{
+				var region = blackboard.RegionOf(intel.LastSeenCell);
+				var threat = region.Threats[(int)CoalitionCapability.StaticDefense]
+					+ region.Threats[(int)CoalitionCapability.VisionExposure];
+				if (threat < bestThreat)
+				{
+					bestThreat = threat;
+					best = intel.LastSeenCell;
+				}
+			}
+
+			return best;
+		}
+
+		static MissionType? ParseMissionType(string type)
+		{
+			switch ((type ?? string.Empty).ToLowerInvariant())
+			{
+				case "attack":
+					return MissionType.Attack;
+				case "defend":
+					return MissionType.Defend;
+				case "recon":
+					return MissionType.Recon;
+				case "raid":
+					return MissionType.Raid;
+				case "feint":
+					return MissionType.Feint;
+				case "retreat":
+					return MissionType.Retreat;
+				case "transport":
+					return MissionType.Transport;
+				case "counterattack":
+					return MissionType.Counterattack;
+				case "specialops":
+					return MissionType.SpecialOps;
+				default:
+					return null;
+			}
 		}
 
 		/// <summary>Reuses an active mission of the type (refreshing its target) or creates a new one.</summary>

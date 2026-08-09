@@ -57,6 +57,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// Telemetry.
 		public int FriendlyValueCommitted;
 		public int EnemyValueEngaged;
+		public int FeintBaselineEnemyCount;
 
 		public CoalitionMission(string id, MissionType type, int createdTick, int priority, CPos? target, string objective)
 		{
@@ -120,6 +121,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							if (enemiesThere == 0)
 							{
 								mission.Status = MissionStatus.Succeeded;
+								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} ({mission.Type}) succeeded: target cleared");
+								continue;
+							}
+						}
+
+						// Reconnaissance completes once the enemy position is established.
+						if (mission.Type == MissionType.Recon && blackboard.EnemyRegion >= 0)
+						{
+							mission.Status = MissionStatus.Succeeded;
+							continue;
+						}
+
+						// A feint succeeds when it changes enemy behavior: enemy units redeploy toward it.
+						if (mission.Type == MissionType.Feint && mission.Target != null)
+						{
+							var nearby = blackboard.EnemyIntel.Count(i =>
+								(i.LastSeenCell - mission.Target.Value).LengthSquared <= 20 * 20);
+							if (mission.FeintBaselineEnemyCount == 0)
+								mission.FeintBaselineEnemyCount = nearby;
+							if (nearby > mission.FeintBaselineEnemyCount && nearby >= 2)
+							{
+								mission.EnemyValueEngaged = nearby - mission.FeintBaselineEnemyCount;
+								CoalitionTelemetry.Log(blackboard.World,
+									$"Feint {mission.Id} effective: drew {mission.EnemyValueEngaged} enemy units; FEINT_EFFECTIVENESS={mission.EnemyValueEngaged * 100f / System.Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
+								mission.Status = MissionStatus.Succeeded;
 								continue;
 							}
 						}
@@ -128,6 +154,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						if (enemyStrength > coalitionStrength * 1.8f)
 						{
 							mission.Status = MissionStatus.Aborted;
+							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: coalition outmatched");
 							continue;
 						}
 
