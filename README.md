@@ -1,60 +1,23 @@
-# OpenRA
+# OpenRA — Pummelchen fork
 
-A Libre/Free Real Time Strategy game engine supporting early Westwood classics.
+A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not listed below is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
-* Website: [https://www.openra.net](https://www.openra.net)
-* Chat: [#openra on Libera](https://web.libera.chat/#openra) or [Discord](https://discord.openra.net)
-* Repository: [https://github.com/Pummelchen/OpenRA](https://github.com/Pummelchen/OpenRA) ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
+![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
 
-Please read the [FAQ](https://github.com/OpenRA/OpenRA/wiki/FAQ) in our [Wiki](https://github.com/OpenRA/OpenRA/wiki) and report problems at [https://github.com/Pummelchen/OpenRA/issues](https://github.com/Pummelchen/OpenRA/issues).
+## What this fork adds or changes
 
-Join the [Forum](https://forum.openra.net/) for discussion.
+### Project management
 
-## Play
+- **Issue forms** (`.github/ISSUE_TEMPLATE/`): structured bug report, feature request, and task templates with required priority and area selection.
+- **Workflow documentation** (`.github/PROJECT_WORKFLOW.md`): issue classification, milestones, triage checklist, and Definition of Ready/Done.
+- **Metadata bootstrap** (`.github/scripts/bootstrap_project_management.py` + `.github/workflows/bootstrap-project-management.yml`): idempotently creates and reconciles the repository's issue labels, milestones, and starter issues, and keeps them in sync on `main`.
+- The repository is configured with these labels, milestones, and starter issues (see the issue tracker).
 
-Distributed mods include a reimagining of
+### Maintenance
 
-* Command & Conquer: Red Alert
-* Command & Conquer: Tiberian Dawn
-* Dune 2000
-
-EA has not endorsed and does not support this product.
-
-Check our [Playing the Game](https://github.com/OpenRA/OpenRA/wiki/Playing-the-game) Guide to win multiplayer matches.
-
-## Contribute
-
-* Please read [INSTALL.md](https://github.com/Pummelchen/OpenRA/blob/main/INSTALL.md) and [Compiling](https://github.com/OpenRA/OpenRA/wiki/Compiling) on how to set up an OpenRA development environment.
-* See [Hacking](https://github.com/OpenRA/OpenRA/wiki/Hacking) for a (now very outdated) overview of the engine.
-* Read and follow our [Code of Conduct](https://github.com/Pummelchen/OpenRA/blob/main/CODE_OF_CONDUCT.md).
-* To get your patches merged, please adhere to the [Contributing](https://github.com/Pummelchen/OpenRA/blob/main/CONTRIBUTING.md) guidelines.
-
-## Mapping
-
-* We offer a [Mapping](https://github.com/OpenRA/OpenRA/wiki/Mapping) Tutorial as you can change gameplay drastically with custom rules.
-* For scripted mission have a look at the [Lua API](https://docs.openra.net/en/release/lua/).
-* If you want to share your maps with the community, upload them at the [OpenRA Resource Center](https://resource.openra.net).
-
-## Modding
-
-* Download a copy of the [OpenRA Mod SDK](https://github.com/OpenRA/OpenRAModSDK) to start your own mod.
-* Check the [Modding Guide](https://github.com/OpenRA/OpenRA/wiki/Modding-Guide) to create your own classic RTS.
-* There exists an auto-generated [Trait documentation](https://docs.openra.net/en/latest/release/traits/) to get started with yaml files.
-* Some hints on how to create new OpenRA compatible [Pixelart](https://github.com/OpenRA/OpenRA/wiki/Pixelart).
-* Upload total conversions at [our Mod DB profile](https://www.moddb.com/games/openra/mods).
-
-## Support
-
-* Sponsor a [mirror server](https://github.com/OpenRA/OpenRAWebsiteV3/tree/master/packages) if you have some bandwidth to spare.
-* You can immediately set up a [Dedicated](https://github.com/OpenRA/OpenRA/wiki/Dedicated-Server) Game Server.
+- Removed AI-agent onboarding documentation (`.ai/`, `AGENTS.md`, `AI_INDEX.md`).
+- README and INSTALL links updated to point at this repository.
 
 ## License
-Copyright (c) OpenRA Developers and Contributors
-This file is part of OpenRA, which is free software. It is made
-available to you under the terms of the GNU General Public License
-as published by the Free Software Foundation, either version 3 of
-the License, or (at your option) any later version. For more
-information, see [COPYING](https://github.com/OpenRA/OpenRA/blob/bleed/COPYING).
 
-# Sponsors
-Free code signing on Windows provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+Same as upstream: GPL-3.0-or-later — see [COPYING](https://github.com/Pummelchen/OpenRA/blob/main/COPYING).
