@@ -4,9 +4,9 @@ A Libre/Free Real Time Strategy game engine supporting early Westwood classics.
 
 * Website: [https://www.openra.net](https://www.openra.net)
 * Chat: [#openra on Libera](https://web.libera.chat/#openra) or [Discord](https://discord.openra.net)
-* Repository: [https://github.com/OpenRA/OpenRA](https://github.com/OpenRA/OpenRA) ![Continuous Integration](https://github.com/OpenRA/OpenRA/workflows/Continuous%20Integration/badge.svg)
+* Repository: [https://github.com/Pummelchen/OpenRA](https://github.com/Pummelchen/OpenRA) ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
 
-Please read the [FAQ](https://github.com/OpenRA/OpenRA/wiki/FAQ) in our [Wiki](https://github.com/OpenRA/OpenRA/wiki) and report problems at [https://github.com/OpenRA/OpenRA/issues](https://github.com/OpenRA/OpenRA/issues).
+Please read the [FAQ](https://github.com/OpenRA/OpenRA/wiki/FAQ) in our [Wiki](https://github.com/OpenRA/OpenRA/wiki) and report problems at [https://github.com/Pummelchen/OpenRA/issues](https://github.com/Pummelchen/OpenRA/issues).
 
 Join the [Forum](https://forum.openra.net/) for discussion.
 
@@ -24,10 +24,10 @@ Check our [Playing the Game](https://github.com/OpenRA/OpenRA/wiki/Playing-the-g
 
 ## Contribute
 
-* Please read [INSTALL.md](https://github.com/OpenRA/OpenRA/blob/bleed/INSTALL.md) and [Compiling](https://github.com/OpenRA/OpenRA/wiki/Compiling) on how to set up an OpenRA development environment.
+* Please read [INSTALL.md](https://github.com/Pummelchen/OpenRA/blob/main/INSTALL.md) and [Compiling](https://github.com/OpenRA/OpenRA/wiki/Compiling) on how to set up an OpenRA development environment.
 * See [Hacking](https://github.com/OpenRA/OpenRA/wiki/Hacking) for a (now very outdated) overview of the engine.
-* Read and follow our [Code of Conduct](https://github.com/OpenRA/OpenRA/blob/bleed/CODE_OF_CONDUCT.md).
-* To get your patches merged, please adhere to the [Contributing](https://github.com/OpenRA/OpenRA/blob/bleed/CONTRIBUTING.md) guidelines.
+* Read and follow our [Code of Conduct](https://github.com/Pummelchen/OpenRA/blob/main/CODE_OF_CONDUCT.md).
+* To get your patches merged, please adhere to the [Contributing](https://github.com/Pummelchen/OpenRA/blob/main/CONTRIBUTING.md) guidelines.
 
 ## Mapping
 
