@@ -19,9 +19,10 @@ using OpenRA.Traits;
 
 namespace OpenRA.Mods.Common.Traits
 {
-	[Desc("Consult an external model server for enhanced bot decisions. The bot state is serialized to JSON and posted " +
-		"to the configured URL; the response plan (production, attack target, retreat) is applied on the game thread. " +
-		"Requests are asynchronous with a timeout, so a missing or slow server falls back to the scripted bot brain. " +
+	[Desc("Consult an external model server for enhanced team-wide bot decisions. Every allied bot posts an " +
+		"identical team snapshot (units, buildings, resources, shared enemy intel); the server caches one team plan " +
+		"per consultation round and returns it to every bot, which applies its own share. Requests are asynchronous " +
+		"with a timeout, so a missing or slow server falls back to the scripted bot brain. " +
 		"Note: model-driven orders are not deterministic and will desync multiplayer games and replays - use in " +
 		"single player or with replays disabled.")]
 	[TraitLocation(SystemActors.Player)]
@@ -42,14 +43,21 @@ namespace OpenRA.Mods.Common.Traits
 
 	public sealed class ExternalBrainBotModule : ConditionalTrait<ExternalBrainBotModuleInfo>, IBotTick
 	{
-		sealed class BotState
+		sealed class TeamState
 		{
-			public int Tick { get; set; }
-			public int Cash { get; set; }
-			public int ArmyCount { get; set; }
+			public int Round { get; set; }
+			public string Self { get; set; }
 			public string ScreenshotPath { get; set; }
-			public object[] Own { get; set; }
-			public object[] Enemies { get; set; }
+			public MemberState[] Team { get; set; }
+			public UnitState[] Enemies { get; set; }
+		}
+
+		sealed class MemberState
+		{
+			public string Player { get; set; }
+			public int Cash { get; set; }
+			public UnitState[] Units { get; set; }
+			public UnitState[] Structures { get; set; }
 		}
 
 		sealed class UnitState
@@ -60,24 +68,10 @@ namespace OpenRA.Mods.Common.Traits
 			public int HealthPercent { get; set; }
 		}
 
-		sealed class Plan
-		{
-			public string[] Produce { get; set; }
-			public PlanTarget Attack { get; set; }
-			public bool Retreat { get; set; }
-		}
-
-		sealed class PlanTarget
-		{
-			public int X { get; set; }
-			public int Y { get; set; }
-		}
-
 		readonly ExternalBrainBotModuleInfo info;
 		readonly HttpClient http = new();
 
 		static readonly JsonSerializerOptions SnapshotOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-		static readonly JsonSerializerOptions PlanOptions = new() { PropertyNameCaseInsensitive = true };
 
 		string pendingPlan;
 		bool requestInFlight;
@@ -118,32 +112,52 @@ namespace OpenRA.Mods.Common.Traits
 			radar?.CaptureNow(bot);
 
 			requestInFlight = true;
-			var state = BuildSnapshot(bot, tick);
+			var state = BuildSnapshot(bot, tick, breakTicks);
 			_ = RequestPlanAsync(state);
 		}
 
-		/// <summary>Serializes the current bot state into a JSON snapshot for the model server.</summary>
-		static string BuildSnapshot(IBot bot, int tick)
+		/// <summary>
+		/// Serializes the team state into a JSON snapshot. Every allied bot computes the same aggregation
+		/// from the shared world state, so the model server receives one consistent picture per round.
+		/// </summary>
+		static string BuildSnapshot(IBot bot, int tick, int breakTicks)
 		{
 			var player = bot.Player;
 			var world = player.World;
-			var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
 
-			var own = world.Actors
-				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player)
-				.Select(a => new UnitState
+			var team = world.Players
+				.Where(p => p.PlayerActor.TraitsImplementing<ModularBot>().Any(b => b.IsEnabled)
+					&& player.RelationshipWith(p) == PlayerRelationship.Ally)
+				.ToArray();
+
+			var round = breakTicks > 0 ? tick / breakTicks : 0;
+
+			var members = team.Select(p => new MemberState
+			{
+				Player = p.InternalName,
+				Cash = p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0,
+				Units = TeamActors(world, p, false).Select(a => new UnitState
 				{
 					Type = a.Info.Name,
 					X = a.Location.X,
 					Y = a.Location.Y,
 					HealthPercent = HealthPercent(a)
-				})
-				.ToArray();
+				}).ToArray(),
+				Structures = TeamActors(world, p, true).Select(a => new UnitState
+				{
+					Type = a.Info.Name,
+					X = a.Location.X,
+					Y = a.Location.Y,
+					HealthPercent = HealthPercent(a)
+				}).ToArray()
+			}).ToArray();
 
+			// Enemy intel is shared through allied shroud: an enemy is reported if any team member has
+			// explored its position (radar-style team awareness).
 			var enemies = world.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner != player
 					&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
-					&& player.Shroud.IsExplored(a.CenterPosition))
+					&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
 				.Select(a => new UnitState
 				{
 					Type = a.Info.Name,
@@ -153,19 +167,25 @@ namespace OpenRA.Mods.Common.Traits
 				})
 				.ToArray();
 
-			var state = new BotState
+			var state = new TeamState
 			{
-				Tick = tick,
-				Cash = resources?.GetCashAndResources() ?? 0,
-				ArmyCount = own.Length,
+				Round = round,
+				Self = player.InternalName,
 				ScreenshotPath = player.PlayerActor.TraitsImplementing<RadarCaptureBotModule>()
 					.Select(m => m.LastCapturePath)
 					.FirstOrDefault(path => path != null),
-				Own = own,
+				Team = members,
 				Enemies = enemies
 			};
 
 			return JsonSerializer.Serialize(state, SnapshotOptions);
+		}
+
+		static IOrderedEnumerable<Actor> TeamActors(World world, Player owner, bool structures)
+		{
+			return world.Actors
+				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == owner && a.Info.HasTraitInfo<BuildingInfo>() == structures)
+				.OrderBy(a => a.ActorID);
 		}
 
 		static int HealthPercent(Actor a)
@@ -195,71 +215,12 @@ namespace OpenRA.Mods.Common.Traits
 			}
 		}
 
-		/// <summary>Applies the model's plan: production orders, an attack wave, or a retreat.</summary>
+		/// <summary>Hands the model's team plan to the strategic brain, which applies this bot's share.</summary>
 		static void ApplyPlan(IBot bot, string planJson)
 		{
-			Plan plan;
-			try
-			{
-				plan = JsonSerializer.Deserialize<Plan>(planJson, PlanOptions);
-			}
-			catch
-			{
-				return;
-			}
-
-			if (plan == null)
-				return;
-
-			var player = bot.Player;
-			var world = player.World;
-
-			if (plan.Produce != null)
-			{
-				var queues = player.PlayerActor.TraitsImplementing<ProductionQueue>()
-					.Where(q => q.Enabled && q.CurrentItem() == null)
-					.ToArray();
-
-				foreach (var unitName in plan.Produce)
-				{
-					if (string.IsNullOrEmpty(unitName))
-						continue;
-
-					var queue = queues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == unitName));
-					if (queue != null)
-						bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
-				}
-			}
-
-			if (plan.Attack != null)
-			{
-				var target = Target.FromCell(world, new CPos(plan.Attack.X, plan.Attack.Y));
-				var army = world.Actors
-					.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && !a.Info.HasTraitInfo<BuildingInfo>())
-					.ToArray();
-				if (army.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, target, false, groupedActors: army));
-			}
-
-			if (plan.Retreat)
-			{
-				var baseCenter = BaseCenter(world, player);
-				if (baseCenter != null)
-				{
-					var cell = world.Map.CellContaining(baseCenter.Value);
-					foreach (var a in world.Actors.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && !a.Info.HasTraitInfo<BuildingInfo>()))
-						bot.QueueOrder(new Order("Move", a, Target.FromCell(world, cell), false));
-				}
-			}
-		}
-
-		static WPos? BaseCenter(World world, Player player)
-		{
-			var structures = world.Actors
-				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.HasTraitInfo<BuildingInfo>())
-				.Select(a => a.CenterPosition)
-				.ToArray();
-			return structures.Length == 0 ? null : structures.Average();
+			var brain = bot.Player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			brain?.ApplyTeamPlan(planJson);
 		}
 	}
 }

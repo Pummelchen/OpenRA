@@ -34,6 +34,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8765
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
+
+# One team plan per consultation round: every allied bot posts the same round key and receives
+# the identical plan, so all friendly bots act as one coordinated force.
+PLAN_CACHE: dict = {}
+
 MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL_NAME = os.getenv("AI_MODEL_NAME", "qwen3")
 MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
@@ -41,19 +46,29 @@ MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
 # Units the dummy backend prefers to produce, in priority order.
 DUMMY_ARMY_PRIORITY = ["e1", "e3", "2tnk", "3tnk", "4tnk", "ttnk", "v2rl", "heli", "mig"]
 
-SYSTEM_PROMPT = """You are the strategic brain of an OpenRA bot. Decide production and tactics from the game state.
+SYSTEM_PROMPT = """You are the tactical command center of a team of OpenRA bots. The team members are listed under
+"team"; they fight as ONE force. Decide the team's strategy, roles, production, and maneuvers from the game state.
 
-The image in the user message is the bot's strategic radar: the whole map with terrain, water, mountains,
-the explored territory (unexplored areas are darkened), and unit dots (green = own, red = enemy).
+The image in the user message (if any) is the team's strategic radar: the whole map with terrain, water, mountains,
+the explored territory (unexplored areas are darkened), and unit dots (green = own team, red = enemy).
 
 Rules:
-- Produce a small, focused army. Prioritize anti-air when enemy air units are present, anti-armor for tanks, anti-infantry otherwise.
-- Attack when your army is at least as large as the enemy force. Prefer attacking through the uncovered terrain shown on the radar.
-- Retreat when your units are heavily damaged (many below 30% health) or heavily outnumbered.
-- Coordinates are OpenRA map cells. Use the average of the enemy positions as the attack target when attacking.
+- Combine the forces of all team members for coordinated attacks. Assign roles so one bot can build naval units
+  ("naval"), another escorts or defends ("escort"/"defend"), and the strongest pushes the main attack ("main").
+- Attack when the team's combined army is at least as large as the enemy force. A feint (a decoy position) can
+  distract the enemy before the real attack.
+- Use "counter" to defend an allied base or intercept a threat position.
+- Retreat when the team's units are heavily damaged or heavily outnumbered.
+- Production ("produce") should be a small list of units that counters the scouted enemy (anti-air for air, etc.).
+  Use EXACT OpenRA unit ids (e.g. e1, e3, 2tnk, 3tnk, 4tnk, ttnk, v2rl, mig, ss, dd) - never generic names.
+- A "transport" mission can stealth-insert infantry behind enemy lines ("kind": "naval" or "air").
+- Coordinates are OpenRA map cells. Roles keys must exactly match the player ids in "team".
 
 Reply with ONLY a JSON object of the form:
-{"produce": ["unit1", "unit2"], "attack": {"x": 0, "y": 0}, "retreat": false}
+{"strategy": "attack|defend|build|turtle", "attack": {"x": 0, "y": 0}, "feint": {"x": 0, "y": 0},
+ "counter": {"x": 0, "y": 0}, "roles": {"playerid": "main|escort|naval|defend"},
+ "produce": ["unit1", "unit2"], "retreat": false,
+ "transport": {"kind": "naval", "to": {"x": 0, "y": 0}}}
 Do not include markdown, comments, or any other text."""
 
 
@@ -83,10 +98,18 @@ class PlanServer(BaseHTTPRequestHandler):
             return
 
         try:
-            plan = self.server.decide(state)
+            # One plan per consultation round: all allied bots post the same round key and receive
+            # the identical team plan, so the whole team acts on the same orders.
+            round_key = state.get("round")
+            if round_key is not None and round_key in PLAN_CACHE:
+                plan = PLAN_CACHE[round_key]
+            else:
+                plan = self.server.decide(state)
+                if round_key is not None:
+                    PLAN_CACHE[round_key] = plan
             self._respond(200, plan)
         except Exception as exc:  # noqa: BLE001 - keep the game running on any backend error
-            self._respond(200, {"produce": [], "attack": None, "retreat": False, "error": str(exc)})
+            self._respond(200, empty_team_plan())
 
     def _respond(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -99,9 +122,10 @@ class PlanServer(BaseHTTPRequestHandler):
 
 def dummy_plan(state: dict) -> dict:
     """Deterministic heuristic plan used for testing and as the no-model fallback."""
-    own = state.get("own", [])
-    enemies = state.get("enemies", [])
-    cash = state.get("cash", 0)
+    team = state.get("team", []) or []
+    own = [u for member in team for u in member.get("units", [])]
+    enemies = state.get("enemies", []) or []
+    cash = sum(member.get("cash", 0) for member in team)
     army = [u for u in own if u.get("type") not in ("harv", "mcv")]
     damaged = [u for u in army if u.get("healthPercent", 100) < 30]
     retreat = len(damaged) > max(1, len(army) // 2) or len(enemies) > len(army) * 3
@@ -115,20 +139,25 @@ def dummy_plan(state: dict) -> dict:
 
     attack = None
     if enemies and not retreat and len(army) >= max(4, len(enemies)):
-        xs = [e["x"] for e in enemies]
-        ys = [e["y"] for e in enemies]
-        attack = {"x": int(statistics.mean(xs)), "y": int(statistics.mean(ys))}
+        attack = {"x": int(statistics.mean(e["x"] for e in enemies)), "y": int(statistics.mean(e["y"]) for e in enemies)}
 
-    return {"produce": produce, "attack": attack, "retreat": retreat}
+    team_ids = [m.get("player") for m in team]
+    roles = {team_ids[0]: "main"} if team_ids else {}
+    return {
+        "strategy": "attack" if attack else "build",
+        "attack": attack,
+        "feint": None,
+        "counter": None,
+        "roles": roles,
+        "produce": produce,
+        "retreat": retreat,
+        "transport": None,
+    }
 
 
 def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool) -> dict:
-    """Asks an OpenAI-compatible model for a plan and parses its JSON response."""
-    prompt = (
-        f"Tick {state.get('tick', 0)}. Cash {state.get('cash', 0)}. "
-        f"Own units ({state.get('armyCount', 0)}): {summarize(state.get('own', []))}. "
-        f"Enemy sightings: {summarize(state.get('enemies', []))}."
-    )
+    """Asks an OpenAI-compatible model for a team plan and parses its JSON response."""
+    prompt = team_summary(state)
 
     content = [{"type": "text", "text": prompt}]
     image_note = ""
@@ -168,7 +197,7 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
         content = content.split("\n", 1)[1].rsplit("```", 1)[0]
     log_brain(f"REPLY <- {model}: {content[:500]}")
     plan = json.loads(content)
-    plan = sanitize_plan(plan, state)
+    plan = sanitize_team_plan(plan, state)
     log_brain(f"PLAN  -> {json.dumps(plan)}")
     return plan
 
@@ -181,28 +210,76 @@ def summarize(units: list) -> str:
     return ", ".join(f"{count}x {name}" for name, count in sorted(counts.items()))
 
 
-def sanitize_plan(plan: dict, state: dict) -> dict:
-    """Hardens the model's plan: a missing or degenerate attack target is replaced by the enemy
-    centroid, and unknown produce entries are dropped."""
-    if not isinstance(plan, dict):
-        return {"produce": [], "attack": None, "retreat": False}
-
+def team_summary(state: dict) -> str:
+    parts = []
+    for member in state.get("team", []) or []:
+        units = member.get("units", []) or []
+        structures = member.get("structures", []) or []
+        parts.append(
+            f"{member.get('player')}: cash {member.get('cash', 0)}, {len(units)} units ({summarize(units)}), "
+            f"{len(structures)} structures"
+        )
     enemies = state.get("enemies", []) or []
-    attack = plan.get("attack")
-    degenerate = not isinstance(attack, dict) or attack.get("x") == 0 and attack.get("y") == 0
-    if degenerate and enemies:
-        attack = {
-            "x": int(statistics.mean(e["x"] for e in enemies)),
-            "y": int(statistics.mean(e["y"] for e in enemies)),
-        }
-    elif degenerate:
-        attack = None
+    return f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}."
 
+
+def sanitize_team_plan(plan: dict, state: dict) -> dict:
+    """Hardens the model's team plan: degenerate targets are replaced by the enemy centroid, roles are
+    restricted to real team members, and unknown fields are dropped."""
+    if not isinstance(plan, dict):
+        return empty_team_plan()
+
+    team_ids = {m.get("player") for m in state.get("team", []) or []}
+    enemies = state.get("enemies", []) or []
+    strategy = plan.get("strategy") if plan.get("strategy") in ("attack", "defend", "build", "turtle") else "build"
+
+    def target(value):
+        if isinstance(value, dict) and not (value.get("x", 0) <= 0 and value.get("y", 0) <= 0):
+            return {"x": int(value["x"]), "y": int(value["y"])}
+        if enemies:
+            return {
+                "x": int(statistics.mean(e["x"] for e in enemies)),
+                "y": int(statistics.mean(e["y"] for e in enemies)),
+            }
+        return None
+
+    roles = {
+        k: v for k, v in (plan.get("roles") or {}).items()
+        if k in team_ids and v in ("main", "escort", "naval", "defend")
+    }
     produce = [u for u in plan.get("produce", []) if isinstance(u, str) and u]
+
+    transport = plan.get("transport")
+    if isinstance(transport, dict) and isinstance(transport.get("to"), dict):
+        kind = transport.get("kind") if transport.get("kind") in ("naval", "air") else "naval"
+        transport = {"kind": kind, "to": target(transport.get("to"))}
+        if transport["to"] is None:
+            transport = None
+    else:
+        transport = None
+
     return {
+        "strategy": strategy,
+        "attack": target(plan.get("attack")),
+        "feint": target(plan.get("feint")),
+        "counter": target(plan.get("counter")),
+        "roles": roles,
         "produce": produce,
-        "attack": attack,
         "retreat": bool(plan.get("retreat")),
+        "transport": transport,
+    }
+
+
+def empty_team_plan() -> dict:
+    return {
+        "strategy": "build",
+        "attack": None,
+        "feint": None,
+        "counter": None,
+        "roles": {},
+        "produce": [],
+        "retreat": False,
+        "transport": None,
     }
 
 

@@ -59,6 +59,18 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Own actor types that are never produced or used for combat by this module (harvesters, MCVs, civilians...).")]
 		public readonly FrozenSet<string> ExcludeFromArmyTypes = [];
 
+		[Desc("Units preferred when this bot is assigned the naval role by the team plan.")]
+		public readonly FrozenSet<string> NavalPriority = [];
+
+		[Desc("Actor types that can carry out transport missions (e.g. lst, heli).")]
+		public readonly FrozenSet<string> TransportTypes = [];
+
+		[Desc("Actor types that are loaded into transports for stealth missions.")]
+		public readonly FrozenSet<string> TransportPayloadTypes = [];
+
+		[Desc("The fraction of the army (1/N) that is diverted to a feint attack.")]
+		public readonly int FeintFraction = 6;
+
 		[Desc("Interval (in ticks) between tactical updates.")]
 		public readonly int TacticInterval = 20;
 
@@ -125,6 +137,21 @@ namespace OpenRA.Mods.Common.Traits
 
 		Posture posture = Posture.BuildArmy;
 		int lastAttackTick;
+
+		// Team plan state, fed by the external model brain.
+		string teamStrategy;
+		string teamRole;
+		CPos? attackTarget;
+		CPos? feintTarget;
+		CPos? counterTarget;
+		CPos? transportTarget;
+		string transportKind;
+		string[] produceBoost;
+		bool teamRetreat;
+		int feintTick;
+		int transportPhase;
+
+		static readonly System.Text.Json.JsonSerializerOptions PlanOptions = new() { PropertyNameCaseInsensitive = true };
 
 		public StrategicBrainBotModule(StrategicBrainBotModuleInfo info, ActorInitializer init)
 			: base(info)
@@ -220,6 +247,19 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void UpdatePosture()
 		{
+			// The team plan overrides the local posture: roles and strategy take precedence over the
+			// locally scouted force balance.
+			if (teamStrategy != null || teamRole != null || teamRetreat)
+			{
+				if (teamRetreat || teamRole == "defend" || teamStrategy == "defend" || teamStrategy == "turtle")
+					SetPosture(Posture.Defend);
+				else if (teamRole == "main" || teamRole == "escort" || teamStrategy == "attack")
+					SetPosture(Posture.Attack);
+				else
+					SetPosture(Posture.BuildArmy);
+				return;
+			}
+
 			var ownArmyCount = OwnCombatUnits().Count();
 			if (ownArmyCount == 0)
 			{
@@ -254,6 +294,65 @@ namespace OpenRA.Mods.Common.Traits
 			posture = newPosture;
 		}
 
+		sealed class TeamPlan
+		{
+			public string Strategy { get; set; }
+			public TeamTarget Attack { get; set; }
+			public TeamTarget Feint { get; set; }
+			public TeamTarget Counter { get; set; }
+			public TeamTarget Transport { get; set; }
+			public string TransportKind { get; set; }
+			public Dictionary<string, string> Roles { get; set; }
+			public string[] Produce { get; set; }
+			public bool Retreat { get; set; }
+		}
+
+		sealed class TeamTarget
+		{
+			public int X { get; set; }
+			public int Y { get; set; }
+		}
+
+		/// <summary>
+		/// Consumes the team plan from the external model brain and stores this bot's share. Called on
+		/// the game thread whenever a plan response arrives.
+		/// </summary>
+		public void ApplyTeamPlan(string planJson)
+		{
+			TeamPlan plan;
+			try
+			{
+				plan = System.Text.Json.JsonSerializer.Deserialize<TeamPlan>(planJson, PlanOptions);
+			}
+			catch
+			{
+				return;
+			}
+
+			if (plan == null)
+				return;
+
+			teamStrategy = plan.Strategy;
+			teamRetreat = plan.Retreat;
+			produceBoost = plan.Produce;
+			attackTarget = ClampCell(ToCell(plan.Attack));
+			feintTarget = ClampCell(ToCell(plan.Feint));
+			counterTarget = ClampCell(ToCell(plan.Counter));
+			transportTarget = ClampCell(ToCell(plan.Transport));
+			transportKind = plan.TransportKind;
+			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
+		}
+
+		CPos? ClampCell(CPos? cell)
+		{
+			return cell == null ? null : world.Map.Clamp(cell.Value);
+		}
+
+		static CPos? ToCell(TeamTarget target)
+		{
+			return target == null ? null : new CPos(target.X, target.Y);
+		}
+
 		/// <summary>
 		/// Adaptive production: the unit pick order is the counter list of whatever enemy composition
 		/// has been scouted, followed by the configured army priority. Production is only ordered on
@@ -268,8 +367,13 @@ namespace OpenRA.Mods.Common.Traits
 			if (resources == null || resources.GetCashAndResources() < info.MinProductionCash)
 				return;
 
-			// Build the adaptive pick order: counters first, then the base composition.
+			// Build the adaptive pick order: team produce boosts and role priorities first, then
+			// counters for the scouted enemy composition, then the base army composition.
 			var pickOrder = new List<string>();
+			if (produceBoost != null)
+				pickOrder.AddRange(produceBoost);
+			if (teamRole == "naval")
+				pickOrder.AddRange(info.NavalPriority);
 			if (enemyAirSpotted)
 				pickOrder.AddRange(info.AntiAirUnits);
 			if (enemyArmorSpotted)
@@ -277,6 +381,19 @@ namespace OpenRA.Mods.Common.Traits
 			if (enemyInfantrySpotted)
 				pickOrder.AddRange(info.AntiInfantryUnits);
 			pickOrder.AddRange(info.ArmyPriority);
+
+			// Aggressive cancellation: while defending, cancel whatever is in production if it is not
+			// one of the top-priority units, so the counter force comes out fast.
+			if (posture == Posture.Defend)
+			{
+				var priorities = pickOrder.Take(5).ToArray();
+				foreach (var q in queues)
+				{
+					var current = q.CurrentItem();
+					if (current != null && !priorities.Contains(current.Item))
+						bot.QueueOrder(Order.CancelProduction(q.Actor, current.Item, 1));
+				}
+			}
 
 			var idleQueues = queues.Where(q => q.CurrentItem() == null).ToArray();
 			if (idleQueues.Length == 0)
@@ -349,6 +466,33 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
+			// Team-wide retreat: pull the whole army back to the base.
+			if (teamRetreat)
+			{
+				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: activeArmy));
+				return;
+			}
+
+			// Intercept a team-designated threat location (defend an allied base or a key position).
+			if (counterTarget != null)
+			{
+				SetPosture(Posture.Defend);
+				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterTarget.Value), false, groupedActors: activeArmy));
+				return;
+			}
+
+			// Stealth/transport missions run independently of the main army.
+			if (transportTarget != null && transportKind != null)
+				ExecuteTransportMission();
+
+			// Feint: divert a small fraction of the army to a decoy position before the main push.
+			if (feintTarget != null && activeArmy.Length > info.FeintFraction && world.WorldTick - feintTick > info.TacticInterval * 5)
+			{
+				feintTick = world.WorldTick;
+				var feint = activeArmy.Take(activeArmy.Length / info.FeintFraction).ToArray();
+				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, feintTarget.Value), false, groupedActors: feint));
+			}
+
 			// Without a decisive force or hostile intent, hold the army near the base.
 			if (posture != Posture.Attack || activeArmy.Length < info.MinWaveSize)
 			{
@@ -357,13 +501,60 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
-			// Launch or sustain an attack wave against the scouted enemy.
-			var target = BestAttackTarget();
+			// Launch or sustain an attack wave: the team-designated target takes priority over the
+			// locally scouted enemy, so all allied bots push the same position together.
+			var target = attackTarget != null ? world.Map.CenterOfCell(attackTarget.Value) : BestAttackTarget();
 			if (target == null)
 				return;
 
 			lastAttackTick = world.WorldTick;
 			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target.Value), false, groupedActors: activeArmy));
+		}
+
+		/// <summary>
+		/// Executes a transport mission in phases: load payload units, move the transport to the
+		/// target, then unload. Designed for stealth insertions of infantry behind enemy lines.
+		/// </summary>
+		void ExecuteTransportMission()
+		{
+			var transport = world.Actors
+				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportTypes.Contains(a.Info.Name))
+				.OrderBy(a => a.ActorID)
+				.FirstOrDefault();
+			if (transport == null)
+				return;
+
+			var targetCell = transportTarget.Value;
+			var cargo = transport.TraitOrDefault<Cargo>();
+
+			if (transportPhase == 0)
+			{
+				// Load payload units into the transport.
+				var payload = world.Actors
+					.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportPayloadTypes.Contains(a.Info.Name))
+					.Take(4)
+					.ToArray();
+				if (payload.Length > 0 && (cargo == null || cargo.PassengerCount == 0))
+					bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
+
+				if (cargo == null || cargo.PassengerCount > 0 || payload.Length == 0)
+					transportPhase = 1;
+			}
+			else if (transportPhase == 1)
+			{
+				var distance = (transport.CenterPosition - world.Map.CenterOfCell(targetCell)).LengthSquared;
+				if (distance > BaseRadiusSquared(5))
+					bot.QueueOrder(new Order("Move", transport, Target.FromCell(world, targetCell), false));
+				else
+					transportPhase = 2;
+			}
+			else
+			{
+				bot.QueueOrder(new Order("Unload", transport, false));
+				transportPhase = 0;
+				transportTarget = null;
+				transportKind = null;
+			}
 		}
 
 		/// <summary>

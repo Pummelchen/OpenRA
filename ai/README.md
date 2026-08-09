@@ -8,20 +8,26 @@ shroud, unit dots) is sent to a vision-capable model.
 ## Architecture
 
 ```
-Game (ExternalBrainBotModule)
-  → POST /decide  { state JSON + "screenshotPath": "/path/to/ai-radar.png" }
-  → model_server.py (ai/model_server.py)
-  → mlx-vlm server (Gemma 4 E4B, MLX 4-bit, vision)  [or any OpenAI-compatible endpoint]
-  ← {"produce": ["2tnk"], "attack": {"x": 12, "y": 34}, "retreat": false}
+Allied AI bots (ExternalBrainBotModule on each)
+  → POST /decide  { identical team snapshot + "screenshotPath" }
+  → model_server.py (ai/model_server.py)  — one team plan per round, cached
+  → mlx-vlm server (Gemma 4 E4B, MLX 4-bit, vision)
+  ← team plan { strategy, attack, feint, counter, roles, produce, retreat, transport }
+  → each bot applies its own share (role, production, tactics)
 ```
 
-- The radar PNG is generated on demand by `RadarCaptureBotModule` (HD, 1920 px wide, map
-  aspect ratio) right before each model consultation.
+- **Team command center**: every allied bot posts an *identical* team snapshot (all members'
+  units, buildings, cash, and enemy intel from the shared allied shroud). The server caches
+  **one team plan per consultation round**, so all friendly bots receive the same orders and
+  act as a single coordinated force. Gemma assigns roles (`main`/`escort`/`naval`/`defend`),
+  picks coordinated attack/feint/counter targets, production boosts, retreats, and optional
+  transport missions (stealth infantry insertions).
+- The radar PNG is generated on demand by `RadarCaptureBotModule` (HD, 1920 px wide) right
+  before each consultation.
 - Consultations are paced: the next request (and a fresh radar capture) is only sent **15
-  seconds after the previous analysis was received** (`ExternalBrainBreakSeconds`), giving
-  the game and the Mac a break.
-- Requests are asynchronous with a timeout: if the server is down or slow, the bot silently
-  falls back to its built-in scripted brain.
+  seconds after the previous analysis was received** (`ExternalBrainBreakSeconds`).
+- Requests are asynchronous with a timeout: if the server is down or slow, the bots silently
+  fall back to their built-in scripted brains.
 
 ## Running the model server
 
