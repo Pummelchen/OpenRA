@@ -11,6 +11,9 @@ Player:
 	ModularBot@NavalAI:
 		Name: bot-naval-ai.name
 		Type: naval
+	ModularBot@AIBot:
+		Name: bot-ai.name
+		Type: ai
 	GrantConditionOnBotOwner@rush:
 		Condition: enable-rush-ai
 		Bots: rush
@@ -23,15 +26,18 @@ Player:
 	GrantConditionOnBotOwner@naval:
 		Condition: enable-naval-ai
 		Bots: naval
+	GrantConditionOnBotOwner@ai:
+		Condition: enable-ai
+		Bots: ai
 	ResourceMapBotModule:
-		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai
+		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-ai
 		ResourceCreatorTypes: mine, gmine
 		ValuableResourceTypes: Ore, Gems
 		HarvesterTypes: harv
 		RefineryTypes: proc
 		EnemyBaseBuildingTypes: pbox,gun,ftur,tsla,agun,barr,tent,weap,afld,hpad,fact,powr,apwr,proc
 	SupportPowerBotModule:
-		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai
+		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai || enable-ai
 		Decisions:
 			spyplane:
 				OrderName: SovietSpyPlane
@@ -328,10 +334,10 @@ Player:
 			tsla: 21000
 			kenn: 4000
 	PowerDownBotModule:
-		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai
+		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai || enable-ai
 		PowerDownTypes: dome,tsla,mslo,agun,sam
 	BuildingRepairBotModule:
-		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai
+		RequiresCondition: enable-rush-ai || enable-normal-ai || enable-turtle-ai || enable-naval-ai || enable-ai
 	SquadManagerBotModule@rush:
 		RequiresCondition: enable-rush-ai
 		SquadSize: 20
@@ -540,3 +546,94 @@ Player:
 			jeep: 1
 		UnitDelays:
 			harv: 10000
+	HarvesterBotModule@ai:
+		RequiresCondition: enable-ai
+		HarvesterTypes: harv
+		RefineryTypes: proc
+		InitialHarvesters: 4
+	BaseBuilderBotModule@ai:
+		RequiresCondition: enable-ai
+		MinimumExcessPower: 0
+		MaximumExcessPower: 180
+		ExcessPowerIncrement: 40
+		ExcessPowerIncreaseThreshold: 4
+		ConstructionYardTypes: fact
+		RefineryTypes: proc
+		PowerTypes: powr,apwr
+		ExpansionTolerate: 1,2
+		TechTypes: dome, atek, stek, fix, afld, hpad
+		ProductionTypes: barr,tent,weap
+		NavalProductionTypes: spen, syrd
+		NewProductionCashThreshold: 8000
+		SiloTypes: silo
+		DefenseTypes: hbox,pbox,gun,ftur,tsla,agun,sam
+		BuildingLimits:
+			barr: 7
+			tent: 7
+			dome: 1
+			weap: 4
+			spen: 1
+			syrd: 1
+			hpad: 4
+			afld: 4
+			afld.ukraine: 4
+			atek: 1
+			stek: 1
+			fix: 1
+		BuildingFractions:
+			powr: 1
+			proc: 1
+			tent: 3
+			barr: 3
+			kenn: 1
+			dome: 1
+			weap: 4
+			hpad: 1
+			spen: 1
+			syrd: 1
+			afld: 1
+			afld.ukraine: 1
+			pbox: 9
+			gun: 9
+			ftur: 10
+			tsla: 5
+			gap: 2
+			fix: 1
+			agun: 5
+			sam: 1
+			atek: 1
+			stek: 1
+			mslo: 1
+		BuildingDelays:
+			dome: 6000
+			fix: 3000
+			pbox: 1500
+			gun: 2000
+			ftur: 1500
+			tsla: 2800
+			kenn: 7000
+			spen: 6000
+			syrd: 6000
+			atek: 9000
+			stek: 9000
+	McvExpansionManagerBotModule@ai:
+		RequiresCondition: enable-ai
+		McvTypes: mcv
+		ConstructionYardTypes: fact
+		McvFactoryTypes: weap
+		MinimumConstructionYardCount: 2
+	StrategicBrainBotModule:
+		RequiresCondition: enable-ai
+		ArmyPriority: e1, e3, 2tnk, 3tnk, 4tnk, ttnk, v2rl, heli, mig, jeep, arty
+		AntiAirUnits: v2rl, e3, mig
+		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
+		AntiInfantryUnits: ftrk, 1tnk, jeep, e4
+		AirUnitTypes: mig, yak, heli, hind, mh60, badr.bomber, u2
+		ArmorUnitTypes: 1tnk, 2tnk, 3tnk, 4tnk, ttnk, stnk, apc
+		InfantryUnitTypes: e1, e2, e3, e4, e7, dog, shok
+		ExcludeFromArmyTypes: harv, mcv, dog, e7, badr.bomber, u2, mnly
+	ExternalBrainBotModule:
+		RequiresCondition: enable-ai
+		ExternalBrainUrl: http://127.0.0.1:8765
+		ExternalBrainInterval: 200
+		ExternalBrainTimeout: 2000
