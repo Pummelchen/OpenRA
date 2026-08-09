@@ -635,9 +635,8 @@ Player:
 	ExternalBrainBotModule:
 		RequiresCondition: enable-ai
 		ExternalBrainUrl: http://127.0.0.1:8765
-		ExternalBrainInterval: 200
+		ExternalBrainBreakSeconds: 15
 		ExternalBrainTimeout: 2000
 	RadarCaptureBotModule:
 		RequiresCondition: enable-ai
-		RadarCaptureInterval: 900
 		RadarCaptureWidth: 1920

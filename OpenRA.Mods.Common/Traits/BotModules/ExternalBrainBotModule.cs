@@ -30,8 +30,9 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Base URL of the model server, e.g. http://127.0.0.1:8765. Leave empty to disable the external brain.")]
 		public readonly string ExternalBrainUrl = null;
 
-		[Desc("Interval (in ticks) between model consultations.")]
-		public readonly int ExternalBrainInterval = 200;
+		[Desc("Minimum real-time gap in seconds between model consultations. The next request (and a fresh radar " +
+			"capture) is only sent this long after the previous analysis was received, giving the game a break.")]
+		public readonly int ExternalBrainBreakSeconds = 15;
 
 		[Desc("HTTP request timeout in milliseconds. A timed-out request falls back to the scripted brain.")]
 		public readonly int ExternalBrainTimeout = 2000;
@@ -80,7 +81,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		string pendingPlan;
 		bool requestInFlight;
-		int lastRequestTick;
+		int lastCompletedTick = int.MinValue;
 
 		public ExternalBrainBotModule(ExternalBrainBotModuleInfo info, ActorInitializer init)
 			: base(info)
@@ -100,13 +101,22 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				ApplyPlan(bot, pendingPlan);
 				pendingPlan = null;
+				lastCompletedTick = world.WorldTick;
 			}
 
 			var tick = world.WorldTick;
-			if (requestInFlight || tick - lastRequestTick < info.ExternalBrainInterval)
+
+			// Pace consultations: only ask the model again after the configured break has passed since
+			// its last analysis arrived, and never while a request is still in flight.
+			var breakTicks = world.Timestep > 0 ? (int)(info.ExternalBrainBreakSeconds * 1000.0 / world.Timestep) : info.ExternalBrainBreakSeconds;
+			if (requestInFlight || tick - lastCompletedTick < breakTicks)
 				return;
 
-			lastRequestTick = tick;
+			// Capture a fresh full-map radar image right before consulting the model.
+			var radar = bot.Player.PlayerActor.TraitsImplementing<RadarCaptureBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			radar?.CaptureNow(bot);
+
 			requestInFlight = true;
 			var state = BuildSnapshot(bot, tick);
 			_ = RequestPlanAsync(state);

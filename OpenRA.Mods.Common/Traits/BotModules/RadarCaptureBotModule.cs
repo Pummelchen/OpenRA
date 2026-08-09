@@ -25,9 +25,6 @@ namespace OpenRA.Mods.Common.Traits
 	[TraitLocation(SystemActors.Player)]
 	public sealed class RadarCaptureBotModuleInfo : ConditionalTraitInfo
 	{
-		[Desc("Interval (in ticks) between radar captures.")]
-		public readonly int RadarCaptureInterval = 900;
-
 		[Desc("Output image width in pixels; the height follows the map aspect ratio.")]
 		public readonly int RadarCaptureWidth = 1920;
 
@@ -37,12 +34,11 @@ namespace OpenRA.Mods.Common.Traits
 		public override object Create(ActorInitializer init) { return new RadarCaptureBotModule(this, init); }
 	}
 
-	public sealed class RadarCaptureBotModule : ConditionalTrait<RadarCaptureBotModuleInfo>, IBotTick
+	public sealed class RadarCaptureBotModule : ConditionalTrait<RadarCaptureBotModuleInfo>
 	{
 		readonly RadarCaptureBotModuleInfo info;
 
 		Player player;
-		int lastCaptureTick;
 
 		public RadarCaptureBotModule(RadarCaptureBotModuleInfo info, ActorInitializer init)
 			: base(info)
@@ -53,19 +49,18 @@ namespace OpenRA.Mods.Common.Traits
 		/// <summary>The path of the most recent radar capture, or null before the first capture.</summary>
 		public string LastCapturePath { get; private set; }
 
-		void IBotTick.BotTick(IBot bot)
+		/// <summary>
+		/// Renders the whole map into an HD image now and returns the PNG path. Called on demand by the
+		/// external brain, which paces captures to one per analysis cycle.
+		/// </summary>
+		public string CaptureNow(IBot bot)
 		{
 			if (IsTraitDisabled)
-				return;
+				return null;
 
 			player = bot.Player;
-
-			var tick = player.World.WorldTick;
-			if (tick - lastCaptureTick < info.RadarCaptureInterval)
-				return;
-
-			lastCaptureTick = tick;
 			LastCapturePath = CaptureRadar();
+			return LastCapturePath;
 		}
 
 		/// <summary>

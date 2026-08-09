@@ -5,7 +5,7 @@ SS:
 		Queue: Ship
 		BuildAtProductionType: Submarine
 		BuildPaletteOrder: 30
-		Prerequisites: ~spen, ~techlevel.low
+		Prerequisites: ~spen
 		Description: actor-ss.description
 	Valued:
 		Cost: 950
@@ -54,7 +54,7 @@ MSUB:
 		Queue: Ship
 		BuildAtProductionType: Submarine
 		BuildPaletteOrder: 60
-		Prerequisites: ~spen, stek, ~techlevel.high
+		Prerequisites: ~spen, stek
 		Description: actor-msub.description
 	Valued:
 		Cost: 2000
@@ -109,7 +109,7 @@ DD:
 		Queue: Ship
 		BuildAtProductionType: Boat
 		BuildPaletteOrder: 40
-		Prerequisites: ~syrd, dome, ~techlevel.medium
+		Prerequisites: ~syrd, dome
 		Description: actor-dd.description
 	Valued:
 		Cost: 1000
@@ -161,7 +161,7 @@ CA:
 		Queue: Ship
 		BuildAtProductionType: Boat
 		BuildPaletteOrder: 50
-		Prerequisites: ~syrd, atek, ~techlevel.high
+		Prerequisites: ~syrd, atek
 		Description: actor-ca.description
 	Valued:
 		Cost: 2400
@@ -223,7 +223,7 @@ LST:
 	Buildable:
 		Queue: Ship
 		BuildPaletteOrder: 10
-		Prerequisites: ~techlevel.low
+		Prerequisites:
 		Description: actor-lst.description
 	Valued:
 		Cost: 500
@@ -263,7 +263,7 @@ PT:
 		Queue: Ship
 		BuildAtProductionType: Boat
 		BuildPaletteOrder: 20
-		Prerequisites: ~syrd, ~techlevel.low
+		Prerequisites: ~syrd
 		Description: actor-pt.description
 	Valued:
 		Cost: 500

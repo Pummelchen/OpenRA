@@ -4,7 +4,7 @@ DOG:
 		Queue: Infantry
 		BuildAtProductionType: Dog
 		BuildPaletteOrder: 50
-		Prerequisites: ~kenn, ~techlevel.infonly
+		Prerequisites: ~kenn
 		Description: actor-dog.description
 	Valued:
 		Cost: 200
@@ -75,7 +75,7 @@ E1:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 10
-		Prerequisites: ~barracks, ~techlevel.infonly
+		Prerequisites: ~barracks
 		Description: actor-e1.description
 	Selectable:
 		Class: E1
@@ -128,7 +128,7 @@ E2:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 40
-		Prerequisites: ~barr, ~techlevel.infonly
+		Prerequisites: ~barr
 		Description: actor-e2.description
 	Valued:
 		Cost: 150
@@ -175,7 +175,7 @@ E3:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 30
-		Prerequisites: ~barracks, ~techlevel.infonly
+		Prerequisites: ~barracks
 		Description: actor-e3.description
 	Selectable:
 		Class: E3
@@ -239,7 +239,7 @@ E4:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 70
-		Prerequisites: ~barr, ftur, ~techlevel.low
+		Prerequisites: ~barr, ftur
 		Description: actor-e4.description
 	Valued:
 		Cost: 300
@@ -283,7 +283,7 @@ E6:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 60
-		Prerequisites: ~barracks, ~techlevel.infonly
+		Prerequisites: ~barracks
 		Description: actor-e6.description
 	Valued:
 		Cost: 400
@@ -330,7 +330,7 @@ SPY:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 90
-		Prerequisites: ~!infantry.england, dome, ~tent, ~techlevel.medium
+		Prerequisites: dome, ~tent
 		Description: actor-spy.description
 	Valued:
 		Cost: 500
@@ -386,7 +386,7 @@ SPY:
 SPY.England:
 	Inherits: SPY
 	Buildable:
-		Prerequisites: ~infantry.england, dome, ~tent, ~techlevel.medium
+		Prerequisites: dome, ~tent
 	Valued:
 		Cost: 250
 	GivesExperience:
@@ -403,7 +403,7 @@ E7:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 120
-		Prerequisites: ~tent, atek, ~techlevel.high
+		Prerequisites: ~tent, atek
 		BuildLimit: 1
 		Description: actor-e7.description
 	Valued:
@@ -463,7 +463,7 @@ MEDI:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 40
-		Prerequisites: ~tent, ~techlevel.infonly
+		Prerequisites: ~tent
 		Description: actor-medi.description
 	Valued:
 		Cost: 200
@@ -506,7 +506,7 @@ MECH:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 100
-		Prerequisites: ~tent, fix, ~techlevel.medium
+		Prerequisites: ~tent, fix
 		Description: actor-mech.description
 	Valued:
 		Cost: 500
@@ -624,7 +624,7 @@ THF:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 110
-		Prerequisites: ~barr, dome, ~techlevel.medium
+		Prerequisites: ~barr, dome
 		Description: actor-thf.description
 	Valued:
 		Cost: 500
@@ -680,7 +680,7 @@ SHOK:
 		Queue: Infantry
 		BuildAtProductionType: Soldier
 		BuildPaletteOrder: 130
-		Prerequisites: ~barr, stek, tsla, ~infantry.russia, ~techlevel.high
+		Prerequisites: ~barr, stek, tsla
 		Description: actor-shok.description
 	Valued:
 		Cost: 350

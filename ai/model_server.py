@@ -27,11 +27,13 @@ import base64
 import json
 import os
 import statistics
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8765
+BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
 MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL_NAME = os.getenv("AI_MODEL_NAME", "qwen3")
 MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
@@ -129,15 +131,19 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
     )
 
     content = [{"type": "text", "text": prompt}]
+    image_note = ""
     if vision:
         screenshot = state.get("screenshotPath") or state.get("ScreenshotPath")
         if screenshot and os.path.exists(screenshot):
             with open(screenshot, "rb") as image_file:
                 encoded = base64.b64encode(image_file.read()).decode("utf-8")
+            image_note = f" + radar image {os.path.basename(screenshot)} ({os.path.getsize(screenshot) // 1024} KB)"
             content.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{encoded}"},
             })
+
+    log_brain(f"PROMPT -> {model}: {prompt}{image_note}")
 
     payload = {
         "model": model,
@@ -160,7 +166,11 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
     content = content.strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(content)
+    log_brain(f"REPLY <- {model}: {content[:500]}")
+    plan = json.loads(content)
+    plan = sanitize_plan(plan, state)
+    log_brain(f"PLAN  -> {json.dumps(plan)}")
+    return plan
 
 
 def summarize(units: list) -> str:
@@ -169,6 +179,42 @@ def summarize(units: list) -> str:
         key = unit.get("type", "?")
         counts[key] = counts.get(key, 0) + 1
     return ", ".join(f"{count}x {name}" for name, count in sorted(counts.items()))
+
+
+def sanitize_plan(plan: dict, state: dict) -> dict:
+    """Hardens the model's plan: a missing or degenerate attack target is replaced by the enemy
+    centroid, and unknown produce entries are dropped."""
+    if not isinstance(plan, dict):
+        return {"produce": [], "attack": None, "retreat": False}
+
+    enemies = state.get("enemies", []) or []
+    attack = plan.get("attack")
+    degenerate = not isinstance(attack, dict) or attack.get("x") == 0 and attack.get("y") == 0
+    if degenerate and enemies:
+        attack = {
+            "x": int(statistics.mean(e["x"] for e in enemies)),
+            "y": int(statistics.mean(e["y"] for e in enemies)),
+        }
+    elif degenerate:
+        attack = None
+
+    produce = [u for u in plan.get("produce", []) if isinstance(u, str) and u]
+    return {
+        "produce": produce,
+        "attack": attack,
+        "retreat": bool(plan.get("retreat")),
+    }
+
+
+def log_brain(message: str) -> None:
+    """Terminal monitor: append prompt/reply traffic to ai/brain.log and mirror it to stdout."""
+    line = f"[{time.strftime('%H:%M:%S')}] {message}"
+    print(line, flush=True)
+    try:
+        with open(BRAIN_LOG, "a", encoding="utf-8") as log_file:
+            log_file.write(line + "\n")
+    except OSError:
+        pass
 
 
 def main() -> None:
