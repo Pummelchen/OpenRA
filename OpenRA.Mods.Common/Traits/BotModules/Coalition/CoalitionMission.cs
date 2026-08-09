@@ -173,7 +173,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// Converts the highest-priority active missions into the execution directive JSON consumed by
 		/// the strategic brain (strategy/attack/feint/counter/retreat/transport).
 		/// </summary>
-		public string BuildDirectiveJson(CoalitionBlackboard blackboard, string produceJson, bool forceRetreat)
+		public string BuildDirectiveJson(CoalitionBlackboard blackboard, string produceJson, bool forceRetreat, string rolesJson = null)
 		{
 			var active = missions.Where(m => m.Status == MissionStatus.Executing || m.Status == MissionStatus.Ready)
 				.OrderByDescending(m => m.Priority)
@@ -195,7 +195,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (defend != null && defend.Target != null)
 				AppendTarget(sb, "counter", defend.Target.Value);
 			if (transport != null && transport.Target != null)
+			{
 				AppendTarget(sb, "transport", transport.Target.Value);
+
+				// The brain only runs insertions when a transport kind is named.
+				sb.Append(",\"transportKind\":\"naval\"");
+			}
+
+			if (!string.IsNullOrEmpty(rolesJson))
+				sb.Append(",\"roles\":").Append(rolesJson);
 			if (!string.IsNullOrEmpty(produceJson))
 				sb.Append(",\"produce\":").Append(produceJson);
 			if (retreat)

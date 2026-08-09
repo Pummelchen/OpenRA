@@ -213,8 +213,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Capability-driven production from observed enemy composition.
 			var produceJson = BuildProduceJson();
 
+			// Corps role assignment: specialize this bot within the coalition (naval/main/escort).
+			var rolesJson = AssignRole();
+
 			// Build and apply the execution directives.
-			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true);
+			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson);
 			llmIntent = null;
 
 			var strategy = directiveJson.Contains("\"strategy\":\"attack\"") ? "attack"
@@ -324,6 +327,30 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return null;
 
 			return "[\"" + string.Join("\",\"", units) + "\"]";
+		}
+
+		/// <summary>
+		/// Assigns this bot a corps role within the coalition: the strongest naval builder becomes
+		/// the naval corps, the largest army becomes the main corps, everyone else escorts.
+		/// </summary>
+		string AssignRole()
+		{
+			var mine = blackboard.Forces.FirstOrDefault(f => f.Owner == player.InternalName);
+			if (mine == null || blackboard.Forces.Count == 0)
+				return null;
+
+			var teamNavalMax = blackboard.Forces.Max(f => f.Counts[(int)UnitClass.Naval]);
+			var teamMax = blackboard.Forces.Max(f => f.TotalUnits);
+
+			string role;
+			if (mine.Counts[(int)UnitClass.Naval] > 0 && mine.Counts[(int)UnitClass.Naval] == teamNavalMax)
+				role = "naval";
+			else if (mine.TotalUnits == teamMax && mine.TotalUnits > 0)
+				role = "main";
+			else
+				role = "escort";
+
+			return "{\"" + player.InternalName + "\":\"" + role + "\"}";
 		}
 
 		/// <summary>Returns the region with the least friendly coverage.</summary>
