@@ -46,6 +46,7 @@ namespace OpenRA.Mods.Common.Traits
 			public int Tick { get; set; }
 			public int Cash { get; set; }
 			public int ArmyCount { get; set; }
+			public string ScreenshotPath { get; set; }
 			public object[] Own { get; set; }
 			public object[] Enemies { get; set; }
 		}
@@ -73,6 +74,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		readonly ExternalBrainBotModuleInfo info;
 		readonly HttpClient http = new();
+
+		static readonly JsonSerializerOptions SnapshotOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+		static readonly JsonSerializerOptions PlanOptions = new() { PropertyNameCaseInsensitive = true };
 
 		string pendingPlan;
 		bool requestInFlight;
@@ -144,11 +148,14 @@ namespace OpenRA.Mods.Common.Traits
 				Tick = tick,
 				Cash = resources?.GetCashAndResources() ?? 0,
 				ArmyCount = own.Length,
+				ScreenshotPath = player.PlayerActor.TraitsImplementing<RadarCaptureBotModule>()
+					.Select(m => m.LastCapturePath)
+					.FirstOrDefault(path => path != null),
 				Own = own,
 				Enemies = enemies
 			};
 
-			return JsonSerializer.Serialize(state);
+			return JsonSerializer.Serialize(state, SnapshotOptions);
 		}
 
 		static int HealthPercent(Actor a)
@@ -184,7 +191,7 @@ namespace OpenRA.Mods.Common.Traits
 			Plan plan;
 			try
 			{
-				plan = JsonSerializer.Deserialize<Plan>(planJson);
+				plan = JsonSerializer.Deserialize<Plan>(planJson, PlanOptions);
 			}
 			catch
 			{

@@ -23,6 +23,7 @@ The server is deliberately dependency-free (Python standard library only).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import statistics
@@ -40,9 +41,12 @@ DUMMY_ARMY_PRIORITY = ["e1", "e3", "2tnk", "3tnk", "4tnk", "ttnk", "v2rl", "heli
 
 SYSTEM_PROMPT = """You are the strategic brain of an OpenRA bot. Decide production and tactics from the game state.
 
+The image in the user message is the bot's strategic radar: the whole map with terrain, water, mountains,
+the explored territory (unexplored areas are darkened), and unit dots (green = own, red = enemy).
+
 Rules:
 - Produce a small, focused army. Prioritize anti-air when enemy air units are present, anti-armor for tanks, anti-infantry otherwise.
-- Attack when your army is at least as large as the enemy force.
+- Attack when your army is at least as large as the enemy force. Prefer attacking through the uncovered terrain shown on the radar.
 - Retreat when your units are heavily damaged (many below 30% health) or heavily outnumbered.
 - Coordinates are OpenRA map cells. Use the average of the enemy positions as the attack target when attacking.
 
@@ -116,18 +120,30 @@ def dummy_plan(state: dict) -> dict:
     return {"produce": produce, "attack": attack, "retreat": retreat}
 
 
-def llm_plan(state: dict, endpoint: str, model: str, api_key: str) -> dict:
+def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool) -> dict:
     """Asks an OpenAI-compatible model for a plan and parses its JSON response."""
     prompt = (
         f"Tick {state.get('tick', 0)}. Cash {state.get('cash', 0)}. "
         f"Own units ({state.get('armyCount', 0)}): {summarize(state.get('own', []))}. "
         f"Enemy sightings: {summarize(state.get('enemies', []))}."
     )
+
+    content = [{"type": "text", "text": prompt}]
+    if vision:
+        screenshot = state.get("screenshotPath") or state.get("ScreenshotPath")
+        if screenshot and os.path.exists(screenshot):
+            with open(screenshot, "rb") as image_file:
+                encoded = base64.b64encode(image_file.read()).decode("utf-8")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            })
+
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": content},
         ],
         "temperature": 0.1,
         "max_tokens": 200,
@@ -160,13 +176,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--llm", action="store_true", help="use the OpenAI-compatible LLM backend")
+    parser.add_argument("--vision", action="store_true", help="attach the bot's radar screenshot to LLM requests (requires a vision-capable model)")
     args = parser.parse_args()
 
     if args.llm:
         def decide(state):
-            return llm_plan(state, MODEL_ENDPOINT, MODEL_NAME, MODEL_API_KEY)
+            return llm_plan(state, MODEL_ENDPOINT, MODEL_NAME, MODEL_API_KEY, args.vision)
 
-        backend_name = f"llm ({MODEL_NAME} @ {MODEL_ENDPOINT})"
+        backend_name = f"llm ({MODEL_NAME} @ {MODEL_ENDPOINT})" + (" + vision" if args.vision else "")
     else:
         decide = dummy_plan
         backend_name = "dummy"
