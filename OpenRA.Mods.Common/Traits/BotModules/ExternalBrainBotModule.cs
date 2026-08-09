@@ -15,6 +15,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Traits;
 
 namespace OpenRA.Mods.Common.Traits
@@ -215,9 +216,18 @@ namespace OpenRA.Mods.Common.Traits
 			}
 		}
 
-		/// <summary>Hands the model's team plan to the strategic brain, which applies this bot's share.</summary>
+		/// <summary>Routes the model's intent through the coalition commander, which merges it with the
+		/// deterministic plan. Falls back to the strategic brain directly if no commander is present.</summary>
 		static void ApplyPlan(IBot bot, string planJson)
 		{
+			var commander = bot.Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			if (commander != null)
+			{
+				commander.ApplyLlmIntent(planJson);
+				return;
+			}
+
 			var brain = bot.Player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			brain?.ApplyTeamPlan(planJson);
