@@ -13,6 +13,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Traits;
 
 namespace OpenRA.Mods.Common.Traits
@@ -71,6 +72,12 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("The fraction of the army (1/N) that is diverted to a feint attack.")]
 		public readonly int FeintFraction = 6;
 
+		[Desc("The fraction of the army (1/N) that is held back as an uncommitted strategic reserve.")]
+		public readonly int ReserveFraction = 4;
+
+		[Desc("The reserve is committed when the scouted enemy army is at most this ratio of ours (e.g. 0.6 = go all-in once we outnumber the enemy 10:6).")]
+		public readonly float CommitReserveRatio = 0.6f;
+
 		[Desc("Interval (in ticks) between tactical updates.")]
 		public readonly int TacticInterval = 20;
 
@@ -123,6 +130,7 @@ namespace OpenRA.Mods.Common.Traits
 		readonly StrategicBrainBotModuleInfo info;
 		readonly Dictionary<Actor, Sighting> sightings = [];
 		readonly HashSet<Actor> retreating = [];
+		readonly HashSet<Actor> claimedUnits = [];
 
 		World world;
 		Player player;
@@ -137,6 +145,8 @@ namespace OpenRA.Mods.Common.Traits
 
 		Posture posture = Posture.BuildArmy;
 		int lastAttackTick;
+		bool reserveCommitted;
+		bool lastReserveCommitted;
 
 		// Team plan state, fed by the external model brain.
 		string teamStrategy;
@@ -187,6 +197,11 @@ namespace OpenRA.Mods.Common.Traits
 				.ToArray();
 
 			var tick = world.WorldTick;
+
+			// The order arbiter: each mission claims its units in priority order, so no unit receives
+			// conflicting orders from several missions in the same tick.
+			claimedUnits.Clear();
+
 			if (tick % info.IntelUpdateInterval == 0)
 				UpdateIntel(tick);
 
@@ -461,19 +476,37 @@ namespace OpenRA.Mods.Common.Traits
 			if (activeArmy.Length == 0)
 				return;
 
-			// Base defense: intercept enemies that approach our structures.
+			// Strategic reserve: missions commit only the available army (everything minus the held-back
+			// reserve), unless the reserve is committed for a decisive push. Zero scouted enemies means
+			// unknown (fog), not weak - the reserve is only committed against a scouted, outnumbered enemy.
+			reserveCommitted = enemyArmyCount > 0 && enemyArmyCount <= OwnCombatUnits().Count() * info.CommitReserveRatio;
+			if (reserveCommitted != lastReserveCommitted)
+			{
+				lastReserveCommitted = reserveCommitted;
+				if (reserveCommitted)
+					CoalitionTelemetry.Log(world, $"Reserve committed: coalition outnumbers the scouted enemy ({enemyArmyCount} vs {OwnCombatUnits().Count()})");
+			}
+
+			var availableArmy = AvailableArmy(activeArmy);
+			var reserveCount = activeArmy.Length - availableArmy.Length;
+
+			// Base defense: the whole army (reserve included) intercepts enemies approaching our structures.
 			var baseThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(info.BaseDefenseScanRadius));
 			if (baseThreat != null)
 			{
 				SetPosture(Posture.Defend);
-				bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: activeArmy));
+				var defenders = Claim(activeArmy).ToArray();
+				if (defenders.Length > 0)
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
 				return;
 			}
 
 			// Team-wide retreat: pull the whole army back to the base.
 			if (teamRetreat)
 			{
-				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: activeArmy));
+				var retreaters = Claim(activeArmy).ToArray();
+				if (retreaters.Length > 0)
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: retreaters));
 				return;
 			}
 
@@ -481,7 +514,9 @@ namespace OpenRA.Mods.Common.Traits
 			if (counterTarget != null)
 			{
 				SetPosture(Posture.Defend);
-				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterTarget.Value), false, groupedActors: activeArmy));
+				var interceptors = Claim(activeArmy).ToArray();
+				if (interceptors.Length > 0)
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterTarget.Value), false, groupedActors: interceptors));
 				return;
 			}
 
@@ -489,30 +524,62 @@ namespace OpenRA.Mods.Common.Traits
 			if (transportTarget != null && transportKind != null)
 				ExecuteTransportMission();
 
-			// Feint: divert a small fraction of the army to a decoy position before the main push.
-			if (feintTarget != null && activeArmy.Length > info.FeintFraction && world.WorldTick - feintTick > info.TacticInterval * 5)
+			// Feint: divert a small fraction of the available army to a decoy position. Feint units are
+			// claimed, so the main wave never orders the same units (the feint is no longer overwritten).
+			if (feintTarget != null && availableArmy.Length > info.FeintFraction && world.WorldTick - feintTick > info.TacticInterval * 5)
 			{
 				feintTick = world.WorldTick;
-				var feint = activeArmy.Take(activeArmy.Length / info.FeintFraction).ToArray();
-				bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, feintTarget.Value), false, groupedActors: feint));
+				var feint = Claim(availableArmy).Take(availableArmy.Length / info.FeintFraction).ToArray();
+				if (feint.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, feintTarget.Value), false, groupedActors: feint));
+					CoalitionTelemetry.Log(world, $"Feint of {feint.Length} units to {feintTarget.Value}");
+				}
 			}
 
-			// Without a decisive force or hostile intent, hold the army near the base.
-			if (posture != Posture.Attack || activeArmy.Length < info.MinWaveSize)
+			// Without a decisive force or hostile intent, hold the available army near the base.
+			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize)
 			{
 				if (world.WorldTick - lastAttackTick > info.WithdrawDelayTicks)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: activeArmy));
+				{
+					var holders = Claim(availableArmy).ToArray();
+					if (holders.Length > 0)
+						bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: holders));
+				}
+
 				return;
 			}
 
-			// Launch or sustain an attack wave: the team-designated target takes priority over the
-			// locally scouted enemy, so all allied bots push the same position together.
+			// Launch or sustain an attack wave from the available army: the team-designated target takes
+			// priority over the locally scouted enemy, so all allied bots push the same position together.
 			var target = attackTarget != null ? world.Map.CenterOfCell(attackTarget.Value) : BestAttackTarget();
 			if (target == null)
 				return;
 
 			lastAttackTick = world.WorldTick;
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target.Value), false, groupedActors: activeArmy));
+			var wave = Claim(availableArmy).ToArray();
+			if (wave.Length == 0)
+				return;
+
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target.Value), false, groupedActors: wave));
+			if (wave.Length >= info.MinWaveSize)
+				CoalitionTelemetry.Log(world, $"Wave of {wave.Length} units launched (reserve {reserveCount} held back)");
+		}
+
+		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>
+		IEnumerable<Actor> Claim(IEnumerable<Actor> units)
+		{
+			return units.Where(claimedUnits.Add).ToArray();
+		}
+
+		/// <summary>Returns the available army: everything except the held-back strategic reserve, unless it is committed.</summary>
+		Actor[] AvailableArmy(IEnumerable<Actor> army)
+		{
+			var list = army as Actor[] ?? army.ToArray();
+			if (reserveCommitted || list.Length < info.ReserveFraction)
+				return list;
+
+			return list.Take(list.Length - list.Length / info.ReserveFraction).ToArray();
 		}
 
 		/// <summary>
@@ -533,9 +600,10 @@ namespace OpenRA.Mods.Common.Traits
 
 			if (transportPhase == 0)
 			{
-				// Load payload units into the transport.
-				var payload = world.Actors
-					.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportPayloadTypes.Contains(a.Info.Name))
+				// Load payload units into the transport. Payload units are claimed so the main army
+				// does not order them elsewhere while they are being inserted.
+				var payload = Claim(world.Actors
+					.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportPayloadTypes.Contains(a.Info.Name)))
 					.Take(4)
 					.ToArray();
 				if (payload.Length > 0 && (cargo == null || cargo.PassengerCount == 0))
@@ -567,8 +635,8 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void UpdateCoordination()
 		{
-			var ownArmyCount = OwnCombatUnits().Count();
-			if (ownArmyCount < info.MinWaveSize)
+			var army = OwnCombatUnits().Where(a => !retreating.Contains(a)).ToArray();
+			if (army.Length < info.MinWaveSize)
 				return;
 
 			var allies = world.Players.Where(p =>
@@ -579,7 +647,9 @@ namespace OpenRA.Mods.Common.Traits
 			if (allies.Length == 0)
 				return;
 
-			// Reinforce an ally whose base is under attack.
+			// Reinforce an ally whose base is under attack. Only unclaimed, non-reserve units are sent,
+			// so reinforcement never strips units the arbiter committed to a wave, feint, or defense.
+			var available = AvailableArmy(army);
 			foreach (var ally in allies)
 			{
 				var allyBase = ally.PlayerActor.TraitsImplementing<StrategicBrainBotModule>()
@@ -591,7 +661,7 @@ namespace OpenRA.Mods.Common.Traits
 				if (ClosestEnemyTo(allyBase.Value, BaseRadiusSquared(info.AllyReinforceScanRadius)) == null)
 					continue;
 
-				var reinforcements = OwnCombatUnits().Take(ownArmyCount / info.ReinforcementFraction).ToArray();
+				var reinforcements = Claim(available).Take(Math.Max(1, available.Length / info.ReinforcementFraction)).ToArray();
 				if (reinforcements.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(allyBase.Value), false, groupedActors: reinforcements));
 			}
