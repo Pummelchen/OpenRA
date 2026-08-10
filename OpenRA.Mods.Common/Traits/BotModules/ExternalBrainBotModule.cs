@@ -10,6 +10,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -51,15 +52,45 @@ namespace OpenRA.Mods.Common.Traits
 			public string Self { get; set; }
 			public string ScreenshotPath { get; set; }
 			public MemberState[] Team { get; set; }
-			public UnitState[] Enemies { get; set; }
+			public EnemyState Enemies { get; set; }
+			public ForceState Force { get; set; }
 		}
 
 		sealed class MemberState
 		{
 			public string Player { get; set; }
 			public int Cash { get; set; }
-			public UnitState[] Units { get; set; }
-			public UnitState[] Structures { get; set; }
+
+			// Compressed composition: per-type counts plus the average army health, so the model's
+			// context is spent on aggregate shape instead of raw unit lists.
+			public CountsState Units { get; set; }
+			public CountsState Structures { get; set; }
+
+			// A handful of units worth calling out: the most damaged, plus scarce special assets.
+			public UnitState[] Notable { get; set; }
+		}
+
+		sealed class CountsState
+		{
+			public int Total { get; set; }
+			public int ArmyHealth { get; set; }
+			public Dictionary<string, int> ByType { get; set; }
+		}
+
+		sealed class EnemyState
+		{
+			public int Total { get; set; }
+			public int X { get; set; }
+			public int Y { get; set; }
+			public Dictionary<string, int> ByType { get; set; }
+		}
+
+		sealed class ForceState
+		{
+			public int Army { get; set; }
+			public int Air { get; set; }
+			public int Naval { get; set; }
+			public int Land { get; set; }
 		}
 
 		sealed class UnitState
@@ -141,37 +172,48 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				Player = p.InternalName,
 				Cash = p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0,
-				Units = TeamActors(world, p, false).Select(a => new UnitState
-				{
-					Type = a.Info.Name,
-					X = a.Location.X,
-					Y = a.Location.Y,
-					HealthPercent = HealthPercent(a)
-				}).ToArray(),
-				Structures = TeamActors(world, p, true).Select(a => new UnitState
-				{
-					Type = a.Info.Name,
-					X = a.Location.X,
-					Y = a.Location.Y,
-					HealthPercent = HealthPercent(a)
-				}).ToArray()
+				Units = Summarize(TeamActors(world, p, false).ToArray()),
+				Structures = Summarize(TeamActors(world, p, true).ToArray()),
+				Notable = TeamActors(world, p, false)
+					.OrderBy(a => HealthPercent(a))
+					.Take(6)
+					.Select(a => new UnitState
+					{
+						Type = a.Info.Name,
+						X = a.Location.X,
+						Y = a.Location.Y,
+						HealthPercent = HealthPercent(a)
+					})
+					.ToArray()
 			}).ToArray();
 
 			// Enemy intel is shared through allied shroud: an enemy is reported if any team member has
-			// explored its position (radar-style team awareness).
-			var enemies = world.Actors
+			// explored its position (radar-style team awareness). Compressed to counts + centroid.
+			var enemyActors = world.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner != player
 					&& a.OccupiesSpace != null
 					&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
 					&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
-				.Select(a => new UnitState
-				{
-					Type = a.Info.Name,
-					X = a.Location.X,
-					Y = a.Location.Y,
-					HealthPercent = HealthPercent(a)
-				})
 				.ToArray();
+
+			var enemyByType = new Dictionary<string, int>();
+			var sumX = 0L;
+			var sumY = 0L;
+			foreach (var a in enemyActors)
+			{
+				enemyByType.TryGetValue(a.Info.Name, out var n);
+				enemyByType[a.Info.Name] = n + 1;
+				sumX += a.Location.X;
+				sumY += a.Location.Y;
+			}
+
+			var enemies = new EnemyState
+			{
+				Total = enemyActors.Length,
+				X = enemyActors.Length == 0 ? -1 : (int)(sumX / enemyActors.Length),
+				Y = enemyActors.Length == 0 ? -1 : (int)(sumY / enemyActors.Length),
+				ByType = enemyByType
+			};
 
 			var state = new TeamState
 			{
@@ -181,10 +223,60 @@ namespace OpenRA.Mods.Common.Traits
 					.Select(m => m.LastCapturePath)
 					.FirstOrDefault(path => path != null),
 				Team = members,
-				Enemies = enemies
+				Enemies = enemies,
+				Force = ComputeForce(world, player, team)
 			};
 
 			return JsonSerializer.Serialize(state, SnapshotOptions);
+		}
+
+		/// <summary>Compresses an actor list into per-type counts plus average health.</summary>
+		static CountsState Summarize(Actor[] actors)
+		{
+			var byType = new Dictionary<string, int>();
+			var totalHealth = 0;
+			foreach (var a in actors)
+			{
+				byType.TryGetValue(a.Info.Name, out var n);
+				byType[a.Info.Name] = n + 1;
+				totalHealth += HealthPercent(a);
+			}
+
+			return new CountsState
+			{
+				Total = actors.Length,
+				ArmyHealth = actors.Length == 0 ? 0 : totalHealth / actors.Length,
+				ByType = byType
+			};
+		}
+
+		/// <summary>Coalition army split (air + naval + land), using the commander's classification lists.</summary>
+		static ForceState ComputeForce(World world, Player player, Player[] team)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			var air = commander?.Info.AirTypes ?? [];
+			var naval = commander?.Info.NavalTypes ?? [];
+
+			var teamIds = team.Select(t => t.InternalName).ToHashSet();
+			var force = new ForceState();
+			foreach (var a in world.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || a.OccupiesSpace == null || !teamIds.Contains(a.Owner.InternalName))
+					continue;
+
+				if (a.Info.HasTraitInfo<BuildingInfo>())
+					continue;
+
+				if (air.Contains(a.Info.Name))
+					force.Air++;
+				else if (naval.Contains(a.Info.Name))
+					force.Naval++;
+				else
+					force.Land++;
+			}
+
+			force.Army = force.Air + force.Naval + force.Land;
+			return force;
 		}
 
 		static IOrderedEnumerable<Actor> TeamActors(World world, Player owner, bool structures)

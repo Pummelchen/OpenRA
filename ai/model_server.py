@@ -143,8 +143,15 @@ class PlanServer(BaseHTTPRequestHandler):
 def dummy_plan(state: dict) -> dict:
     """Deterministic heuristic plan used for testing and as the no-model fallback."""
     team = state.get("team", []) or []
-    own = [u for member in team for u in member.get("units", [])]
-    enemies = state.get("enemies", []) or []
+    own = []
+    for member in team:
+        units = member.get("units", {}) or {}
+        if isinstance(units, dict):
+            for name, n in (units.get("byType") or {}).items():
+                own += [{"type": name}] * n
+        else:
+            own += units
+    enemies = enemy_list(state)
     cash = sum(member.get("cash", 0) for member in team)
     army = [u for u in own if u.get("type") not in ("harv", "mcv")]
     damaged = [u for u in army if u.get("healthPercent", 100) < 30]
@@ -225,25 +232,55 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
     return plan
 
 
-def summarize(units: list) -> str:
+def summarize(units) -> str:
+    """units is either a legacy list of {type} dicts or the compressed counts object {total, byType}."""
     counts = {}
-    for unit in units:
-        key = unit.get("type", "?")
-        counts[key] = counts.get(key, 0) + 1
+    if isinstance(units, dict):
+        for name, n in (units.get("byType") or {}).items():
+            counts[name] = counts.get(name, 0) + n
+    else:
+        for unit in units or []:
+            key = unit.get("type", "?")
+            counts[key] = counts.get(key, 0) + 1
     return ", ".join(f"{count}x {name}" for name, count in sorted(counts.items()))
+
+
+def total_of(units) -> int:
+    if isinstance(units, dict):
+        return int(units.get("total", 0))
+    return len(units or [])
+
+
+def enemy_list(state: dict) -> list:
+    """Enemies are either a legacy list of {x, y, type} dicts or the compressed aggregate {total, x, y, byType}."""
+    enemies = state.get("enemies") or {}
+    if isinstance(enemies, list):
+        return enemies
+
+    result = []
+    for name, n in (enemies.get("byType") or {}).items():
+        for _ in range(n):
+            result.append({"type": name, "x": enemies.get("x", 0), "y": enemies.get("y", 0)})
+    return result
 
 
 def team_summary(state: dict) -> str:
     parts = []
     for member in state.get("team", []) or []:
-        units = member.get("units", []) or []
-        structures = member.get("structures", []) or []
+        units = member.get("units", {}) or {}
+        structures = member.get("structures", {}) or {}
         parts.append(
-            f"{member.get('player')}: cash {member.get('cash', 0)}, {len(units)} units ({summarize(units)}), "
-            f"{len(structures)} structures"
+            f"{member.get('player')}: cash {member.get('cash', 0)}, "
+            f"{total_of(units)} units ({summarize(units)}), {total_of(structures)} structures"
         )
-    enemies = state.get("enemies", []) or []
-    return f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}."
+
+    enemies = enemy_list(state)
+    force = state.get("force") or {}
+    force_part = ""
+    if force:
+        force_part = (f" Coalition force: {force.get('army', 0)} total "
+                      f"({force.get('air', 0)} air, {force.get('naval', 0)} naval, {force.get('land', 0)} land).")
+    return f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}.{force_part}"
 
 
 def sanitize_team_plan(plan: dict, state: dict) -> dict:
@@ -253,7 +290,7 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
         return empty_team_plan()
 
     team_ids = {m.get("player") for m in state.get("team", []) or []}
-    enemies = state.get("enemies", []) or []
+    enemies = enemy_list(state)
     strategy = plan.get("strategy") if plan.get("strategy") in ("attack", "defend", "build", "turtle") else "build"
 
     def target(value):
