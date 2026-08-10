@@ -164,7 +164,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			if (wantAttack && blackboard.EnemyRegion >= 0)
 			{
-				var target = RegionCenter(blackboard.EnemyRegion);
+				var target = BestScoredTarget() ?? RegionCenter(blackboard.EnemyRegion);
 				EnsureMission(MissionType.Attack, 90, target, "Destroy enemy concentration");
 			}
 
@@ -262,16 +262,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (!hasAsset)
 				return null;
 
+			var home = RegionCenter(blackboard.HomeRegion);
 			CPos? best = null;
-			var bestThreat = float.MaxValue;
+			var bestScore = float.MaxValue;
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
 				var region = blackboard.RegionOf(intel.LastSeenCell);
 				var threat = region.Threats[(int)CoalitionCapability.StaticDefense]
 					+ region.Threats[(int)CoalitionCapability.VisionExposure];
-				if (threat < bestThreat)
+				if (home != null)
+					threat += 2f * CombatEstimator.RouteRisk(blackboard, home.Value, intel.LastSeenCell);
+
+				if (threat < bestScore)
 				{
-					bestThreat = threat;
+					bestScore = threat;
+					best = intel.LastSeenCell;
+				}
+			}
+
+			return best;
+		}
+
+		/// <summary>Highest-value enemy structure target, adjusted for the approach route risk.</summary>
+		CPos? BestScoredTarget()
+		{
+			var home = RegionCenter(blackboard.HomeRegion);
+			CPos? best = null;
+			var bestScore = float.MinValue;
+			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			{
+				var value = CombatEstimator.TargetValue(intel.Actor, Classify);
+				var risk = home != null ? CombatEstimator.RouteRisk(blackboard, home.Value, intel.LastSeenCell) : 0;
+				var score = value - 2f * risk;
+				if (score > bestScore)
+				{
+					bestScore = score;
 					best = intel.LastSeenCell;
 				}
 			}

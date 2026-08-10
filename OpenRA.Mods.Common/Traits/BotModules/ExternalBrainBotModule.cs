@@ -54,6 +54,14 @@ namespace OpenRA.Mods.Common.Traits
 			public MemberState[] Team { get; set; }
 			public EnemyState Enemies { get; set; }
 			public ForceState Force { get; set; }
+			public EstimateState Estimate { get; set; }
+		}
+
+		sealed class EstimateState
+		{
+			public float Friendly { get; set; }
+			public float Enemy { get; set; }
+			public float WinRatio { get; set; }
 		}
 
 		sealed class MemberState
@@ -224,10 +232,50 @@ namespace OpenRA.Mods.Common.Traits
 					.FirstOrDefault(path => path != null),
 				Team = members,
 				Enemies = enemies,
-				Force = ComputeForce(world, player, team)
+				Force = ComputeForce(world, player, team),
+				Estimate = ComputeEstimate(world, player, team, enemyActors)
 			};
 
 			return JsonSerializer.Serialize(state, SnapshotOptions);
+		}
+
+		/// <summary>Lanchester-style power estimate of the coalition against the scouted enemy.</summary>
+		static EstimateState ComputeEstimate(World world, Player player, Player[] team, Actor[] enemyActors)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			var infantry = commander?.Info.InfantryTypes ?? [];
+			var armor = commander?.Info.ArmorTypes ?? [];
+			var air = commander?.Info.AirTypes ?? [];
+			var naval = commander?.Info.NavalTypes ?? [];
+
+			UnitClass Classify(Actor a)
+			{
+				if (a.Info.HasTraitInfo<BuildingInfo>())
+					return UnitClass.Structure;
+				if (air.Contains(a.Info.Name))
+					return UnitClass.Air;
+				if (naval.Contains(a.Info.Name))
+					return UnitClass.Naval;
+				if (armor.Contains(a.Info.Name))
+					return UnitClass.Armor;
+				if (infantry.Contains(a.Info.Name))
+					return UnitClass.Infantry;
+				return UnitClass.Support;
+			}
+
+			var teamIds = team.Select(t => t.InternalName).ToHashSet();
+			var friendly = world.Actors.Where(a =>
+				!a.IsDead && a.IsInWorld && a.OccupiesSpace != null && teamIds.Contains(a.Owner.InternalName)
+				&& !a.Info.HasTraitInfo<BuildingInfo>());
+			var friendlyPower = CombatEstimator.ForcePower(friendly, Classify);
+			var enemyPower = CombatEstimator.ForcePower(enemyActors, Classify);
+			var (winRatio, _) = CombatEstimator.Estimate(friendlyPower, enemyPower);
+			return new EstimateState
+			{
+				Friendly = friendlyPower,
+				Enemy = enemyPower,
+				WinRatio = winRatio
+			};
 		}
 
 		/// <summary>Compresses an actor list into per-type counts plus average health.</summary>

@@ -280,7 +280,13 @@ def team_summary(state: dict) -> str:
     if force:
         force_part = (f" Coalition force: {force.get('army', 0)} total "
                       f"({force.get('air', 0)} air, {force.get('naval', 0)} naval, {force.get('land', 0)} land).")
-    return f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}.{force_part}"
+    estimate = state.get("estimate") or {}
+    estimate_part = ""
+    if estimate:
+        estimate_part = (f" Engagement estimate: friendly power {estimate.get('friendly', 0):.1f} vs "
+                         f"enemy {estimate.get('enemy', 0):.1f} (win ratio {estimate.get('winRatio', 0):.2f}).")
+    return (f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}."
+            f"{force_part}{estimate_part}")
 
 
 def sanitize_team_plan(plan: dict, state: dict) -> dict:
