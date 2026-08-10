@@ -624,6 +624,7 @@ Player:
 		MinimumConstructionYardCount: 2
 	StrategicBrainBotModule:
 		RequiresCondition: enable-ai
+		Difficulty: 3
 		ArmyPriority: e1, e3, 2tnk, 3tnk, 4tnk, ttnk, v2rl, heli, mig, jeep, arty
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
@@ -645,6 +646,7 @@ Player:
 		TransportPayloadTypes: e1, e2, e3, e4, e7, spy
 	ExternalBrainBotModule:
 		RequiresCondition: enable-ai
+		Difficulty: 3
 		ExternalBrainUrl: http://127.0.0.1:8765
 		ExternalBrainBreakSeconds: 15
 		ExternalBrainTimeout: 2000

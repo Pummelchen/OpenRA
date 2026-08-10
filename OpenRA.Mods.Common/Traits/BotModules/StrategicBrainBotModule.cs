@@ -99,6 +99,23 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
 
+		[Desc("Difficulty 0-3 (easy, normal, hard, impossible): scales the coordinated-attack threshold, " +
+			"the reserve, and how aggressively the bot commits.")]
+		public readonly int Difficulty = 3;
+
+		/// <summary>Scales a base value by difficulty: 1.5x at 0 down to 0.75x at 3.</summary>
+		public float ScaleDifficulty(float baseValue)
+		{
+			return baseValue * (1.5f - 0.25f * Difficulty);
+		}
+
+		/// <summary>The reserve fraction gets tighter with difficulty: 8 at easy, 3 at impossible.</summary>
+		public int ScaledReserveFraction()
+		{
+			var fractions = new[] { 8, 6, 4, 3 };
+			return fractions[Math.Clamp(Difficulty, 0, 3)];
+		}
+
 		[Desc("Interval (in ticks) between tactical updates.")]
 		public readonly int TacticInterval = 20;
 
@@ -690,11 +707,12 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed
 			// force (air + naval + land). Stealth, diversion, and deception missions run regardless.
-			var coordinated = coalitionArmy >= info.CoordinatedAttackMinimum
+			var coordinatedMinimum = (int)info.ScaleDifficulty(info.CoordinatedAttackMinimum);
+			var coordinated = coalitionArmy >= coordinatedMinimum
 				&& (!info.CoordinatedAttackMixedArms || (coalitionAir > 0 && coalitionNaval > 0 && coalitionLand > 0));
 			if (!coordinated)
 			{
-				var gate = $"coalition {coalitionArmy}/{info.CoordinatedAttackMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand})";
+				var gate = $"coalition {coalitionArmy}/{coordinatedMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand})";
 				if (gate != lastCoordGate)
 				{
 					lastCoordGate = gate;
@@ -749,10 +767,11 @@ namespace OpenRA.Mods.Common.Traits
 		Actor[] AvailableArmy(IEnumerable<Actor> army)
 		{
 			var list = army as Actor[] ?? army.ToArray();
-			if (reserveCommitted || list.Length < info.ReserveFraction)
+			var reserveFraction = info.ScaledReserveFraction();
+			if (reserveCommitted || list.Length < reserveFraction)
 				return list;
 
-			return list.Take(list.Length - list.Length / info.ReserveFraction).ToArray();
+			return list.Take(list.Length - list.Length / reserveFraction).ToArray();
 		}
 
 		/// <summary>

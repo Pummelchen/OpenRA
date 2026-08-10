@@ -38,6 +38,9 @@ namespace OpenRA.Mods.Common.Traits
 			"capture) is only sent this long after the previous analysis was received, giving the game a break.")]
 		public readonly int ExternalBrainBreakSeconds = 15;
 
+		[Desc("Difficulty 0-3: scales the consultation cadence (faster analysis at higher difficulty).")]
+		public readonly int Difficulty = 3;
+
 		[Desc("HTTP request timeout in milliseconds. A timed-out request falls back to the scripted brain.")]
 		public readonly int ExternalBrainTimeout = 2000;
 
@@ -145,7 +148,8 @@ namespace OpenRA.Mods.Common.Traits
 			// its last analysis arrived, and never while a request is still in flight.
 			// lastCompletedTick starts at int.MinValue as a sentinel: subtracting it would overflow,
 			// so treat the sentinel as "a long time ago" to allow the first consultation immediately.
-			var breakTicks = world.Timestep > 0 ? (int)(info.ExternalBrainBreakSeconds * 1000.0 / world.Timestep) : info.ExternalBrainBreakSeconds;
+			var breakSeconds = info.ExternalBrainBreakSeconds * (1.5f - 0.25f * info.Difficulty);
+			var breakTicks = world.Timestep > 0 ? (int)(breakSeconds * 1000.0 / world.Timestep) : info.ExternalBrainBreakSeconds;
 			var sinceLast = lastCompletedTick == int.MinValue ? int.MaxValue : tick - lastCompletedTick;
 			if (requestInFlight || sinceLast < breakTicks)
 				return;

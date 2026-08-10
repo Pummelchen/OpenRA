@@ -82,6 +82,13 @@ namespace OpenRA.Mods.Common.UtilityCommands
 					$"team {client.Team}  faction {client.Faction}  {client.Name}");
 			if (result.Winners.Count > 0)
 				Console.WriteLine($"Winners: {string.Join(", ", result.Winners)}");
+
+			if (result.Events.Count > 0)
+			{
+				Console.WriteLine("Match telemetry:");
+				foreach (var kv in result.Events.OrderByDescending(kv => kv.Value))
+					Console.WriteLine($"  {kv.Key,-16} {kv.Value}");
+			}
 		}
 
 		/// <summary>Loads a map by path (registering it with the mod's map cache) or by installed map uid.</summary>

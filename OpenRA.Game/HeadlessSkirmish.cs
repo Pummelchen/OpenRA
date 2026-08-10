@@ -54,6 +54,9 @@ namespace OpenRA
 			public int ActorCount;
 			public List<ClientSummary> Clients = [];
 			public List<string> Winners = [];
+
+			/// <summary>AI event counts parsed from the telemetry log (waves, feints, scouts, LLM calls...).</summary>
+			public Dictionary<string, int> Events = [];
 		}
 
 		/// <summary>
@@ -197,9 +200,66 @@ namespace OpenRA
 				if (p.WinState == WinState.Won)
 					result.Winners.Add(p.ResolvedPlayerName);
 
+			result.Events = SummarizeTelemetry();
+
 			world.Dispose();
 			orderManager.Dispose();
 			return result;
+		}
+
+		/// <summary>Counts the AI's strategic events from the telemetry log for tuning and self-play.</summary>
+		static Dictionary<string, int> SummarizeTelemetry()
+		{
+			var counts = new Dictionary<string, int>();
+			try
+			{
+				var path = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				if (!File.Exists(path))
+					return counts;
+
+				foreach (var line in File.ReadLines(path))
+				{
+					var key = TelemetryEventKey(line);
+					if (key == null)
+						continue;
+
+					counts.TryGetValue(key, out var n);
+					counts[key] = n + 1;
+				}
+			}
+			catch (IOException)
+			{
+				// Telemetry is best-effort.
+			}
+
+			return counts;
+		}
+
+		static string TelemetryEventKey(string line)
+		{
+			if (line.Contains("Wave of "))
+				return "waves";
+			if (line.Contains("Feint of "))
+				return "feints";
+			if (line.Contains("Recon probe"))
+				return "recon";
+			if (line.Contains("Bait placed"))
+				return "bait";
+			if (line.Contains("Counterattack"))
+				return "counterattacks";
+			if (line.Contains("Scout sent"))
+				return "scouts";
+			if (line.Contains("LLM plan received"))
+				return "llm_plans";
+			if (line.Contains("LLM intent applied"))
+				return "llm_intents";
+			if (line.Contains("Reserve committed"))
+				return "reserve_commits";
+			if (line.Contains("Prerequisite building ordered"))
+				return "prereq_orders";
+			if (line.Contains("Mission "))
+				return "mission_events";
+			return null;
 		}
 
 		/// <summary>Platform stub: headless runs only ever touch the sound device, through a no-op engine.</summary>
