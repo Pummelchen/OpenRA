@@ -183,6 +183,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var attack = active.FirstOrDefault(m => m.Type == MissionType.Attack || m.Type == MissionType.Counterattack || m.Type == MissionType.Raid);
 			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint);
 			var defend = active.FirstOrDefault(m => m.Type == MissionType.Defend);
+			var recon = active.FirstOrDefault(m => m.Type == MissionType.Recon);
 			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps);
 			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat);
 
@@ -193,6 +194,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				AppendTarget(sb, "attack", attack.Target.Value);
 			if (feint != null && feint.Target != null)
 				AppendTarget(sb, "feint", feint.Target.Value);
+			if (recon != null && recon.Target != null)
+				AppendTarget(sb, "recon", recon.Target.Value);
 			if (defend != null && defend.Target != null)
 				AppendTarget(sb, "counter", defend.Target.Value);
 			if (transport != null && transport.Target != null)

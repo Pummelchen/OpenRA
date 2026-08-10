@@ -123,6 +123,9 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Interval (in ticks) between team coordination updates.")]
 		public readonly int CoordinationInterval = 100;
 
+		[Desc("How long (in ticks) after repelling a base attack the counterattack window stays open.")]
+		public readonly int CounterDelayTicks = 400;
+
 		[Desc("Allied bases are reinforced when enemies are spotted within this many cells.")]
 		public readonly int AllyReinforceScanRadius = 40;
 
@@ -167,6 +170,8 @@ namespace OpenRA.Mods.Common.Traits
 
 		Posture posture = Posture.BuildArmy;
 		int lastAttackTick;
+		int lastDefendTick;
+		CPos? counterPos;
 		bool reserveCommitted;
 		bool lastReserveCommitted;
 		string lastCoordGate;
@@ -183,6 +188,7 @@ namespace OpenRA.Mods.Common.Traits
 		string teamRole;
 		CPos? attackTarget;
 		CPos? feintTarget;
+		CPos? reconTarget;
 		CPos? counterTarget;
 		CPos? transportTarget;
 		string transportKind;
@@ -352,6 +358,7 @@ namespace OpenRA.Mods.Common.Traits
 			public string Strategy { get; set; }
 			public TeamTarget Attack { get; set; }
 			public TeamTarget Feint { get; set; }
+			public TeamTarget Recon { get; set; }
 			public TeamTarget Counter { get; set; }
 			public TeamTarget Transport { get; set; }
 			public string TransportKind { get; set; }
@@ -400,6 +407,7 @@ namespace OpenRA.Mods.Common.Traits
 			produceBoost = plan.Produce;
 			attackTarget = ClampCell(ToCell(plan.Attack));
 			feintTarget = ClampCell(ToCell(plan.Feint));
+			reconTarget = ClampCell(ToCell(plan.Recon));
 			counterTarget = ClampCell(ToCell(plan.Counter));
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
@@ -596,9 +604,25 @@ namespace OpenRA.Mods.Common.Traits
 			if (baseThreat != null)
 			{
 				SetPosture(Posture.Defend);
+				lastDefendTick = world.WorldTick;
+				counterPos = world.Map.CellContaining(baseThreat.CenterPosition);
 				var defenders = Claim(activeArmy).ToArray();
 				if (defenders.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
+				return;
+			}
+
+			// Counterattack-after-defense: shortly after repelling an attack, strike back at the
+			// attacker with the whole army - no coordinated gate, the enemy force is weakened.
+			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && activeArmy.Length >= info.MinWaveSize)
+			{
+				var counter = Claim(activeArmy).ToArray();
+				if (counter.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterPos.Value), false, groupedActors: counter));
+					CoalitionTelemetry.Log(world, $"Counterattack with {counter.Length} units after defense");
+				}
+
 				return;
 			}
 
@@ -624,6 +648,17 @@ namespace OpenRA.Mods.Common.Traits
 			// Stealth/transport missions run independently of the main army.
 			if (transportTarget != null && transportKind != null)
 				ExecuteTransportMission();
+
+			// Reconnaissance: probe the designated position with a small force to confirm what is there.
+			if (reconTarget != null)
+			{
+				var recon = Claim(availableArmy).Take(3).ToArray();
+				if (recon.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, reconTarget.Value), false, groupedActors: recon));
+					CoalitionTelemetry.Log(world, $"Recon probe of {recon.Length} units to {reconTarget.Value}");
+				}
+			}
 
 			// Feint: divert a small fraction of the available army to a decoy position. Feint units are
 			// claimed, so the main wave never orders the same units (the feint is no longer overwritten).
