@@ -126,7 +126,9 @@ namespace OpenRA
 			});
 
 			// Bot clients: one per requested bot, alternating team assignment so adjacent slots
-			// belong to different teams.
+			// belong to different teams. BotControllerClientIndex names the admin observer (client 1)
+			// as the host that added the bots: the engine's ValidateOrder drops bot orders unless the
+			// issuing client matches the bot's controller.
 			var slotKeys = lobby.Slots.Keys.ToArray();
 			for (var i = 0; i < bots; i++)
 			{
@@ -137,6 +139,7 @@ namespace OpenRA
 					Name = $"Bot {i + 1}",
 					Slot = slotKeys[i],
 					Bot = botType,
+					BotControllerClientIndex = 1,
 					Faction = factions[i % factions.Length].InternalName,
 					Team = 1 + i % teams,
 					PreferredColor = pr.Color,
