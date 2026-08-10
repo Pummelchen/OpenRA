@@ -124,6 +124,13 @@ namespace OpenRA.Mods.Common.Traits
 
 		public void WorldLoaded(World w, WorldRenderer wr)
 		{
+			if (wr == null)
+			{
+				// Headless simulations run without a renderer; smudge rendering is display-only.
+				// Smudge bookkeeping (dirty/tiles) still runs for gameplay warheads.
+				return;
+			}
+
 			var sprites = smudges.Values.SelectMany(v => Exts.MakeArray(v.Length, x => v.GetSprite(x))).ToList();
 			var sheet = sprites[0].Sheet;
 			var blendMode = sprites[0].BlendMode;
@@ -267,7 +274,7 @@ namespace OpenRA.Mods.Common.Traits
 			world.Map.CustomTerrain.CellEntryChanged -= RemoveUnacceptableSmudgeOnCellChange;
 			world.Map.Ramp.CellEntryChanged -= RemoveUnacceptableSmudgeOnCellChange;
 			world.Map.Height.CellEntryChanged -= RemoveUnacceptableSmudgeOnCellChange;
-			render.Dispose();
+			render?.Dispose();
 			disposed = true;
 		}
 	}

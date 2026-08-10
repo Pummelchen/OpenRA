@@ -242,6 +242,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (a.IsDead || !a.IsInWorld || !teamIds.Contains(a.Owner.InternalName))
 					continue;
 
+				// Player actors have no position and are not part of any force.
+				if (a.OccupiesSpace == null)
+					continue;
+
 				var unitClass = classify(a);
 				var owner = a.Owner.InternalName;
 				if (!groupByOwner.TryGetValue(owner, out var group))
@@ -270,14 +274,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			var structures = World.Actors.Where(a => a.IsInWorld && !a.IsDead && a.Owner == p && a.Info.HasTraitInfo<BuildingInfo>()).ToArray();
 			if (structures.Length == 0)
-				return World.Map.CellContaining(p.PlayerActor.CenterPosition);
+				return p.HomeLocation;
 			return World.Map.CellContaining(structures.Select(a => a.CenterPosition).Average());
 		}
 
 		void ExtractEnemyIntel()
 		{
 			var enemyActors = World.Actors.Where(a =>
-				a.IsInWorld && !a.IsDead && a.Owner != Player && Player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy);
+				a.IsInWorld && !a.IsDead && a.Owner != Player && a.OccupiesSpace != null && Player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy);
 
 			foreach (var a in enemyActors)
 			{

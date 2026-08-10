@@ -220,6 +220,10 @@ namespace OpenRA.Mods.Common.Traits
 				if (player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
 					continue;
 
+				// Player actors have no position and cannot be sighted.
+				if (a.OccupiesSpace == null)
+					continue;
+
 				// Fog-respecting awareness: only record actors in territory we have explored.
 				if (!player.Shroud.IsExplored(a.CenterPosition))
 					continue;
@@ -609,7 +613,7 @@ namespace OpenRA.Mods.Common.Traits
 		IEnumerable<Actor> OwnCombatUnits()
 		{
 			return world.Actors.Where(a =>
-				a.IsInWorld && !a.IsDead && a.Owner == player && !a.Info.HasTraitInfo<BuildingInfo>() &&
+				a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null && !a.Info.HasTraitInfo<BuildingInfo>() &&
 				!info.ExcludeFromArmyTypes.Contains(a.Info.Name));
 		}
 

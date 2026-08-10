@@ -107,6 +107,12 @@ namespace OpenRA.Traits
 
 		public void Add(IEffect effect, WPos position, Size size)
 		{
+			if (worldRenderer == null)
+			{
+				// Headless simulations run without a renderer; effects are not tracked on screen.
+				return;
+			}
+
 			var screenPos = worldRenderer.ScreenPxPosition(position);
 			var screenWidth = Math.Abs(size.Width);
 			var screenHeight = Math.Abs(size.Height);

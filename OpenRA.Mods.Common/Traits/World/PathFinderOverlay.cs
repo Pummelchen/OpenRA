@@ -94,7 +94,7 @@ namespace OpenRA.Mods.Common.Traits
 		public PathFinderOverlay(PathFinderOverlayInfo info)
 		{
 			this.info = info;
-			font = Game.Renderer.Fonts[info.Font];
+			font = Game.Renderer?.Fonts[info.Font];
 		}
 
 		void IWorldLoaded.WorldLoaded(World w, WorldRenderer wr)

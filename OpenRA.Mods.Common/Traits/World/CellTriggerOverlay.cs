@@ -58,7 +58,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		public CellTriggerOverlay(CellTriggerOverlayInfo info)
 		{
-			font = Game.Renderer.Fonts[info.Font];
+			font = Game.Renderer?.Fonts[info.Font];
 			color = info.Color;
 		}
 

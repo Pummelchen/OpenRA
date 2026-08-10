@@ -34,6 +34,15 @@ namespace OpenRA.Mods.Cnc.Traits
 		public ChronoVortexRenderer(Actor self)
 		{
 			renderer = Game.Renderer;
+			if (renderer == null)
+			{
+				// Headless simulations run without a renderer; vortex rendering is display-only.
+				shader = null;
+				vortexBuffer = null;
+				vortexSheet = null;
+				return;
+			}
+
 			shader = renderer.CreateShader(new RenderPostProcessPassTexturedShaderBindings("vortex"));
 
 			vortexSheet = new Sheet(SheetType.BGRA, new Size(512, 512));
@@ -107,8 +116,8 @@ namespace OpenRA.Mods.Cnc.Traits
 
 		void INotifyActorDisposing.Disposing(Actor self)
 		{
-			vortexSheet.Dispose();
-			vortexBuffer.Dispose();
+			vortexSheet?.Dispose();
+			vortexBuffer?.Dispose();
 		}
 	}
 }

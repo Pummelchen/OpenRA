@@ -52,7 +52,7 @@ namespace OpenRA.Mods.Common.Traits.Render
 		public WithTextControlGroupDecoration(Actor self, WithTextControlGroupDecorationInfo info)
 		{
 			this.info = info;
-			font = Game.Renderer.Fonts[info.Font];
+			font = Game.Renderer?.Fonts[info.Font];
 			label = new CachedTransform<int, string>(g => self.World.ControlGroups.Groups[g]);
 		}
 

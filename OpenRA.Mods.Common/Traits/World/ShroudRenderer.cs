@@ -197,6 +197,13 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IWorldLoaded.WorldLoaded(World w, WorldRenderer wr)
 		{
+			if (wr == null)
+			{
+				// Headless simulations run without a renderer; shroud rendering is display-only.
+				cellVisibility = puv => map.Contains(puv) ? Shroud.CellVisibility.Visible | Shroud.CellVisibility.Explored : Shroud.CellVisibility.Hidden;
+				return;
+			}
+
 			// Initialize tile cache
 			// This includes the region outside the visible area to cover any sprites peeking outside the map
 			foreach (var uv in w.Map.AllCells.MapCoords)
@@ -382,8 +389,8 @@ namespace OpenRA.Mods.Common.Traits
 			if (disposed)
 				return;
 
-			shroudLayer.Dispose();
-			fogLayer.Dispose();
+			shroudLayer?.Dispose();
+			fogLayer?.Dispose();
 			disposed = true;
 		}
 	}

@@ -25,6 +25,14 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			this.type = type;
 			renderer = Game.Renderer;
+			if (renderer == null)
+			{
+				// Headless simulations run without a renderer; post-process passes are display-only.
+				shader = null;
+				buffer = null;
+				return;
+			}
+
 			shader = renderer.CreateShader(new RenderPostProcessPassShaderBindings(name));
 			var vertices = new RenderPostProcessPassVertex[]
 			{
@@ -43,6 +51,9 @@ namespace OpenRA.Mods.Common.Traits
 		bool IRenderPostProcessPass.Enabled => Enabled;
 		void IRenderPostProcessPass.Draw(WorldRenderer wr)
 		{
+			if (shader == null)
+				return;
+
 			shader.SetTexture("SourceTexture", Game.Renderer.GetRenderBufferSnapshot());
 			PrepareRender(wr, shader);
 			shader.PrepareRender();
@@ -54,7 +65,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		void INotifyActorDisposing.Disposing(Actor self)
 		{
-			buffer.Dispose();
+			buffer?.Dispose();
 		}
 	}
 }

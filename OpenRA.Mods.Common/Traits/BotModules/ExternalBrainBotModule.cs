@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -103,8 +104,11 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Pace consultations: only ask the model again after the configured break has passed since
 			// its last analysis arrived, and never while a request is still in flight.
+			// lastCompletedTick starts at int.MinValue as a sentinel: subtracting it would overflow,
+			// so treat the sentinel as "a long time ago" to allow the first consultation immediately.
 			var breakTicks = world.Timestep > 0 ? (int)(info.ExternalBrainBreakSeconds * 1000.0 / world.Timestep) : info.ExternalBrainBreakSeconds;
-			if (requestInFlight || tick - lastCompletedTick < breakTicks)
+			var sinceLast = lastCompletedTick == int.MinValue ? int.MaxValue : tick - lastCompletedTick;
+			if (requestInFlight || sinceLast < breakTicks)
 				return;
 
 			// Capture a fresh full-map radar image right before consulting the model.
@@ -157,6 +161,7 @@ namespace OpenRA.Mods.Common.Traits
 			// explored its position (radar-style team awareness).
 			var enemies = world.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner != player
+					&& a.OccupiesSpace != null
 					&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
 					&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
 				.Select(a => new UnitState
@@ -185,7 +190,7 @@ namespace OpenRA.Mods.Common.Traits
 		static IOrderedEnumerable<Actor> TeamActors(World world, Player owner, bool structures)
 		{
 			return world.Actors
-				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == owner && a.Info.HasTraitInfo<BuildingInfo>() == structures)
+				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == owner && a.OccupiesSpace != null && a.Info.HasTraitInfo<BuildingInfo>() == structures)
 				.OrderBy(a => a.ActorID);
 		}
 
@@ -202,7 +207,11 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				using var timeout = new CancellationTokenSource(info.ExternalBrainTimeout);
 				using var content = new StringContent(state, Encoding.UTF8, "application/json");
-				var response = await http.PostAsync(info.ExternalBrainUrl, content, timeout.Token).ConfigureAwait(false);
+
+				// The configured URL is the server base; plans are served from /decide.
+				var url = info.ExternalBrainUrl.EndsWith("/decide", StringComparison.Ordinal)
+					? info.ExternalBrainUrl : info.ExternalBrainUrl.TrimEnd('/') + "/decide";
+				var response = await http.PostAsync(url, content, timeout.Token).ConfigureAwait(false);
 				var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
 				pendingPlan = body;
 			}

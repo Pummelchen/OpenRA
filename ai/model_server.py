@@ -36,7 +36,8 @@ DEFAULT_PORT = 8765
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
 
 # One team plan per consultation round: every allied bot posts the same round key and receives
-# the identical plan, so all friendly bots act as one coordinated force.
+# the identical plan, so all friendly bots act as one coordinated force. Keys are scoped by
+# (round, team) so opposing teams never share plans.
 PLAN_CACHE: dict = {}
 
 MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/completions")
@@ -100,18 +101,35 @@ class PlanServer(BaseHTTPRequestHandler):
             return
 
         try:
-            # One plan per consultation round: all allied bots post the same round key and receive
-            # the identical team plan, so the whole team acts on the same orders.
-            round_key = state.get("round")
-            if round_key is not None and round_key in PLAN_CACHE:
-                plan = PLAN_CACHE[round_key]
+            # One plan per team per consultation round: all allied bots post the same round key and
+            # receive the identical team plan, so the whole team acts on the same orders. The key is
+            # scoped by (round, team), so opposing teams - which share the round counter - keep their
+            # own plans and never receive the other side's decisions.
+            cache_key = self._plan_cache_key(state)
+            if cache_key is not None and cache_key in PLAN_CACHE:
+                plan = PLAN_CACHE[cache_key]
             else:
                 plan = self.server.decide(state)
-                if round_key is not None:
-                    PLAN_CACHE[round_key] = plan
+                if cache_key is not None:
+                    PLAN_CACHE[cache_key] = plan
             self._respond(200, plan)
         except Exception as exc:  # noqa: BLE001 - keep the game running on any backend error
             self._respond(200, empty_team_plan())
+
+    @staticmethod
+    def _plan_cache_key(state: dict):
+        """Cache key for a team plan: (round, team). The team is derived from the allied player ids in
+        the snapshot, which every allied bot computes identically. Falls back to the round alone for
+        snapshots without a team list."""
+        round_key = state.get("round")
+        if round_key is None:
+            return None
+
+        player_ids = sorted(m.get("player") for m in (state.get("team", []) or []) if m.get("player"))
+        if not player_ids:
+            return round_key
+
+        return (round_key, "|".join(player_ids))
 
     def _respond(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")

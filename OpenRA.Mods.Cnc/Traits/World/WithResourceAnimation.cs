@@ -82,6 +82,12 @@ namespace OpenRA.Mods.Cnc.Traits
 			if (--ticks > 0)
 				return;
 
+			if (worldRenderer == null)
+			{
+				// Headless simulations run without a renderer; the resource animation is display-only.
+				return;
+			}
+
 			var cells = new HashSet<CPos>();
 			foreach (var uv in worldRenderer.Viewport.AllVisibleCells.CandidateMapCoords)
 			{

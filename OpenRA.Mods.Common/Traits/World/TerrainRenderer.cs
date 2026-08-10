@@ -81,7 +81,9 @@ namespace OpenRA.Mods.Common.Traits
 		void IWorldLoaded.WorldLoaded(World world, WorldRenderer wr)
 		{
 			worldRenderer = wr;
-			spriteLayer = new TerrainSpriteLayer(world, wr, tileCache.MissingTile, BlendMode.Alpha, world.Type != WorldType.Editor);
+			if (wr != null)
+				spriteLayer = new TerrainSpriteLayer(world, wr, tileCache.MissingTile, BlendMode.Alpha, world.Type != WorldType.Editor);
+
 			foreach (var cell in map.AllCells)
 				UpdateCell(cell);
 
@@ -91,6 +93,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		public void UpdateCell(CPos cell)
 		{
+			if (spriteLayer == null)
+				return;
+
 			var tile = map.Tiles[cell];
 			var palette = terrainInfo.Palette;
 			if (terrainInfo.Templates.TryGetValue(tile.Type, out var template))
@@ -117,7 +122,7 @@ namespace OpenRA.Mods.Common.Traits
 			map.Tiles.CellEntryChanged -= UpdateCell;
 			map.Height.CellEntryChanged -= UpdateCell;
 
-			spriteLayer.Dispose();
+			spriteLayer?.Dispose();
 
 			tileCache.Dispose();
 			disposed = true;

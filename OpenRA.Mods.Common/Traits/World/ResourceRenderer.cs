@@ -137,6 +137,12 @@ namespace OpenRA.Mods.Common.Traits
 
 		protected virtual void WorldLoaded(World w, WorldRenderer wr)
 		{
+			if (wr == null)
+			{
+				// Headless simulations run without a renderer; resource rendering is display-only.
+				return;
+			}
+
 			foreach (var kv in Variants)
 			{
 				var resourceVariants = kv.Value;
@@ -192,6 +198,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		protected void UpdateSpriteLayers(CPos cell, ISpriteSequence sequence, int frame, PaletteReference palette)
 		{
+			if (spriteLayer == null)
+				return;
+
 			// resource.Type is meaningless (and may be null) if resource.Sequence is null
 			if (sequence != null)
 			{
@@ -258,7 +267,7 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 
 			shadowLayer?.Dispose();
-			spriteLayer.Dispose();
+			spriteLayer?.Dispose();
 
 			ResourceLayer.CellChanged -= AddDirtyCell;
 

@@ -75,13 +75,12 @@ namespace OpenRA.Mods.Common.Traits
 			var height = map.MapSize.Height;
 			var isRectangularIsometric = map.Grid.Type == MapGridType.RectangularIsometric;
 			var bitmapWidth = isRectangularIsometric ? 2 * width - 1 : width;
-			var top = map.Grid.MaximumTerrainHeight > 0 ? map.GetCellSpaceBounds().Top : map.Bounds.Top;
 
 			// Per-cell dot colors: own units are green, explored enemies are red.
 			var dotColors = new Dictionary<CPos, Color>();
 			foreach (var a in player.World.Actors)
 			{
-				if (a.IsDead || !a.IsInWorld)
+				if (a.IsDead || !a.IsInWorld || a.OccupiesSpace == null)
 					continue;
 
 				if (a.Owner == player)
@@ -99,7 +98,9 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				for (var x = 0; x < width; x++)
 				{
-					var uv = new MPos(x + map.Bounds.Left, y + top);
+					// The terrain/height cell layers are indexed by full grid coordinates; maps with
+					// offset bounds must sample the grid directly, not map.Bounds-relative cells.
+					var uv = new MPos(x, y);
 					var explored = player.Shroud.IsExplored(uv);
 
 					Color color;

@@ -61,6 +61,12 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IWorldLoaded.WorldLoaded(World world, WorldRenderer wr)
 		{
+			if (wr == null)
+			{
+				// Headless simulations run without a renderer; the in-game UI is display-only.
+				return;
+			}
+
 			if (!world.IsLoadingGameSave && info.ClearRoot)
 				Ui.ResetAll();
 

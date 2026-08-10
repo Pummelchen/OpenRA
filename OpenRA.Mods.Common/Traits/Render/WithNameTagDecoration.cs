@@ -50,7 +50,7 @@ namespace OpenRA.Mods.Common.Traits.Render
 		public WithNameTagDecoration(Actor self, WithNameTagDecorationInfo info)
 			: base(self, info)
 		{
-			font = Game.Renderer.Fonts[info.Font];
+			font = Game.Renderer?.Fonts[info.Font];
 			this.info = info;
 
 			name = self.Owner.ResolvedPlayerName;
