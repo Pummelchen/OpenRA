@@ -10,6 +10,7 @@
 #endregion
 
 using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using OpenRA.Traits;
@@ -55,6 +56,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		[Desc("Counter units prioritized when enemy armor is observed.")]
 		public readonly FrozenSet<string> AntiArmorUnits = [];
+
+		[Desc("Terrain types that count as water for naval feasibility decisions.")]
+		public readonly FrozenSet<string> WaterTerrainTypes = new HashSet<string> { "Water" }.ToFrozenSet();
+
+		[Desc("Minimum size (in cells) of a contiguous explored water body before naval production is " +
+			"considered worthwhile. A shipyard on a tiny lake is wasted, so below this threshold no naval " +
+			"corps is assigned and coordinated strikes do not wait for ships.")]
+		public readonly int BigWaterMinimumCells = 100;
 
 		public override object Create(ActorInitializer init) { return new CoalitionCommandCenterBotModule(this, init); }
 	}
@@ -110,7 +119,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (tick - lastBlackboardTick >= info.BlackboardInterval)
 			{
 				lastBlackboardTick = tick;
-				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify);
+				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
+					info.WaterTerrainTypes, info.BigWaterMinimumCells);
 				UpdateOpponentModel();
 			}
 
@@ -417,13 +427,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>
 		/// Assigns this bot a corps role within the coalition: the strongest naval builder becomes
-		/// the naval corps, the largest army becomes the main corps, everyone else escorts.
+		/// the naval corps, the largest army becomes the main corps, everyone else escorts. Without a
+		/// explored water body big enough for a navy, no naval corps is assigned at all.
 		/// </summary>
 		string AssignRole()
 		{
 			var mine = blackboard.Forces.FirstOrDefault(f => f.Owner == player.InternalName);
 			if (mine == null || blackboard.Forces.Count == 0)
 				return null;
+
+			if (!blackboard.HasBigWater)
+			{
+				// No usable water: no shipyards, no naval production, and no naval corps. Everyone
+				// fights as main/escort so the coalition does not invest in a navy it cannot use.
+				var armyMax = blackboard.Forces.Max(f => f.TotalUnits);
+				return "{\"" + player.InternalName + "\":\"" + (mine.TotalUnits == armyMax && mine.TotalUnits > 0 ? "main" : "escort") + "\"}";
+			}
 
 			var teamNavalMax = blackboard.Forces.Max(f => f.Counts[(int)UnitClass.Naval]);
 			var teamMax = blackboard.Forces.Max(f => f.TotalUnits);
@@ -457,7 +476,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var air = counts[(int)UnitClass.Air];
 			var naval = counts[(int)UnitClass.Naval];
 			var land = counts[(int)UnitClass.Infantry] + counts[(int)UnitClass.Armor];
-			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land}}}";
+
+			// "water" tells the brain whether a big explored water body exists. Without it the mixed-arms
+			// gate must not demand a naval arm, and naval production is skipped.
+			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
 		}
 
 		/// <summary>Returns the region with the least friendly coverage.</summary>

@@ -43,6 +43,21 @@ namespace OpenRA.Mods.Common.Traits
 
 		WaterCheck waterState = WaterCheck.NotChecked;
 
+		/// <summary>
+		/// True when the explored water near the team is large enough to justify naval production.
+		/// The stock 3x3 check alone lets a shipyard be queued for any puddle the radar has seen, so
+		/// an optional larger threshold gates shipyards behind a proper water body.
+		/// </summary>
+		bool HasBigWater()
+		{
+			if (baseBuilder.Info.NavalWaterMinimumCells <= 0)
+				return true;
+
+			return AIUtils.HasLargeWaterBody(world.Map,
+				c => player.Shroud.IsExplored(c) || world.Players.Any(p => p != player && player.RelationshipWith(p) == PlayerRelationship.Ally && p.Shroud.IsExplored(c)),
+				baseBuilder.Info.WaterTerrainTypes, baseBuilder.Info.NavalWaterMinimumCells);
+		}
+
 		public BaseBuilderQueueManager(BaseBuilderBotModule baseBuilder, string category, Player p, PowerManager pm,
 			PlayerResources pr, IResourceLayer rl)
 		{
@@ -103,7 +118,8 @@ namespace OpenRA.Mods.Common.Traits
 
 			if (waterState == WaterCheck.NotChecked)
 			{
-				if (AIUtils.IsAreaAvailable<BaseProvider>(world, player, world.Map, baseBuilder.Info.MaxBaseRadius, baseBuilder.Info.WaterTerrainTypes))
+				if (AIUtils.IsAreaAvailable<BaseProvider>(world, player, world.Map, baseBuilder.Info.MaxBaseRadius, baseBuilder.Info.WaterTerrainTypes)
+					&& HasBigWater())
 					waterState = WaterCheck.EnoughWater;
 				else
 				{

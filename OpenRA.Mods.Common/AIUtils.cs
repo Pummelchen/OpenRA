@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,6 +24,75 @@ namespace OpenRA.Mods.Common
 
 	public static class AIUtils
 	{
+		/// <summary>
+		/// Returns the size of the largest 8-connected region of cells satisfying the predicate.
+		/// </summary>
+		public static int LargestConnectedRegion(int width, int height, Func<int, int, bool> isCell)
+		{
+			var visited = new bool[width * height];
+			var largest = 0;
+			var stack = new Stack<(int X, int Y)>();
+			for (var y = 0; y < height; y++)
+			{
+				for (var x = 0; x < width; x++)
+				{
+					var index = y * width + x;
+					if (visited[index] || !isCell(x, y))
+						continue;
+
+					visited[index] = true;
+					stack.Push((x, y));
+					var count = 0;
+					while (stack.Count > 0)
+					{
+						var (cx, cy) = stack.Pop();
+						count++;
+						for (var dy = -1; dy <= 1; dy++)
+							for (var dx = -1; dx <= 1; dx++)
+							{
+								if (dx == 0 && dy == 0)
+									continue;
+
+								var nx = cx + dx;
+								var ny = cy + dy;
+								if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+									continue;
+
+								var nIndex = ny * width + nx;
+								if (visited[nIndex] || !isCell(nx, ny))
+									continue;
+
+								visited[nIndex] = true;
+								stack.Push((nx, ny));
+							}
+					}
+
+					if (count > largest)
+						largest = count;
+				}
+			}
+
+			return largest;
+		}
+
+		/// <summary>
+		/// True when the explored cells contain a contiguous water body of at least the requested size.
+		/// Only explored water counts, so the bot never acts on water it cannot see.
+		/// </summary>
+		public static bool HasLargeWaterBody(Map map, Func<CPos, bool> isExplored, FrozenSet<string> terrainTypes, int minimumCells)
+		{
+			if (minimumCells <= 0)
+				return true;
+
+			var largest = LargestConnectedRegion(map.MapSize.Width, map.MapSize.Height, (x, y) =>
+			{
+				var cell = new CPos(x, y);
+				return map.Contains(cell) && isExplored(cell) && terrainTypes.Contains(map.GetTerrainInfo(cell).Type);
+			});
+
+			return largest >= minimumCells;
+		}
+
 		public static bool IsAreaAvailable<T>(World world, Player player, Map map, int radius, FrozenSet<string> terrainTypes)
 		{
 			var cells = world.ActorsHavingTrait<T>().Where(a => a.Owner == player);

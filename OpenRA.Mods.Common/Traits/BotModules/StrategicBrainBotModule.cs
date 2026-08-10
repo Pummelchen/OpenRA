@@ -198,6 +198,7 @@ namespace OpenRA.Mods.Common.Traits
 		int coalitionAir;
 		int coalitionNaval;
 		int coalitionLand;
+		bool coalitionHasWater;
 		int attackTick;
 
 		// Team plan state, fed by the external model brain.
@@ -394,6 +395,9 @@ namespace OpenRA.Mods.Common.Traits
 			public int Air { get; set; }
 			public int Naval { get; set; }
 			public int Land { get; set; }
+
+			/// <summary>True when the coalition has explored a water body big enough for a navy.</summary>
+			public bool Water { get; set; }
 		}
 
 		sealed class TeamTarget
@@ -439,6 +443,7 @@ namespace OpenRA.Mods.Common.Traits
 				coalitionAir = plan.Force.Air;
 				coalitionNaval = plan.Force.Naval;
 				coalitionLand = plan.Force.Land;
+				coalitionHasWater = plan.Force.Water;
 			}
 		}
 
@@ -471,7 +476,7 @@ namespace OpenRA.Mods.Common.Traits
 			var pickOrder = new List<string>();
 			if (produceBoost != null)
 				pickOrder.AddRange(produceBoost);
-			if (teamRole == "naval")
+			if (teamRole == "naval" && coalitionHasWater)
 				pickOrder.AddRange(info.NavalPriority);
 			if (enemyAirSpotted)
 				pickOrder.AddRange(info.AntiAirUnits);
@@ -707,12 +712,15 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed
 			// force (air + naval + land). Stealth, diversion, and deception missions run regardless.
+			// When no big water body has been explored yet the naval arm is not required at all:
+			// demanding ships on a map without usable water would block coordinated strikes forever.
 			var coordinatedMinimum = (int)info.ScaleDifficulty(info.CoordinatedAttackMinimum);
 			var coordinated = coalitionArmy >= coordinatedMinimum
-				&& (!info.CoordinatedAttackMixedArms || (coalitionAir > 0 && coalitionNaval > 0 && coalitionLand > 0));
+				&& (!info.CoordinatedAttackMixedArms || (coalitionAir > 0 && coalitionLand > 0
+					&& (!coalitionHasWater || coalitionNaval > 0)));
 			if (!coordinated)
 			{
-				var gate = $"coalition {coalitionArmy}/{coordinatedMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand})";
+				var gate = $"coalition {coalitionArmy}/{coordinatedMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand}, water {(coalitionHasWater ? "yes" : "no")})";
 				if (gate != lastCoordGate)
 				{
 					lastCoordGate = gate;

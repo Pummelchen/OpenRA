@@ -564,6 +564,7 @@ Player:
 		TechTypes: dome, atek, stek, fix, afld, hpad
 		ProductionTypes: barr,tent,weap
 		NavalProductionTypes: spen, syrd
+		NavalWaterMinimumCells: 100
 		NewProductionCashThreshold: 8000
 		SiloTypes: silo
 		DefenseTypes: hbox,pbox,gun,ftur,tsla,agun,sam
@@ -657,6 +658,8 @@ Player:
 		RequiresCondition: enable-ai
 		BlackboardInterval: 40
 		CommandInterval: 100
+		WaterTerrainTypes: Water
+		BigWaterMinimumCells: 100
 		InfantryTypes: e1, e2, e3, e4, e7, dog, shok, spy
 		ArmorTypes: 1tnk, 2tnk, 3tnk, 4tnk, ttnk, stnk, apc, jeep, ftrk, arty, v2rl
 		AirTypes: mig, yak, heli, hind, mh60, badr.bomber, u2

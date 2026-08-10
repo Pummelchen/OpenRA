@@ -123,6 +123,11 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Terrain types which are considered water for base building purposes.")]
 		public readonly FrozenSet<string> WaterTerrainTypes = new HashSet<string> { "Water" }.ToFrozenSet();
 
+		[Desc("Minimum size (in cells) of a contiguous explored water body before naval production " +
+			"buildings (shipyards) are considered. A tiny lake is not worth a shipyard. 0 disables " +
+			"the check (stock behavior).")]
+		public readonly int NavalWaterMinimumCells = 0;
+
 		[Desc("What buildings to the AI should build.", "What integer percentage of the total base must be this type of building.")]
 		public readonly FrozenDictionary<string, int> BuildingFractions = null;
 

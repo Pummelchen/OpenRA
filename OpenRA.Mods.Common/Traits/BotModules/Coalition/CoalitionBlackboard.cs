@@ -10,6 +10,7 @@
 #endregion
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using OpenRA.Primitives;
@@ -185,9 +186,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The region index of the best-known enemy concentration, or -1.</summary>
 		public int EnemyRegion = -1;
 
+		/// <summary>
+		/// True when the coalition has explored a water body large enough to make naval production worthwhile.
+		/// A tiny lake is not worth a shipyard, and without it coordinated strikes never wait for ships.
+		/// </summary>
+		public readonly bool HasBigWater;
+
 		readonly Func<Actor, UnitClass> classify;
 
-		public CoalitionBlackboard(World world, Player player, Player[] team, Func<Actor, UnitClass> classify)
+		public CoalitionBlackboard(World world, Player player, Player[] team, Func<Actor, UnitClass> classify,
+			FrozenSet<string> waterTerrainTypes = null, int bigWaterMinimumCells = 0)
 		{
 			World = world;
 			Player = player;
@@ -203,6 +211,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			ComputeThreats();
 			ComputeStrengths();
 			ComputeHomeAndEnemyRegions();
+
+			// The shipyard/coordinated-strike gates only make sense when the coalition can actually see
+			// a usable body of water. The shroud is shared across the team, so every bot computes the
+			// same result.
+			HasBigWater = waterTerrainTypes != null && AIUtils.HasLargeWaterBody(World.Map,
+				c => Team.Any(ally => ally.Shroud.IsExplored(c)), waterTerrainTypes, bigWaterMinimumCells);
 		}
 
 		static CoalitionRegion[] BuildRegions(World world)
