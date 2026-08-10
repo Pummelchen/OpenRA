@@ -628,6 +628,12 @@ Player:
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
 		CommitReserveRatio: 0.6
+		CoordinatedAttackMinimum: 50
+		ScoutUnitTypes: e1
+		ScoutSquadSize: 25
+		ScoutMinDistance: 40
+		ScoutInterval: 100
+		ScoutSendPerInterval: 3
 		AntiAirUnits: v2rl, e3, mig
 		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
 		AntiInfantryUnits: ftrk, 1tnk, jeep, e4

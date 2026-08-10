@@ -78,6 +78,27 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("The reserve is committed when the scouted enemy army is at most this ratio of ours (e.g. 0.6 = go all-in once we outnumber the enemy 10:6).")]
 		public readonly float CommitReserveRatio = 0.6f;
 
+		[Desc("Attack waves only launch when the coalition force reaches at least this many units.")]
+		public readonly int CoordinatedAttackMinimum = 50;
+
+		[Desc("Attack waves require the coalition to field all three arms: air, naval, and land.")]
+		public readonly bool CoordinatedAttackMixedArms = true;
+
+		[Desc("Cheap infantry types sent to walk alone into unexplored territory (suicide scouts).")]
+		public readonly FrozenSet<string> ScoutUnitTypes = [];
+
+		[Desc("How many scouts (total) are kept walking into unexplored territory.")]
+		public readonly int ScoutSquadSize = 25;
+
+		[Desc("Scouts are sent to unexplored cells at least this many cells from the base.")]
+		public readonly int ScoutMinDistance = 40;
+
+		[Desc("Interval (in ticks) between scout deployments.")]
+		public readonly int ScoutInterval = 100;
+
+		[Desc("How many new scouts are deployed per interval.")]
+		public readonly int ScoutSendPerInterval = 3;
+
 		[Desc("Interval (in ticks) between tactical updates.")]
 		public readonly int TacticInterval = 20;
 
@@ -131,6 +152,7 @@ namespace OpenRA.Mods.Common.Traits
 		readonly Dictionary<Actor, Sighting> sightings = [];
 		readonly HashSet<Actor> retreating = [];
 		readonly HashSet<Actor> claimedUnits = [];
+		readonly HashSet<Actor> scouts = [];
 
 		World world;
 		Player player;
@@ -147,6 +169,13 @@ namespace OpenRA.Mods.Common.Traits
 		int lastAttackTick;
 		bool reserveCommitted;
 		bool lastReserveCommitted;
+		string lastCoordGate;
+
+		// Coalition force summary, fed by the command center through the team plan.
+		int coalitionArmy;
+		int coalitionAir;
+		int coalitionNaval;
+		int coalitionLand;
 
 		// Team plan state, fed by the external model brain.
 		string teamStrategy;
@@ -207,6 +236,10 @@ namespace OpenRA.Mods.Common.Traits
 
 			if (tick % info.BuildPlanInterval == 0)
 				UpdateBuildPlan();
+
+			// Scouts are claimed before tactics so they are never pulled into waves or feints.
+			if (tick % info.ScoutInterval == 0)
+				UpdateScouting();
 
 			if (tick % info.TacticInterval == 0)
 				UpdateTactics();
@@ -324,6 +357,15 @@ namespace OpenRA.Mods.Common.Traits
 			public Dictionary<string, string> Roles { get; set; }
 			public string[] Produce { get; set; }
 			public bool Retreat { get; set; }
+			public TeamForce Force { get; set; }
+		}
+
+		sealed class TeamForce
+		{
+			public int Army { get; set; }
+			public int Air { get; set; }
+			public int Naval { get; set; }
+			public int Land { get; set; }
 		}
 
 		sealed class TeamTarget
@@ -360,6 +402,13 @@ namespace OpenRA.Mods.Common.Traits
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
+			if (plan.Force != null)
+			{
+				coalitionArmy = plan.Force.Army;
+				coalitionAir = plan.Force.Air;
+				coalitionNaval = plan.Force.Naval;
+				coalitionLand = plan.Force.Land;
+			}
 		}
 
 		CPos? ClampCell(CPos? cell)
@@ -418,19 +467,68 @@ namespace OpenRA.Mods.Common.Traits
 			if (idleQueues.Length == 0)
 				return;
 
+			// Produce on every idle queue in parallel: each queue takes the highest-priority unit it can
+			// build, so the air, naval, and land arms all get produced instead of the first pick
+			// monopolizing production.
+			var usedUnits = new HashSet<string>();
+			foreach (var queue in idleQueues)
+			{
+				var unitName = pickOrder.FirstOrDefault(u =>
+					!info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
+				if (unitName == null)
+					continue;
+
+				usedUnits.Add(unitName);
+				bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
+			}
+
+			// Order missing prerequisite buildings for the desired units that no queue can build yet.
+			// The building is only ordered when this queue can build it right now (its own prerequisites
+			// are met) and it is not already queued; otherwise the next pick gets a chance.
 			foreach (var unitName in pickOrder)
 			{
-				// Harvesters, MCVs and other support actors are managed by their dedicated modules.
-				if (info.ExcludeFromArmyTypes.Contains(unitName))
+				if (info.ExcludeFromArmyTypes.Contains(unitName) || usedUnits.Contains(unitName))
 					continue;
 
-				var queue = idleQueues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == unitName));
-				if (queue == null)
+				var missing = MissingPrerequisiteBuilding(unitName);
+				if (missing == null)
 					continue;
 
-				bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
+				var buildingQueue = queues.FirstOrDefault(q => q.Info.Type == "Building");
+				var alreadyQueued = queues.Any(q => q.AllQueued().Any(i => i.Item == missing));
+				if (buildingQueue == null || alreadyQueued || !buildingQueue.BuildableItems().Any(i => i.Name == missing))
+					continue;
+
+				bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, missing, 1));
+				CoalitionTelemetry.Log(world, $"Prerequisite building ordered: {missing} (for {unitName})");
 				break;
 			}
+		}
+
+		/// <summary>Returns the first prerequisite building of a unit that the player has not yet built, or null.</summary>
+		string MissingPrerequisiteBuilding(string unitName)
+		{
+			if (!world.Map.Rules.Actors.TryGetValue(unitName, out var unitInfo))
+				return null;
+
+			var buildable = unitInfo.TraitInfoOrDefault<BuildableInfo>();
+			if (buildable == null)
+				return null;
+
+			foreach (var prerequisite in buildable.Prerequisites)
+			{
+				// Prerequisites may carry ! (invert) and ~ (hide) modifiers; faction and checkbox
+				// prerequisites do not resolve to buildings and are skipped.
+				var name = prerequisite.TrimStart('!', '~');
+				if (!world.Map.Rules.Actors.TryGetValue(name, out var buildingInfo) || !buildingInfo.HasTraitInfo<BuildingInfo>())
+					continue;
+
+				var have = world.Actors.Any(a => !a.IsDead && a.IsInWorld && a.Owner == player && a.Info.Name == name);
+				if (!have)
+					return name;
+			}
+
+			return null;
 		}
 
 		/// <summary>
@@ -537,8 +635,22 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
+			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed
+			// force (air + naval + land). Stealth, diversion, and deception missions run regardless.
+			var coordinated = coalitionArmy >= info.CoordinatedAttackMinimum
+				&& (!info.CoordinatedAttackMixedArms || (coalitionAir > 0 && coalitionNaval > 0 && coalitionLand > 0));
+			if (!coordinated)
+			{
+				var gate = $"coalition {coalitionArmy}/{info.CoordinatedAttackMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand})";
+				if (gate != lastCoordGate)
+				{
+					lastCoordGate = gate;
+					CoalitionTelemetry.Log(world, $"Coordinated force: {gate}");
+				}
+			}
+
 			// Without a decisive force or hostile intent, hold the available army near the base.
-			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize)
+			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize || !coordinated)
 			{
 				if (world.WorldTick - lastAttackTick > info.WithdrawDelayTicks)
 				{
@@ -580,6 +692,72 @@ namespace OpenRA.Mods.Common.Traits
 				return list;
 
 			return list.Take(list.Length - list.Length / info.ReserveFraction).ToArray();
+		}
+
+		/// <summary>
+		/// Suicide scouts: cheap infantry walk alone into different unexplored regions far from the
+		/// base. Losing them is cheap, and each one uncovers a corridor of the map for the coalition.
+		/// </summary>
+		void UpdateScouting()
+		{
+			if (info.ScoutUnitTypes.Count == 0)
+				return;
+
+			var active = scouts.Count(a => a.IsInWorld && !a.IsDead);
+			if (active >= info.ScoutSquadSize)
+				return;
+
+			var baseCenter = BaseCenter();
+			if (baseCenter == null)
+				return;
+
+			var toSend = Math.Min(info.ScoutSendPerInterval, info.ScoutSquadSize - active);
+			if (toSend <= 0)
+				return;
+
+			var infantry = OwnCombatUnits().Where(a => info.ScoutUnitTypes.Contains(a.Info.Name)).ToArray();
+			if (infantry.Length == 0)
+				return;
+
+			var targets = ScoutTargets(baseCenter.Value, toSend);
+			for (var i = 0; i < Math.Min(toSend, Math.Min(infantry.Length, targets.Length)); i++)
+			{
+				var scout = infantry[i];
+				if (!claimedUnits.Add(scout))
+					continue;
+
+				scouts.Add(scout);
+				bot.QueueOrder(new Order("Move", scout, Target.FromCell(world, targets[i]), false));
+				CoalitionTelemetry.Log(world, $"Scout sent to {targets[i]} (shadow far from base)");
+			}
+		}
+
+		/// <summary>Picks unexplored cells at least ScoutMinDistance from the base, spread across the map.</summary>
+		CPos[] ScoutTargets(WPos baseCenter, int count)
+		{
+			var targets = new List<CPos>();
+			var minDistanceSq = (long)WDist.FromCells(info.ScoutMinDistance).Length;
+			minDistanceSq *= minDistanceSq;
+			var stride = Math.Max(4, world.Map.MapSize.Width / 16);
+
+			var index = 0;
+			foreach (var cpos in world.Map.AllCells)
+			{
+				if (++index % stride != 0)
+					continue;
+
+				if (player.Shroud.IsExplored(cpos))
+					continue;
+
+				if ((world.Map.CenterOfCell(cpos) - baseCenter).LengthSquared < minDistanceSq)
+					continue;
+
+				targets.Add(cpos);
+				if (targets.Count >= count)
+					break;
+			}
+
+			return targets.ToArray();
 		}
 
 		/// <summary>

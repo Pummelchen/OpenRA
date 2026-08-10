@@ -216,8 +216,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Corps role assignment: specialize this bot within the coalition (naval/main/escort).
 			var rolesJson = AssignRole();
 
+			// Coalition force summary (army = air + naval + land; structures and support excluded),
+			// consumed by the brain's coordinated-attack gate.
+			var forceJson = BuildForceJson();
+
 			// Build and apply the execution directives.
-			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson);
+			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson);
 			if (llmIntent != null)
 				CoalitionTelemetry.Log(world,
 					$"LLM intent applied: posture={llmIntent.Posture ?? "none"} missions={llmIntent.Missions?.Length ?? 0} produce={llmIntent.Produce?.Length ?? 0} retreat={llmIntent.Retreat}");
@@ -354,6 +358,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				role = "escort";
 
 			return "{\"" + player.InternalName + "\":\"" + role + "\"}";
+		}
+
+		/// <summary>Summarizes the coalition army for the brain's coordinated-attack gate.</summary>
+		string BuildForceJson()
+		{
+			var counts = new int[6];
+			foreach (var force in blackboard.Forces)
+				for (var c = 0; c < 4; c++)
+					counts[c] += force.Counts[c];
+
+			var air = counts[(int)UnitClass.Air];
+			var naval = counts[(int)UnitClass.Naval];
+			var land = counts[(int)UnitClass.Infantry] + counts[(int)UnitClass.Armor];
+			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land}}}";
 		}
 
 		/// <summary>Returns the region with the least friendly coverage.</summary>

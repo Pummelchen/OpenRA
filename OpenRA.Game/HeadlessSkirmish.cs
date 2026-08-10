@@ -66,8 +66,10 @@ namespace OpenRA
 			ArgumentNullException.ThrowIfNull(map);
 			if (bots < 2)
 				throw new ArgumentException("At least two bots are required for a match.");
-			if (teams < 1 || teams > bots)
-				throw new ArgumentException("Teams must be between 1 and the number of bots.");
+			if (teams < 1 || teams > 2)
+				throw new ArgumentException("At most two teams are supported.");
+			if ((bots + teams - 1) / teams > 8)
+				throw new ArgumentException("At most 8 bots per team are supported.");
 			if (maxTicks < 1)
 				throw new ArgumentException("Ticks must be positive.");
 
