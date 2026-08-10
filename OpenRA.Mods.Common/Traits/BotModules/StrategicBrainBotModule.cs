@@ -189,6 +189,7 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? attackTarget;
 		CPos? feintTarget;
 		CPos? reconTarget;
+		CPos? baitTarget;
 		CPos? counterTarget;
 		CPos? transportTarget;
 		string transportKind;
@@ -359,6 +360,7 @@ namespace OpenRA.Mods.Common.Traits
 			public TeamTarget Attack { get; set; }
 			public TeamTarget Feint { get; set; }
 			public TeamTarget Recon { get; set; }
+			public TeamTarget Bait { get; set; }
 			public TeamTarget Counter { get; set; }
 			public TeamTarget Transport { get; set; }
 			public string TransportKind { get; set; }
@@ -408,6 +410,7 @@ namespace OpenRA.Mods.Common.Traits
 			attackTarget = ClampCell(ToCell(plan.Attack));
 			feintTarget = ClampCell(ToCell(plan.Feint));
 			reconTarget = ClampCell(ToCell(plan.Recon));
+			baitTarget = ClampCell(ToCell(plan.Bait));
 			counterTarget = ClampCell(ToCell(plan.Counter));
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
@@ -657,6 +660,18 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, reconTarget.Value), false, groupedActors: recon));
 					CoalitionTelemetry.Log(world, $"Recon probe of {recon.Length} units to {reconTarget.Value}");
+				}
+			}
+
+			// Bait: a small exposed force draws an over-responsive enemy; the counterattack that follows
+			// their push (after our defense) turns into the ambush.
+			if (baitTarget != null)
+			{
+				var bait = Claim(availableArmy).Take(3).ToArray();
+				if (bait.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, baitTarget.Value), false, groupedActors: bait));
+					CoalitionTelemetry.Log(world, $"Bait placed: {bait.Length} units at {baitTarget.Value}");
 				}
 			}
 

@@ -26,7 +26,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Retreat,
 		Transport,
 		Counterattack,
-		SpecialOps
+		SpecialOps,
+		Bait
 	}
 
 	public enum MissionStatus
@@ -184,6 +185,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint);
 			var defend = active.FirstOrDefault(m => m.Type == MissionType.Defend);
 			var recon = active.FirstOrDefault(m => m.Type == MissionType.Recon);
+			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
 			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps);
 			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat);
 
@@ -196,6 +198,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				AppendTarget(sb, "feint", feint.Target.Value);
 			if (recon != null && recon.Target != null)
 				AppendTarget(sb, "recon", recon.Target.Value);
+			if (bait != null && bait.Target != null)
+				AppendTarget(sb, "bait", bait.Target.Value);
 			if (defend != null && defend.Target != null)
 				AppendTarget(sb, "counter", defend.Target.Value);
 			if (transport != null && transport.Target != null)

@@ -124,6 +124,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public bool AttacksHarvesters;
 		public int ExpansionCount;
 
+		/// <summary>"rush", "turtle", "balanced", or "unknown" - derived from the scouted shape.</summary>
+		public string Playstyle = "unknown";
+
+		/// <summary>The most advanced scouted enemy tech direction: "air", "naval", "armor", or "unknown".</summary>
+		public string PredictedBuild = "unknown";
+
 		public void RecordResponseTime(float seconds)
 		{
 			AverageResponseTime = (AverageResponseTime * ResponseSamples + seconds) / (ResponseSamples + 1);

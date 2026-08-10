@@ -189,6 +189,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					EnsureMission(MissionType.Feint, blackboard.Opponent.MovesWholeArmyToDefend ? 75 : 60, feintTarget, "Divert enemy attention");
 			}
 
+			// Bait: an over-responsive enemy is lured by a small exposed force into an ambush position
+			// halfway to our base, where the main army waits to pounce.
+			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
+				&& (blackboard.Opponent.MovesWholeArmyToDefend || blackboard.Opponent.RespondsStronglyToRaids)
+				&& !missions.Missions.Any(m => m.Type == MissionType.Bait))
+			{
+				var home = RegionCenter(blackboard.HomeRegion);
+				var enemy = RegionCenter(blackboard.EnemyRegion);
+				if (home != null && enemy != null)
+					EnsureMission(MissionType.Bait, 55, home.Value + (enemy.Value - home.Value) / 2, "Lure the enemy into an ambush");
+			}
+
 			// Special operations: if a scarce asset is available and enemy structures are known, insert
 			// it against the least-observed enemy region (lowest static-defense and vision threat).
 			if (!missions.Missions.Any(m => m.Type == MissionType.SpecialOps || m.Type == MissionType.Transport))
@@ -258,6 +270,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// whole army to defending - a signal that feints will draw forces away from the main push.
 			blackboard.Opponent.MovesWholeArmyToDefend = blackboard.EnemyRegion >= 0
 				&& blackboard.EnemyIntel.Count(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion) * 2 > total;
+
+			// Playstyle from the scouted shape: an army that outnumbers its own structures is pressing
+			// (rush), structures without a matching army are turtling.
+			var structures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
+			blackboard.Opponent.ExpansionCount = structures;
+			var army = total - structures;
+			blackboard.Opponent.Playstyle = army >= 8 && structures <= 2 ? "rush"
+				: structures >= 5 && army <= structures ? "turtle" : "balanced";
+
+			// Predicted build from the most advanced scouted structure.
+			var build = "unknown";
+			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			{
+				switch (intel.Actor.Info.Name)
+				{
+					case "afld":
+					case "hpad":
+						build = "air";
+						break;
+					case "spen":
+					case "syrd":
+						build = "naval";
+						break;
+					case "dome":
+					case "atek":
+					case "stek":
+						build = "tech";
+						break;
+					case "weap":
+						build = "armor";
+						break;
+				}
+			}
+
+			blackboard.Opponent.PredictedBuild = build;
 		}
 
 		/// <summary>Selects the least-observed enemy structure position for a special insertion.</summary>
@@ -331,6 +378,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionType.Counterattack;
 				case "specialops":
 					return MissionType.SpecialOps;
+				case "bait":
+					return MissionType.Bait;
 				default:
 					return null;
 			}
