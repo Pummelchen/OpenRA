@@ -1,22 +1,30 @@
-# OpenRA — Pummelchen fork
+# OpenRA — Supreme Allied Command AI fork
 
-A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not listed below is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
+A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not described here is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
 ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
 
-## What this fork adds or changes
+## The concept
 
-### Project management
+This fork introduces a new AI game style — **Supreme Allied Command** — set as the default skirmish mode. You can field a team of up to four allied AI bots that fight as **one coordinated army**, commanded by a single strategic brain.
 
-- **Issue forms** (`.github/ISSUE_TEMPLATE/`): structured bug report, feature request, and task templates with required priority and area selection.
-- **Workflow documentation** (`.github/PROJECT_WORKFLOW.md`): issue classification, milestones, triage checklist, and Definition of Ready/Done.
-- **Metadata bootstrap** (`.github/scripts/bootstrap_project_management.py` + `.github/workflows/bootstrap-project-management.yml`): idempotently creates and reconciles the repository's issue labels, milestones, and starter issues, and keeps them in sync on `main`.
-- The repository is configured with these labels, milestones, and starter issues (see the issue tracker).
+The AI is a hybrid:
 
-### Maintenance
+- **Strategic commander (LLM)**: a local vision-capable language model (Gemma 4 E4B, 4-bit MLX quantized) reads a full-map radar snapshot and a precise team report every 15 seconds, then decides strategy, corps roles, attack targets, production counters, and missions.
+- **Tactical executor (deterministic engine code)**: C# controllers carry out the plan — build orders, attack waves, retreats, base defense, feints, and stealth transport insertions.
+- **Coalition**: every allied bot maintains the identical shared world model (deterministic, no message passing), so the whole team always acts on one plan.
 
-- Removed AI-agent onboarding documentation (`.ai/`, `AGENTS.md`, `AI_INDEX.md`).
-- README and INSTALL links updated to point at this repository.
+The AI respects fog of war — it only sees territory the team has explored — but it uses that radar ruthlessly: combined-arms multi-pronged attacks, deception, special operations behind enemy lines, and opponent modeling that adapts to how you play. The design target is an AI that is **nearly impossible to beat by skilled human players**.
+
+## Project layout
+
+- `ai/` — the model stack: `run.sh` launcher, `model_server.py` (brain server, port 8765), `COMMAND_API.md` (the C#↔LLM contract), `brain.log` (prompt/reply monitor).
+- `OpenRA.Mods.Common/Traits/BotModules/` — the AI bot modules: coalition command center, strategic brain, external brain, radar capture.
+- `OpenRA.Game/HeadlessSkirmish.cs` + `OpenRA.Mods.Common/UtilityCommands/SimulateCommand.cs` — headless simulation harness (`--simulate`) for self-play, batch evaluation, and scenario testing.
+
+## Documentation
+
+All design details — the P0–P10 development plan, the AI model stack, and what the skilled human player can expect — live in the [project wiki](https://github.com/Pummelchen/OpenRA/wiki).
 
 ## License
 
