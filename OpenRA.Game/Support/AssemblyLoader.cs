@@ -23,10 +23,22 @@ namespace OpenRA.Support
 {
 	public class AssemblyLoader
 	{
+		// Assemblies loaded into isolated load contexts, keyed by simple name. Keeps
+		// mod-to-mod references inside the isolated contexts: deferring to the default
+		// context copy (which hosts such as the game test host may have loaded) would
+		// split type identity and break trait validation (e.g. Chronoshiftable requires
+		// Mobile) because actors are created from the isolated copies.
+		internal static readonly Dictionary<string, Assembly> LoadedAssemblies = new(StringComparer.Ordinal);
+
 		readonly string mainAssembly;
 		readonly AssemblyLoadContext context;
 
-		public Assembly LoadDefaultAssembly() => context.LoadFromAssemblyPath(mainAssembly);
+		public Assembly LoadDefaultAssembly()
+		{
+			var assembly = context.LoadFromAssemblyPath(mainAssembly);
+			LoadedAssemblies[assembly.GetName().Name] = assembly;
+			return assembly;
+		}
 
 		public AssemblyLoader(string assemblyFile)
 		{
@@ -145,6 +157,13 @@ namespace OpenRA.Support
 
 		protected override Assembly Load(AssemblyName assemblyName)
 		{
+			// Prefer mod assemblies already loaded into isolated contexts: returning the
+			// default-context copy here (when a host such as the game test host has also
+			// loaded the assembly) splits type identity with the isolated copies used to
+			// create actors, breaking trait validation.
+			if (AssemblyLoader.LoadedAssemblies.TryGetValue(assemblyName.Name, out var loaded))
+				return loaded;
+
 			// If default context is preferred, check first for types in the default context unless the dependency has been declared as private
 			try
 			{

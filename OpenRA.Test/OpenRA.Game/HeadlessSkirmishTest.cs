@@ -10,6 +10,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
@@ -20,6 +21,10 @@ namespace OpenRA.Test
 	sealed class HeadlessSkirmishTest
 	{
 		const string TestMapUid = "9d94535ca08292d64acab2b96f4490e5a7aa29ab";
+
+		// Platform.OverrideEngineDir may only be called once per process, so the mod data and map
+		// are loaded once and shared by every test in the fixture.
+		static (ModData ModData, Map Map) loaded;
 
 		[Test(Description = "At most two teams and 8 bots per team are accepted; these checks run before any map work.")]
 		public void TeamCapsEnforced()
@@ -56,13 +61,27 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
+				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+
+				// The telemetry log is append-only and shared across runs, so each run must be
+				// compared on the events it added (the delta), not on the whole file.
+				var firstOffset = TelemetryLength(telemetryPath);
 				var first = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1200, 1234);
+				var firstEvents = TelemetryDelta(telemetryPath, firstOffset);
+
+				var secondOffset = TelemetryLength(telemetryPath);
 				var second = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1200, 1234);
+				var secondEvents = TelemetryDelta(telemetryPath, secondOffset);
 
 				Assert.That(second.Ticks, Is.EqualTo(first.Ticks));
 				Assert.That(second.ActorCount, Is.EqualTo(first.ActorCount));
 				Assert.That(second.GameOver, Is.EqualTo(first.GameOver));
-				Assert.That(second.Events.OrderBy(kv => kv.Key), Is.EqualTo(first.Events.OrderBy(kv => kv.Key)));
+
+				// Game-logic telemetry (waves, feints, recon, scouts...) is deterministic for a
+				// fixed seed. The LLM plan/intent counts are excluded: they come from the live
+				// external brain over async HTTP, whose timing varies between runs.
+				Assert.That(DeterministicEvents(secondEvents).OrderBy(kv => kv.Key),
+					Is.EqualTo(DeterministicEvents(firstEvents).OrderBy(kv => kv.Key)));
 			}
 			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
 			{
@@ -70,8 +89,73 @@ namespace OpenRA.Test
 			}
 		}
 
+		static Dictionary<string, int> DeterministicEvents(Dictionary<string, int> events)
+		{
+			return events.Where(kv => kv.Key != "llm_plans" && kv.Key != "llm_intents")
+				.ToDictionary(kv => kv.Key, kv => kv.Value);
+		}
+
+		static long TelemetryLength(string path)
+		{
+			return File.Exists(path) ? new FileInfo(path).Length : 0;
+		}
+
+		static Dictionary<string, int> TelemetryDelta(string path, long offset)
+		{
+			var counts = new Dictionary<string, int>();
+			if (!File.Exists(path))
+				return counts;
+
+			using (var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+			{
+				stream.Seek(offset, SeekOrigin.Begin);
+				using var reader = new StreamReader(stream);
+				while (reader.ReadLine() is { } line)
+				{
+					var key = TelemetryEventKey(line);
+					if (key == null)
+						continue;
+
+					counts.TryGetValue(key, out var n);
+					counts[key] = n + 1;
+				}
+			}
+
+			return counts;
+		}
+
+		static string TelemetryEventKey(string line)
+		{
+			if (line.Contains("Wave of "))
+				return "waves";
+			if (line.Contains("Feint of "))
+				return "feints";
+			if (line.Contains("Recon probe"))
+				return "recon";
+			if (line.Contains("Bait placed"))
+				return "bait";
+			if (line.Contains("Counterattack"))
+				return "counterattacks";
+			if (line.Contains("Scout sent"))
+				return "scouts";
+			if (line.Contains("LLM plan received"))
+				return "llm_plans";
+			if (line.Contains("LLM intent applied"))
+				return "llm_intents";
+			if (line.Contains("Reserve committed"))
+				return "reserve_commits";
+			if (line.Contains("Prerequisite building ordered"))
+				return "prereq_orders";
+			if (line.Contains("Mission "))
+				return "mission_events";
+			return null;
+		}
+
 		static (ModData ModData, Map Map) LoadModAndMap()
 		{
+			if (loaded.ModData != null)
+				return loaded;
+
 			// The test assembly lives in <repo>/bin; the repository root holds the mods directory.
 			var engineDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
 			if (!Directory.Exists(Path.Combine(engineDir, "mods")))
@@ -90,7 +174,7 @@ namespace OpenRA.Test
 			modData.MapCache.LoadMaps(modData);
 			try
 			{
-				return (modData, modData.MapCache[TestMapUid].ToMap());
+				loaded = (modData, modData.MapCache[TestMapUid].ToMap());
 			}
 			catch (Exception e)
 			{
@@ -99,6 +183,8 @@ namespace OpenRA.Test
 				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
 				return (null, null);
 			}
+
+			return loaded;
 		}
 	}
 }
