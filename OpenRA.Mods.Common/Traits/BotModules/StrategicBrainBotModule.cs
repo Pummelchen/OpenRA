@@ -176,6 +176,7 @@ namespace OpenRA.Mods.Common.Traits
 		int coalitionAir;
 		int coalitionNaval;
 		int coalitionLand;
+		int attackTick;
 
 		// Team plan state, fed by the external model brain.
 		string teamStrategy;
@@ -358,6 +359,7 @@ namespace OpenRA.Mods.Common.Traits
 			public string[] Produce { get; set; }
 			public bool Retreat { get; set; }
 			public TeamForce Force { get; set; }
+			public int AttackTick { get; set; }
 		}
 
 		sealed class TeamForce
@@ -402,6 +404,7 @@ namespace OpenRA.Mods.Common.Traits
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
+			attackTick = plan.AttackTick;
 			if (plan.Force != null)
 			{
 				coalitionArmy = plan.Force.Army;
@@ -650,7 +653,9 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			// Without a decisive force or hostile intent, hold the available army near the base.
-			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize || !coordinated)
+			// The attack tick is the coalition-wide launch window (time-on-target): every allied bot
+			// launches in the same tick range so the waves arrive together.
+			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize || !coordinated || world.WorldTick < attackTick)
 			{
 				if (world.WorldTick - lastAttackTick > info.WithdrawDelayTicks)
 				{
@@ -675,7 +680,13 @@ namespace OpenRA.Mods.Common.Traits
 
 			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target.Value), false, groupedActors: wave));
 			if (wave.Length >= info.MinWaveSize)
-				CoalitionTelemetry.Log(world, $"Wave of {wave.Length} units launched (reserve {reserveCount} held back)");
+			{
+				var waveAir = wave.Count(a => info.AirUnitTypes.Contains(a.Info.Name));
+				var waveNaval = wave.Count(a => info.NavalPriority.Contains(a.Info.Name));
+				var waveLand = wave.Length - waveAir - waveNaval;
+				CoalitionTelemetry.Log(world,
+					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} [{waveLand} land, {waveAir} air, {waveNaval} naval]");
+			}
 		}
 
 		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>

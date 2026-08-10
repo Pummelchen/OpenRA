@@ -220,8 +220,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// consumed by the brain's coordinated-attack gate.
 			var forceJson = BuildForceJson();
 
-			// Build and apply the execution directives.
-			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson);
+			// Build and apply the execution directives. The attack tick is fixed at mission creation,
+			// so every allied bot reads the same launch window and the waves hit together (time-on-target).
+			var attack = missions.Missions.FirstOrDefault(m =>
+				(m.Type == MissionType.Attack || m.Type == MissionType.Counterattack || m.Type == MissionType.Raid)
+				&& m.Status == MissionStatus.Executing);
+			var attackTick = attack != null ? attack.CreatedTick + 400 : -1;
+			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
 			if (llmIntent != null)
 				CoalitionTelemetry.Log(world,
 					$"LLM intent applied: posture={llmIntent.Posture ?? "none"} missions={llmIntent.Missions?.Length ?? 0} produce={llmIntent.Produce?.Length ?? 0} retreat={llmIntent.Retreat}");
@@ -343,7 +348,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return;
 			}
 
-			missions.CreateMission(type, priority, target, objective);
+			missions.CreateMission(type, priority, target, objective, createdTick: world.WorldTick);
 			blackboard.AddEvent("mission_created", target, $"{type}:{objective}");
 		}
 
@@ -375,7 +380,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var teamMax = blackboard.Forces.Max(f => f.TotalUnits);
 
 			string role;
-			if (mine.Counts[(int)UnitClass.Naval] > 0 && mine.Counts[(int)UnitClass.Naval] == teamNavalMax)
+			if (teamNavalMax == 0)
+			{
+				// No navy yet: fix a naval corps to a deterministic team member so shipyards and naval
+				// production actually get built (otherwise nobody is naval, so nobody builds a navy).
+				var ordered = blackboard.Forces.OrderBy(f => f.Owner).ToArray();
+				role = ordered.Length > 1 && mine.Owner == ordered[1].Owner ? "naval" : "escort";
+			}
+			else if (mine.Counts[(int)UnitClass.Naval] > 0 && mine.Counts[(int)UnitClass.Naval] == teamNavalMax)
 				role = "naval";
 			else if (mine.TotalUnits == teamMax && mine.TotalUnits > 0)
 				role = "main";

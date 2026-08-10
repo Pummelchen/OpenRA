@@ -81,9 +81,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public IReadOnlyList<CoalitionMission> Missions => missions;
 
-		public CoalitionMission CreateMission(MissionType type, int priority, CPos? target, string objective, int minForce = 0)
+		public CoalitionMission CreateMission(MissionType type, int priority, CPos? target, string objective, int minForce = 0, int createdTick = 0)
 		{
-			var mission = new CoalitionMission($"OP-{++nextMissionId}", type, 0, priority, target, objective)
+			var mission = new CoalitionMission($"OP-{++nextMissionId}", type, createdTick, priority, target, objective)
 			{
 				MinForce = minForce
 			};
@@ -173,7 +173,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// Converts the highest-priority active missions into the execution directive JSON consumed by
 		/// the strategic brain (strategy/attack/feint/counter/retreat/transport).
 		/// </summary>
-		public string BuildDirectiveJson(CoalitionBlackboard blackboard, string produceJson, bool forceRetreat, string rolesJson = null, string forceJson = null)
+		public string BuildDirectiveJson(CoalitionBlackboard blackboard, string produceJson, bool forceRetreat,
+			string rolesJson = null, string forceJson = null, int attackTick = -1)
 		{
 			var active = missions.Where(m => m.Status == MissionStatus.Executing || m.Status == MissionStatus.Ready)
 				.OrderByDescending(m => m.Priority)
@@ -208,6 +209,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				sb.Append(",\"produce\":").Append(produceJson);
 			if (!string.IsNullOrEmpty(forceJson))
 				sb.Append(",\"force\":").Append(forceJson);
+			if (attackTick >= 0)
+				sb.Append(",\"attackTick\":").Append(attackTick);
 			if (retreat)
 				sb.Append(",\"retreat\":true");
 			sb.Append('}');
