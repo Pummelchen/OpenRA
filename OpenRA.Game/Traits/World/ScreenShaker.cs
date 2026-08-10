@@ -44,6 +44,12 @@ namespace OpenRA.Traits
 		{
 			shakeEffects.RemoveAll(t => t.ExpiryTime == ticks);
 
+			if (worldRenderer == null)
+			{
+				// Headless simulations run without a renderer; the camera shake is display-only.
+				return;
+			}
+
 			var newOffset = shakeEffects.Count > 0 ? GetScrollOffset() : float2.Zero;
 			if (newOffset != previousOffset)
 			{
