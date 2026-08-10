@@ -218,6 +218,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			// Build and apply the execution directives.
 			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson);
+			if (llmIntent != null)
+				CoalitionTelemetry.Log(world,
+					$"LLM intent applied: posture={llmIntent.Posture ?? "none"} missions={llmIntent.Missions?.Length ?? 0} produce={llmIntent.Produce?.Length ?? 0} retreat={llmIntent.Retreat}");
 			llmIntent = null;
 
 			var strategy = directiveJson.Contains("\"strategy\":\"attack\"") ? "attack"

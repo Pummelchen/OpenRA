@@ -234,12 +234,32 @@ namespace OpenRA.Mods.Common.Traits
 			if (commander != null)
 			{
 				commander.ApplyLlmIntent(planJson);
+				CoalitionTelemetry.Log(bot.Player.World, $"LLM plan received: {PlanSummary(planJson)}");
 				return;
 			}
 
 			var brain = bot.Player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			brain?.ApplyTeamPlan(planJson);
+			CoalitionTelemetry.Log(bot.Player.World, $"LLM plan received: {PlanSummary(planJson)}");
+		}
+
+		/// <summary>Compact one-line summary of a plan for the telemetry monitor.</summary>
+		static string PlanSummary(string planJson)
+		{
+			try
+			{
+				using var doc = JsonDocument.Parse(planJson);
+				var root = doc.RootElement;
+				var posture = root.TryGetProperty("posture", out var p) ? p.GetString() : null;
+				var missions = root.TryGetProperty("missions", out var m) ? m.GetArrayLength() : 0;
+				var produce = root.TryGetProperty("produce", out var pr) ? pr.GetArrayLength() : 0;
+				return $"posture={posture ?? "none"} missions={missions} produce={produce}";
+			}
+			catch
+			{
+				return "unparseable";
+			}
 		}
 	}
 }
