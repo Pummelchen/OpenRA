@@ -645,6 +645,7 @@ Player:
 		ExcludeFromArmyTypes: harv, mcv, dog, e7, badr.bomber, u2, mnly, lst
 		TransportTypes: lst
 		TransportPayloadTypes: e1, e2, e3, e4, e7, spy
+		SpecialTypes: spy
 	ExternalBrainBotModule:
 		RequiresCondition: enable-ai
 		Difficulty: 3

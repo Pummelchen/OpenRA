@@ -69,6 +69,10 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Actor types that are loaded into transports for stealth missions.")]
 		public readonly FrozenSet<string> TransportPayloadTypes = [];
 
+		[Desc("Scarce special-operation assets (Tanya, spies, engineers...) that are never pulled " +
+			"into waves and are inserted at designated rear-area targets.")]
+		public readonly FrozenSet<string> SpecialTypes = [];
+
 		[Desc("The fraction of the army (1/N) that is diverted to a feint attack.")]
 		public readonly int FeintFraction = 6;
 
@@ -174,6 +178,20 @@ namespace OpenRA.Mods.Common.Traits
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
 
+		// Exposed to the tactical controllers.
+		internal World World => world;
+		internal Player Player => player;
+		internal IBot Bot => bot;
+		internal StrategicBrainBotModuleInfo Info => info;
+
+		// Per-domain tactical controllers: each executes its own component of a mission (land/air/
+		// naval waves, transports, special insertions) and claims its own units through the arbiter.
+		GroundController ground;
+		AirController air;
+		NavalController naval;
+		TransportController transport;
+		SpecialOpsController specialOps;
+
 		World world;
 		Player player;
 		IBot bot;
@@ -223,6 +241,11 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			this.info = info;
 			world = init.World;
+			ground = new GroundController(this);
+			air = new AirController(this);
+			naval = new NavalController(this);
+			transport = new TransportController(this);
+			specialOps = new SpecialOpsController(this);
 		}
 
 		void IBotRespondToAttack.RespondToAttack(IBot bot, Actor self, AttackInfo e)
@@ -674,6 +697,12 @@ namespace OpenRA.Mods.Common.Traits
 			if (transportTarget != null && transportKind != null)
 				ExecuteTransportMission();
 
+			// Special operations: insert scarce assets at the designated target, on foot when no
+			// transport is available. The asset is claimed so waves never take it.
+			if (transportTarget != null && transportKind != null && specialOps != null)
+				specialOps.Execute(transportTarget, transportKind, transportAvailable: world.Actors.Any(a =>
+					a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportTypes.Contains(a.Info.Name)));
+
 			// Reconnaissance: probe the designated position with a small force to confirm what is there.
 			if (reconTarget != null)
 			{
@@ -745,16 +774,21 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Launch or sustain an attack wave from the available army: the team-designated target takes
 			// priority over the locally scouted enemy, so all allied bots push the same position together.
+			// Each domain controller executes its own component (land/air/naval) so the wave is
+			// coordinated without a single blob order and each domain can later refine its behavior.
 			var target = attackTarget != null ? world.Map.CenterOfCell(attackTarget.Value) : BestAttackTarget();
 			if (target == null)
 				return;
 
 			lastAttackTick = world.WorldTick;
-			var wave = Claim(availableArmy).ToArray();
-			if (wave.Length == 0)
-				return;
+			var priorClaims = claimedUnits.Count;
+			ground?.Attack(availableArmy, target.Value);
+			air?.Attack(availableArmy, target.Value);
+			naval?.Attack(availableArmy, target.Value);
 
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target.Value), false, groupedActors: wave));
+			// Count only the units the domain controllers claimed for this wave (prior claims from
+			// recon/bait/feint are excluded).
+			var wave = claimedUnits.Skip(priorClaims).ToArray();
 			if (wave.Length >= info.MinWaveSize)
 			{
 				var waveAir = wave.Count(a => info.AirUnitTypes.Contains(a.Info.Name));
@@ -766,7 +800,7 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>
-		IEnumerable<Actor> Claim(IEnumerable<Actor> units)
+		internal IEnumerable<Actor> Claim(IEnumerable<Actor> units)
 		{
 			return units.Where(claimedUnits.Add).ToArray();
 		}
@@ -850,48 +884,23 @@ namespace OpenRA.Mods.Common.Traits
 
 		/// <summary>
 		/// Executes a transport mission in phases: load payload units, move the transport to the
-		/// target, then unload. Designed for stealth insertions of infantry behind enemy lines.
+		/// target, then unload. Delegated to the transport controller, which claims the payload so
+		/// the main army does not order it elsewhere during the insertion.
 		/// </summary>
 		void ExecuteTransportMission()
 		{
-			var transport = world.Actors
-				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportTypes.Contains(a.Info.Name))
-				.OrderBy(a => a.ActorID)
-				.FirstOrDefault();
-			if (transport == null)
-				return;
-
-			var targetCell = transportTarget.Value;
-			var cargo = transport.TraitOrDefault<Cargo>();
-
-			if (transportPhase == 0)
+			var advanced = transport.Execute(transportTarget, transportKind, transportPhase);
+			if (advanced)
 			{
-				// Load payload units into the transport. Payload units are claimed so the main army
-				// does not order them elsewhere while they are being inserted.
-				var payload = Claim(world.Actors
-					.Where(a => a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportPayloadTypes.Contains(a.Info.Name)))
-					.Take(4)
-					.ToArray();
-				if (payload.Length > 0 && (cargo == null || cargo.PassengerCount == 0))
-					bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
-
-				if (cargo == null || cargo.PassengerCount > 0 || payload.Length == 0)
-					transportPhase = 1;
-			}
-			else if (transportPhase == 1)
-			{
-				var distance = (transport.CenterPosition - world.Map.CenterOfCell(targetCell)).LengthSquared;
-				if (distance > BaseRadiusSquared(5))
-					bot.QueueOrder(new Order("Move", transport, Target.FromCell(world, targetCell), false));
+				// After unload the mission is complete: release the target and start over.
+				if (transportPhase == 2)
+				{
+					transportPhase = 0;
+					transportTarget = null;
+					transportKind = null;
+				}
 				else
-					transportPhase = 2;
-			}
-			else
-			{
-				bot.QueueOrder(new Order("Unload", transport, false));
-				transportPhase = 0;
-				transportTarget = null;
-				transportKind = null;
+					transportPhase++;
 			}
 		}
 

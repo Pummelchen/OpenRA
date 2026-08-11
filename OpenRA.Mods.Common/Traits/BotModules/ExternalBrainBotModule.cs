@@ -145,9 +145,9 @@ namespace OpenRA.Mods.Common.Traits
 			var tick = world.WorldTick;
 
 			// Pace consultations: only ask the model again after the configured break has passed since
-			// its last analysis arrived, and never while a request is still in flight.
-			// lastCompletedTick starts at int.MinValue as a sentinel: subtracting it would overflow,
-			// so treat the sentinel as "a long time ago" to allow the first consultation immediately.
+			// the last consultation, whether it succeeded or failed. lastCompletedTick starts at
+			// int.MinValue as a sentinel: subtracting it would overflow, so treat the sentinel as
+			// "a long time ago" to allow the first consultation immediately.
 			var breakSeconds = info.ExternalBrainBreakSeconds * (1.5f - 0.25f * info.Difficulty);
 			var breakTicks = world.Timestep > 0 ? (int)(breakSeconds * 1000.0 / world.Timestep) : info.ExternalBrainBreakSeconds;
 			var sinceLast = lastCompletedTick == int.MinValue ? int.MaxValue : tick - lastCompletedTick;
@@ -159,6 +159,9 @@ namespace OpenRA.Mods.Common.Traits
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			radar?.CaptureNow(bot);
 
+			// Record the attempt immediately so a failed consultation (server down, timeout) backs
+			// off to the break interval instead of re-firing a snapshot and radar capture every tick.
+			lastCompletedTick = tick;
 			requestInFlight = true;
 			var state = BuildSnapshot(bot, tick, breakTicks);
 			_ = RequestPlanAsync(state);
