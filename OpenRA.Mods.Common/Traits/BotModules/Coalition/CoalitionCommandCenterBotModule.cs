@@ -58,6 +58,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Counter units prioritized when enemy armor is observed.")]
 		public readonly FrozenSet<string> AntiArmorUnits = [];
 
+		[Desc("Counter units prioritized when enemy infantry is observed.")]
+		public readonly FrozenSet<string> AntiInfantryUnits = [];
+
+		[Desc("Units preferred when the coalition faces enemy naval or submarine capability (and water exists).")]
+		public readonly FrozenSet<string> NavalPriority = [];
+
 		[Desc("Terrain types that count as water for naval feasibility decisions.")]
 		public readonly FrozenSet<string> WaterTerrainTypes = new HashSet<string> { "Water" }.ToFrozenSet();
 
@@ -189,6 +195,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes,
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
 					info.SupportPowerStructures, info.ProductionStructures);
+
+				// The deception record is durable across blackboard rebuilds: it lives on the mission
+				// manager and is copied into every fresh model for the planner and the LLM snapshot.
+				blackboard.DeceptionAttempts = missions.DeceptionAttempts;
+				blackboard.DeceptionSuccesses = missions.DeceptionSuccesses;
+				blackboard.DeceptionEnemiesDrawn = missions.DeceptionEnemiesDrawn;
 				UpdateOpponentModel();
 
 				// Event-driven review: material developments trigger an immediate command instead of
@@ -305,20 +317,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
-			// Enemy models that over-respond to raids make feints more valuable.
+			// Enemy models that over-respond to raids make feints more valuable, and the measured deception
+			// record feeds back: feints that drew enemy responses are funded harder, while a string of
+			// ignored feints (several attempts, zero responses) stops wasting forces on deception the
+			// enemy does not honor.
 			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
-				&& !missions.Missions.Any(m => m.Type == MissionType.Feint))
+				&& !missions.Missions.Any(m => m.Type == MissionType.Feint)
+				&& !DeceptionSaturated())
 			{
 				var feintTarget = FeintRegionTarget();
 				if (feintTarget != null)
-					EnsureMission(MissionType.Feint, blackboard.Opponent.MovesWholeArmyToDefend ? 75 : 60, feintTarget, "Divert enemy attention");
+					EnsureMission(MissionType.Feint, FeintPriority(), feintTarget, "Divert enemy attention");
 			}
 
 			// Bait: an over-responsive enemy is lured by a small exposed force into an ambush position
 			// halfway to our base, where the main army waits to pounce.
 			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
 				&& (blackboard.Opponent.MovesWholeArmyToDefend || blackboard.Opponent.RespondsStronglyToRaids)
-				&& !missions.Missions.Any(m => m.Type == MissionType.Bait))
+				&& !missions.Missions.Any(m => m.Type == MissionType.Bait)
+				&& !DeceptionSaturated())
 			{
 				var home = RegionCenter(blackboard.HomeRegion);
 				var enemy = RegionCenter(blackboard.EnemyRegion);
@@ -650,14 +667,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			blackboard.AddEvent("mission_created", target, $"{type}:{objective}");
 		}
 
+		/// <summary>
+		/// Capability-based production contract: the blackboard's per-region threat fields (derived
+		/// from <see cref="CoalitionBlackboard.CapabilitiesFor"/> intel) are aggregated into one
+		/// profile, and each material enemy capability is answered by its configured counter units -
+		/// strongest threat first, skipping counters the coalition already fields. Returns null when
+		/// no capability is material enough to contract against, letting the brain fall back to its
+		/// base army composition.
+		/// </summary>
 		string BuildProduceJson()
 		{
-			string[] units = null;
-			if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air))
-				units = info.AntiAirUnits.ToArray();
-			else if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Armor))
-				units = info.AntiArmorUnits.ToArray();
+			var profile = ProductionContract.Aggregate(blackboard.Regions);
+			var contracts = new (CoalitionCapability Capability, string[] CounterUnits)[]
+			{
+				(CoalitionCapability.AntiAir, info.AntiAirUnits.ToArray()),
+				(CoalitionCapability.GroundAntiArmor, info.AntiArmorUnits.ToArray()),
+				(CoalitionCapability.GroundAntiInfantry, info.AntiInfantryUnits.ToArray()),
+				(CoalitionCapability.Naval, info.NavalPriority.ToArray()),
+				(CoalitionCapability.Submarine, info.NavalPriority.ToArray())
+			};
 
+			// Friendly coverage: how many of each counter type the coalition already fields, so a
+			// satisfied contract does not keep ordering counters.
+			var fielded = new Dictionary<string, int>();
+			var teamIds = TeamPlayers().Select(p => p.InternalName).ToHashSet();
+			foreach (var a in world.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || a.OccupiesSpace == null || a.Info.HasTraitInfo<BuildingInfo>())
+					continue;
+				if (!teamIds.Contains(a.Owner.InternalName))
+					continue;
+
+				fielded[a.Info.Name] = fielded.GetValueOrDefault(a.Info.Name) + 1;
+			}
+
+			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), blackboard.HasBigWater);
 			if (units == null || units.Length == 0)
 				return null;
 
@@ -768,6 +812,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return RegionCenter(i);
 
 			return null;
+		}
+
+		/// <summary>
+		/// Feint priority grows with the opponent model and the measured deception record: feints that
+		/// drew enemy responses are funded harder, ignored feints are cut back. Never-attempted
+		/// deception is neutral, so the first feint is not penalized for having no history.
+		/// </summary>
+		int FeintPriority()
+		{
+			var effectiveness = missions.DeceptionAttempts == 0 ? 0.5f : blackboard.DeceptionEffectiveness;
+			var basePriority = blackboard.Opponent.MovesWholeArmyToDefend ? 75 : 60;
+			return (int)(basePriority + 15 * (2 * effectiveness - 1));
+		}
+
+		/// <summary>True after several deception attempts drew no response: the enemy ignores feints.</summary>
+		bool DeceptionSaturated()
+		{
+			return missions.DeceptionAttempts >= 3 && missions.DeceptionSuccesses == 0;
 		}
 
 		/// <summary>True when the region is in the same ground-connected component as the home region.</summary>

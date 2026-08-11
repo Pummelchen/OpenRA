@@ -71,6 +71,12 @@ namespace OpenRA.Mods.Common.Traits
 
 			/// <summary>True when the coalition holds a ready strategic superweapon.</summary>
 			public bool HasSuperweapon { get; set; }
+
+			/// <summary>0..1: how often coalition deception (feints/baits) drew a measurable enemy response.</summary>
+			public float DeceptionEffectiveness { get; set; }
+
+			/// <summary>Total enemy units pulled out of position by successful deceptions.</summary>
+			public int DeceptionEnemiesDrawn { get; set; }
 		}
 
 		sealed class MemberState
@@ -284,7 +290,8 @@ namespace OpenRA.Mods.Common.Traits
 			var enemyPower = CombatEstimator.ForcePower(enemyActors, Classify);
 			var (winRatio, _) = CombatEstimator.Estimate(friendlyPower, enemyPower);
 
-			// Support-power readiness from the blackboard so the commander plans with them.
+			// Support-power readiness and the deception record from the blackboard so the commander
+			// plans with them.
 			var blackboard = commander?.Blackboard;
 			return new EstimateState
 			{
@@ -292,7 +299,9 @@ namespace OpenRA.Mods.Common.Traits
 				Enemy = enemyPower,
 				WinRatio = winRatio,
 				SupportPowerReadiness = blackboard?.SupportPowerReadiness ?? 0f,
-				HasSuperweapon = blackboard?.HasReadySuperweapon ?? false
+				HasSuperweapon = blackboard?.HasReadySuperweapon ?? false,
+				DeceptionEffectiveness = blackboard?.DeceptionEffectiveness ?? 0f,
+				DeceptionEnemiesDrawn = blackboard?.DeceptionEnemiesDrawn ?? 0
 			};
 		}
 

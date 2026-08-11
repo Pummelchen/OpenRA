@@ -670,3 +670,5 @@ Player:
 		ArmyPriority: e1, e3, 2tnk, 3tnk, 4tnk, ttnk, v2rl, heli, mig, jeep, arty
 		AntiAirUnits: v2rl, e3, mig
 		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
+		AntiInfantryUnits: ftrk, 1tnk, jeep, e4
+		NavalPriority: ss, msub, dd, ca, pt, lst

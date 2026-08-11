@@ -336,6 +336,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>True when the coalition holds at least one ready strategic superweapon.</summary>
 		public bool HasReadySuperweapon;
 
+		// Deception record: copied in from the command center's durable mission manager each rebuild,
+		// so the planner and the LLM snapshot see how well feints and baits have drawn enemy responses.
+		public int DeceptionAttempts;
+		public int DeceptionSuccesses;
+		public int DeceptionEnemiesDrawn;
+
+		/// <summary>0..1: how often deception drew a measurable enemy response (0 when never attempted).</summary>
+		public float DeceptionEffectiveness => Effectiveness(DeceptionAttempts, DeceptionSuccesses);
+
+		/// <summary>Pure effectiveness formula so it can be unit-tested without a World.</summary>
+		public static float Effectiveness(int attempts, int successes)
+		{
+			return attempts == 0 ? 0f : successes * 1f / attempts;
+		}
+
 		void ExtractEconomy()
 		{
 			foreach (var p in Team)

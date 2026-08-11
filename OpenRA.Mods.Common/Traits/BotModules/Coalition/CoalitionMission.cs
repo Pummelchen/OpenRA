@@ -94,7 +94,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// Telemetry.
 		public int FriendlyValueCommitted;
 		public int EnemyValueEngaged;
-		public int FeintBaselineEnemyCount;
+
+		/// <summary>Enemy presence at the deception target when first evaluated, the response baseline.</summary>
+		public int DeceptionBaselineEnemyCount;
 
 		public CoalitionMission(string id, MissionType type, int createdTick, int priority, CPos? target, string objective)
 		{
@@ -134,6 +136,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly List<CoalitionMission> missions = [];
 		int nextMissionId;
 
+		/// <summary>How many feint/bait missions have been created (deception attempts).</summary>
+		public int DeceptionAttempts;
+
+		/// <summary>How many deceptions drew a measurable enemy response.</summary>
+		public int DeceptionSuccesses;
+
+		/// <summary>Total enemy units pulled out of position by successful deceptions.</summary>
+		public int DeceptionEnemiesDrawn;
+
 		public IReadOnlyList<CoalitionMission> Missions => missions;
 
 		public CoalitionMission CreateMission(MissionType type, int priority, CPos? target, string objective, int minForce = 0, int createdTick = 0)
@@ -143,12 +154,28 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MinForce = minForce
 			};
 			missions.Add(mission);
+
+			// A created feint or bait is a deception attempt; the outcome record feeds the planner.
+			if (type == MissionType.Feint || type == MissionType.Bait)
+				DeceptionAttempts++;
+
 			return mission;
 		}
 
 		public void CancelMission(string id)
 		{
 			missions.RemoveAll(m => m.Id == id);
+		}
+
+		/// <summary>
+		/// Measures whether a deception drew an enemy response: the baseline is the enemy presence at
+		/// the target when the deception was first evaluated, and a response is a later surge of at
+		/// least two units above it. Pure so it can be unit-tested without a World.
+		/// </summary>
+		public static (bool DrewResponse, int EnemyValueEngaged) MeasureDeceptionResponse(int baselineEnemyCount, int nearbyEnemyCount)
+		{
+			var drew = nearbyEnemyCount > baselineEnemyCount && nearbyEnemyCount >= 2;
+			return (drew, drew ? nearbyEnemyCount - baselineEnemyCount : 0);
 		}
 
 		/// <summary>
@@ -195,19 +222,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							continue;
 						}
 
-						// A feint succeeds when it changes enemy behavior: enemy units redeploy toward it.
-						if (mission.Type == MissionType.Feint && mission.Target != null)
+						// A feint or bait succeeds when it changes enemy behavior: enemy units redeploy
+						// toward it. The drawn response feeds the deception record, which the commander
+						// uses to keep funding deception or drop it when the enemy ignores it.
+						if ((mission.Type == MissionType.Feint || mission.Type == MissionType.Bait) && mission.Target != null)
 						{
 							var nearby = blackboard.EnemyIntel.Count(i =>
 								(i.LastSeenCell - mission.Target.Value).LengthSquared <= 20 * 20);
-							if (mission.FeintBaselineEnemyCount == 0)
-								mission.FeintBaselineEnemyCount = nearby;
-							if (nearby > mission.FeintBaselineEnemyCount && nearby >= 2)
+							if (mission.DeceptionBaselineEnemyCount == 0)
+								mission.DeceptionBaselineEnemyCount = nearby;
+
+							var (drew, engaged) = MeasureDeceptionResponse(mission.DeceptionBaselineEnemyCount, nearby);
+							if (drew)
 							{
-								mission.EnemyValueEngaged = nearby - mission.FeintBaselineEnemyCount;
-								mission.OutcomeReason = "enemy redeployed toward feint";
+								mission.EnemyValueEngaged = engaged;
+								mission.OutcomeReason = mission.Type == MissionType.Feint
+									? "enemy redeployed toward feint" : "enemy redeployed toward bait";
+								DeceptionSuccesses++;
+								DeceptionEnemiesDrawn += engaged;
 								CoalitionTelemetry.Log(blackboard.World,
-									$"Feint {mission.Id} effective: drew {mission.EnemyValueEngaged} enemy units; FEINT_EFFECTIVENESS={mission.EnemyValueEngaged * 100f / System.Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
+									$"{mission.Type} {mission.Id} effective: drew {engaged} enemy units; DECEPTION_EFFECTIVENESS={engaged * 100f / System.Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
 								mission.Status = MissionStatus.Succeeded;
 								continue;
 							}
