@@ -131,6 +131,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastWaveTick = int.MinValue;
 		int raidContactTicks;
 
+		// Match-quality telemetry, sampled once per command.
+		readonly CoalitionMatchMetrics matchMetrics = new();
+		int lastMetricsSummaryTick = int.MinValue;
+
 		/// <summary>The tick of the most recent coalition attack wave, for response-time measurement.</summary>
 		public int LastWaveTick => lastWaveTick;
 
@@ -372,6 +376,47 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			brain?.ApplyTeamPlan(directiveJson);
+
+			SampleMatchMetrics();
+		}
+
+		/// <summary>
+		/// Samples coalition combat value, army idle fraction, cohesion, and cash for match-quality
+		/// telemetry, and periodically logs the aggregated summary.
+		/// </summary>
+		void SampleMatchMetrics()
+		{
+			var teamIds = TeamPlayers().Select(p => p.InternalName).ToHashSet();
+			var combatUnits = world.Actors.Where(a =>
+				!a.IsDead && a.IsInWorld && a.OccupiesSpace != null && teamIds.Contains(a.Owner.InternalName)
+				&& !a.Info.HasTraitInfo<BuildingInfo>()).ToArray();
+
+			var friendlyValue = CombatEstimator.ForcePower(combatUnits, Classify);
+			var enemyValue = blackboard.EnemyArmyStrength;
+			var idle = combatUnits.Length == 0 ? 1f : combatUnits.Count(a => a.IsIdle) * 1f / combatUnits.Length;
+
+			// Cohesion: how tightly the army clusters around its center (1 = perfectly together).
+			var cohesion = 0f;
+			if (combatUnits.Length > 1)
+			{
+				var center = combatUnits.Select(a => a.CenterPosition).Average();
+				var maxDist = world.Map.MapSize.Width + world.Map.MapSize.Height;
+				var avgDist = (float)(combatUnits.Average(a => (a.CenterPosition - center).Length) / 1024f);
+				cohesion = Math.Max(0f, 1f - avgDist / Math.Max(1f, maxDist));
+			}
+			else if (combatUnits.Length == 1)
+				cohesion = 1f;
+
+			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
+
+			if (lastMetricsSummaryTick == int.MinValue || world.WorldTick - lastMetricsSummaryTick >= 6000)
+			{
+				lastMetricsSummaryTick = world.WorldTick;
+				CoalitionTelemetry.Log(world, matchMetrics.Summary());
+			}
+
+			if (world.IsGameOver)
+				CoalitionTelemetry.Log(world, matchMetrics.Summary());
 		}
 
 		/// <summary>Updates the opponent model from observed enemy composition and deployment patterns.</summary>
