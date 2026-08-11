@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
@@ -122,6 +123,39 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The coalition's main effort: the single highest-value objective, re-selected
 		/// every command tick so effort concentrates on one area instead of spreading evenly.</summary>
 		CPos? mainEffort;
+
+		// Durable opponent observations. The blackboard (and its opponent model) is rebuilt every
+		// BlackboardInterval, so learned values must live here and be copied into each fresh model.
+		int responseTimeSum;
+		int responseTimeSamples;
+		int lastWaveTick = int.MinValue;
+		int raidContactTicks;
+
+		/// <summary>The tick of the most recent coalition attack wave, for response-time measurement.</summary>
+		public int LastWaveTick => lastWaveTick;
+
+		/// <summary>
+		/// Records an enemy reaction to a coalition attack: the delay between our wave launch and
+		/// the enemy's first response, in seconds. Durable across blackboard rebuilds.
+		/// </summary>
+		public void RecordEnemyResponse(int currentTick)
+		{
+			if (lastWaveTick < 0)
+				return;
+
+			var delayTicks = currentTick - lastWaveTick;
+			if (delayTicks < 0)
+				return;
+
+			responseTimeSum += delayTicks;
+			responseTimeSamples++;
+		}
+
+		/// <summary>Marks the coalition attack wave launch tick, resetting the response timer.</summary>
+		public void MarkWaveLaunch(int tick)
+		{
+			lastWaveTick = tick;
+		}
 
 		static readonly JsonSerializerOptions IntentOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -347,20 +381,44 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (total == 0)
 				return;
 
-			blackboard.Opponent.ArmorBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Armor) * 1f / total;
-			blackboard.Opponent.AirBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Air) * 1f / total;
+			var opponent = blackboard.Opponent;
+			opponent.ArmorBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Armor) * 1f / total;
+			opponent.AirBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Air) * 1f / total;
+			opponent.InfantryBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Infantry) * 1f / total;
+			opponent.NavalBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Naval) * 1f / total;
+			opponent.StaticDefenseBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure) * 1f / total;
 
 			// If many enemy sightings sit away from their base region, the enemy tends to commit its
 			// whole army to defending - a signal that feints will draw forces away from the main push.
-			blackboard.Opponent.MovesWholeArmyToDefend = blackboard.EnemyRegion >= 0
+			opponent.MovesWholeArmyToDefend = blackboard.EnemyRegion >= 0
 				&& blackboard.EnemyIntel.Count(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion) * 2 > total;
+
+			// Preferred attack lane: the region most often hosting enemy sightings away from the base.
+			// Tracks where the enemy tends to mass, so our defense can cover the likely axis.
+			var laneCounts = new Dictionary<int, int>();
+			foreach (var intel in blackboard.EnemyIntel)
+			{
+				var region = blackboard.RegionOf(intel.LastSeenCell).Index;
+				laneCounts[region] = laneCounts.GetValueOrDefault(region) + 1;
+			}
+
+			var bestLane = -1;
+			var bestLaneCount = 0;
+			foreach (var kv in laneCounts)
+				if (kv.Key != blackboard.HomeRegion && kv.Value > bestLaneCount)
+				{
+					bestLane = kv.Key;
+					bestLaneCount = kv.Value;
+				}
+
+			opponent.PreferredAttackLane = bestLane;
 
 			// Playstyle from the scouted shape: an army that outnumbers its own structures is pressing
 			// (rush), structures without a matching army are turtling.
 			var structures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
-			blackboard.Opponent.ExpansionCount = structures;
+			opponent.ExpansionCount = structures;
 			var army = total - structures;
-			blackboard.Opponent.Playstyle = army >= 8 && structures <= 2 ? "rush"
+			opponent.Playstyle = army >= 8 && structures <= 2 ? "rush"
 				: structures >= 5 && army <= structures ? "turtle" : "balanced";
 
 			// Predicted build from the most advanced scouted structure.
@@ -388,7 +446,34 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				}
 			}
 
-			blackboard.Opponent.PredictedBuild = build;
+			opponent.PredictedBuild = build;
+
+			// Profile confidence grows with observations: a single sighting is nearly useless,
+			// dozens of sightings make the biases trustworthy.
+			opponent.Confidence = Math.Clamp(total / 20f, 0f, 1f);
+
+			// Copy the durable learned values into the fresh model: response time from accumulated
+			// wave-to-reaction delays, and raid sensitivity from how much enemy contact our raids
+			// generate.
+			if (responseTimeSamples > 0)
+			{
+				opponent.AverageResponseTime = responseTimeSum * world.Timestep / 1000f / responseTimeSamples;
+				opponent.ResponseSamples = responseTimeSamples;
+			}
+
+			opponent.RespondsStronglyToRaids = raidContactTicks > 0;
+		}
+
+		/// <summary>
+		/// Records enemy contact generated by our raids. Caller (the brain) reports how much enemy
+		/// presence appeared near the raid target; sustained contact marks the enemy as raid-sensitive.
+		/// </summary>
+		public void RecordRaidContact(int enemyUnitsNearRaid)
+		{
+			if (enemyUnitsNearRaid >= 2)
+				raidContactTicks++;
+			else
+				raidContactTicks = Math.Max(0, raidContactTicks - 1);
 		}
 
 		/// <summary>Selects the least-observed enemy structure position for a special insertion.</summary>

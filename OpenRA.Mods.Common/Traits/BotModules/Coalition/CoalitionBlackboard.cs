@@ -115,7 +115,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	public sealed class OpponentModel
 	{
 		public float ArmorBias;
+		public float InfantryBias;
 		public float AirBias;
+		public float NavalBias;
 		public float StaticDefenseBias;
 		public int PreferredAttackLane = -1;
 		public float AverageResponseTime;
@@ -124,6 +126,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public bool MovesWholeArmyToDefend;
 		public bool AttacksHarvesters;
 		public int ExpansionCount;
+
+		/// <summary>0..1 confidence in the profile: more observations make the model more reliable.</summary>
+		public float Confidence;
 
 		/// <summary>"rush", "turtle", "balanced", or "unknown" - derived from the scouted shape.</summary>
 		public string Playstyle = "unknown";

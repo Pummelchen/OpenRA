@@ -255,9 +255,14 @@ namespace OpenRA.Mods.Common.Traits
 			if (player.RelationshipWith(e.Attacker.Owner) != PlayerRelationship.Enemy)
 				return;
 
-			// An enemy attacked one of our actors: raise the alarm and prepare to defend.
+			// An enemy attacked one of our actors: raise the alarm and prepare to defend, and record
+			// how quickly the enemy reacted to our last wave (response-time sample for the model).
 			lastAttackTick = world.WorldTick;
 			SetPosture(Posture.Defend);
+
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			commander?.RecordEnemyResponse(world.WorldTick);
 		}
 
 		void IBotTick.BotTick(IBot bot)
@@ -784,6 +789,23 @@ namespace OpenRA.Mods.Common.Traits
 			ground?.Attack(availableArmy, target.Value);
 			air?.Attack(availableArmy, target.Value);
 			naval?.Attack(availableArmy, target.Value);
+
+			// Mark the wave launch so the opponent model can measure the enemy's response time,
+			// and record how much enemy contact this raid generated (raid-sensitivity signal).
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			if (commander != null)
+			{
+				commander.MarkWaveLaunch(world.WorldTick);
+				if (attackTarget != null)
+				{
+					var enemiesNearRaid = world.Actors.Count(a =>
+						a.IsInWorld && !a.IsDead && a.Owner != player && a.OccupiesSpace != null
+						&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
+						&& (a.CenterPosition - world.Map.CenterOfCell(attackTarget.Value)).LengthSquared <= BaseRadiusSquared(20));
+					commander.RecordRaidContact(enemiesNearRaid);
+				}
+			}
 
 			// Count only the units the domain controllers claimed for this wave (prior claims from
 			// recon/bait/feint are excluded).
