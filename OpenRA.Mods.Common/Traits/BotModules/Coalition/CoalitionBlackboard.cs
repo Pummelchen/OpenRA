@@ -208,16 +208,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public readonly bool HasBigWater;
 
 		readonly Func<Actor, UnitClass> classify;
+		readonly FrozenSet<string> artilleryTypes;
+		readonly FrozenSet<string> submarineTypes;
+		readonly FrozenSet<string> detectionTypes;
+		readonly FrozenSet<string> supportPowerStructures;
+		readonly FrozenSet<string> productionStructures;
 
 		public CoalitionBlackboard(World world, Player player, Player[] team, Func<Actor, UnitClass> classify,
 			FrozenSet<string> waterTerrainTypes = null, int bigWaterMinimumCells = 0,
-			FrozenSet<string> valuableResourceTypes = null)
+			FrozenSet<string> valuableResourceTypes = null, FrozenSet<string> artilleryTypes = null,
+			FrozenSet<string> submarineTypes = null, FrozenSet<string> detectionTypes = null,
+			FrozenSet<string> supportPowerStructures = null, FrozenSet<string> productionStructures = null)
 		{
 			World = world;
 			Player = player;
 			Team = team;
 			Tick = world.WorldTick;
 			this.classify = classify;
+			this.artilleryTypes = artilleryTypes ?? new HashSet<string> { "arty", "v2rl" }.ToFrozenSet();
+			this.submarineTypes = submarineTypes ?? new HashSet<string> { "ss", "msub" }.ToFrozenSet();
+			this.detectionTypes = detectionTypes ?? new HashSet<string> { "dog", "rdr" }.ToFrozenSet();
+			this.supportPowerStructures = supportPowerStructures ?? new HashSet<string> { "iron", "pdox" }.ToFrozenSet();
+			this.productionStructures = productionStructures ?? new HashSet<string>
+			{
+				"weap", "afld", "hpad", "spen", "syrd", "barr", "tent", "fact", "atek", "stek", "dome"
+			}.ToFrozenSet();
 
 			// Static terrain analysis: region graph, chokepoints, components, resources. Cached per map.
 			MapAnalysis = CoalitionMapAnalysis.ForMap(world, waterTerrainTypes ?? new HashSet<string> { "Water" }.ToFrozenSet(),
@@ -349,8 +364,50 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// Maps a scouted enemy actor onto its threat capabilities. Pure and deterministic so it can
+		/// be unit-tested without a World: given the type lists and the actor's class, returns the set
+		/// of <see cref="CoalitionCapability"/> values the actor seeds.
+		/// </summary>
+		public static IEnumerable<CoalitionCapability> CapabilitiesFor(UnitClass unitClass, string type,
+			FrozenSet<string> artilleryTypes, FrozenSet<string> submarineTypes, FrozenSet<string> detectionTypes,
+			FrozenSet<string> supportPowerStructures, FrozenSet<string> productionStructures)
+		{
+			switch (unitClass)
+			{
+				case UnitClass.Air:
+					yield return CoalitionCapability.AntiAir;
+					yield return CoalitionCapability.AirToAir;
+					break;
+				case UnitClass.Armor:
+					yield return CoalitionCapability.GroundAntiArmor;
+					break;
+				case UnitClass.Infantry:
+					yield return CoalitionCapability.GroundAntiInfantry;
+					break;
+				case UnitClass.Naval:
+					yield return CoalitionCapability.Naval;
+					break;
+				case UnitClass.Structure:
+					yield return CoalitionCapability.StaticDefense;
+					break;
+			}
+
+			if (artilleryTypes.Contains(type))
+				yield return CoalitionCapability.Artillery;
+			if (submarineTypes.Contains(type))
+				yield return CoalitionCapability.Submarine;
+			if (detectionTypes.Contains(type))
+				yield return CoalitionCapability.Detection;
+			if (unitClass == UnitClass.Structure && productionStructures.Contains(type))
+				yield return CoalitionCapability.Reinforcement;
+			if (unitClass == UnitClass.Structure && supportPowerStructures.Contains(type))
+				yield return CoalitionCapability.SupportPowerRisk;
+		}
+
+		/// <summary>
 		/// Independent per-region threat fields per combat capability, derived deterministically from
-		/// enemy intel classes. The LLM and mission planners weight routes and targets with these.
+		/// enemy intel classes and type lists. The LLM and mission planners weight routes and targets
+		/// with these.
 		/// </summary>
 		void ComputeThreats()
 		{
@@ -358,25 +415,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				var region = RegionOf(intel.LastSeenCell);
 				var threats = region.Threats;
-				switch (intel.Class)
-				{
-					case UnitClass.Air:
-						threats[(int)CoalitionCapability.AntiAir] = Max(threats[(int)CoalitionCapability.AntiAir], intel.Confidence);
-						threats[(int)CoalitionCapability.AirToAir] = Max(threats[(int)CoalitionCapability.AirToAir], intel.Confidence);
-						break;
-					case UnitClass.Armor:
-						threats[(int)CoalitionCapability.GroundAntiArmor] = Max(threats[(int)CoalitionCapability.GroundAntiArmor], intel.Confidence);
-						break;
-					case UnitClass.Infantry:
-						threats[(int)CoalitionCapability.GroundAntiInfantry] = Max(threats[(int)CoalitionCapability.GroundAntiInfantry], intel.Confidence);
-						break;
-					case UnitClass.Naval:
-						threats[(int)CoalitionCapability.Naval] = Max(threats[(int)CoalitionCapability.Naval], intel.Confidence);
-						break;
-					case UnitClass.Structure:
-						threats[(int)CoalitionCapability.StaticDefense] = Max(threats[(int)CoalitionCapability.StaticDefense], intel.Confidence);
-						break;
-				}
+				foreach (var capability in CapabilitiesFor(intel.Class, intel.Type, artilleryTypes, submarineTypes,
+					detectionTypes, supportPowerStructures, productionStructures))
+					threats[(int)capability] = Max(threats[(int)capability], intel.Confidence);
 			}
 
 			// Exposure: regions with little friendly coverage are riskier to move through.

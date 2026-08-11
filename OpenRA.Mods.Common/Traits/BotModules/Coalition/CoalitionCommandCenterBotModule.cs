@@ -63,6 +63,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Resource types that count as valuable for expansion scoring.")]
 		public readonly FrozenSet<string> ValuableResourceTypes = new HashSet<string> { "Ore", "Gems" }.ToFrozenSet();
 
+		[Desc("Enemy actor types that threaten artillery/indirect fire.")]
+		public readonly FrozenSet<string> ArtilleryTypes = new HashSet<string> { "arty", "v2rl" }.ToFrozenSet();
+
+		[Desc("Enemy actor types that are submarines.")]
+		public readonly FrozenSet<string> SubmarineTypes = new HashSet<string> { "ss", "msub" }.ToFrozenSet();
+
+		[Desc("Enemy actor types that detect stealth.")]
+		public readonly FrozenSet<string> DetectionTypes = new HashSet<string> { "dog", "rdr" }.ToFrozenSet();
+
+		[Desc("Enemy structures that represent support-power danger (superweapons).")]
+		public readonly FrozenSet<string> SupportPowerStructures = new HashSet<string> { "iron", "pdox" }.ToFrozenSet();
+
+		[Desc("Enemy structures that produce units, seeding reinforcement threat.")]
+		public readonly FrozenSet<string> ProductionStructures = new HashSet<string>
+		{
+			"weap", "afld", "hpad", "spen", "syrd", "barr", "tent", "fact", "atek", "stek", "dome"
+		}.ToFrozenSet();
+
 		[Desc("Minimum size (in cells) of a contiguous explored water body before naval production is " +
 			"considered worthwhile. A shipyard on a tiny lake is wasted, so below this threshold no naval " +
 			"corps is assigned and coordinated strikes do not wait for ships.")]
@@ -123,7 +141,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lastBlackboardTick = tick;
 				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
-					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes);
+					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes,
+					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
+					info.SupportPowerStructures, info.ProductionStructures);
 				UpdateOpponentModel();
 			}
 
