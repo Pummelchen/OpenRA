@@ -149,6 +149,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
 					info.SupportPowerStructures, info.ProductionStructures);
 				UpdateOpponentModel();
+
+				// Event-driven review: material developments trigger an immediate command instead of
+				// waiting for the next interval. Debounced to the blackboard interval so an event
+				// storm (many discoveries in one tick) collapses into a single review.
+				if (tick - lastCommandTick >= info.BlackboardInterval)
+				{
+					var trigger = ReviewTrigger();
+					if (trigger != null)
+					{
+						lastCommandTick = tick;
+						CoalitionTelemetry.Log(world, $"Event-driven review: {trigger}");
+						RunCommand();
+					}
+				}
 			}
 
 			if (tick - lastCommandTick >= info.CommandInterval && blackboard != null)
@@ -156,6 +170,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				lastCommandTick = tick;
 				RunCommand();
 			}
+		}
+
+		// State for detecting material events between reviews.
+		readonly StrategicEventDetector eventDetector = new();
+
+		/// <summary>
+		/// Detects a material event worth an immediate strategic review, or null. Compares the current
+		/// blackboard against the previous review: enemy base discovery, enemy composition changes,
+		/// loss of allied production, loss of contact with the enemy, and discovery of a high-value
+		/// enemy structure all wake the commander.
+		/// </summary>
+		string ReviewTrigger()
+		{
+			var enemyStructures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
+			var ownStructures = world.Actors.Count(a =>
+				a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.HasTraitInfo<BuildingInfo>());
+			var highValueSeen = blackboard.EnemyIntel.Any(i =>
+				TargetEvaluator.TechnologyValue(i.Type) > 0 || TargetEvaluator.EconomicValue(i.Type) > 0);
+
+			return eventDetector.Detect(blackboard.EnemyRegion, enemyStructures, ownStructures,
+				blackboard.EnemyIntel.Count, highValueSeen);
 		}
 
 		/// <summary>All allied players with an enabled bot, including this one.</summary>

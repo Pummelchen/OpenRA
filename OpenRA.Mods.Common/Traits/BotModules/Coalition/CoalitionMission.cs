@@ -245,9 +245,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>
 		/// Advances the mission one phase when its transition condition is satisfied. Returns false when
 		/// the mission should not receive further objective evaluation this tick (it just changed phase).
+		/// Non-offensive missions (recon, feint, bait, retreat) do not run the offensive pipeline:
+		/// their phases are terminal by construction, and completion is decided by the caller.
 		/// </summary>
 		static bool AdvancePhase(CoalitionBlackboard blackboard, CoalitionMission mission)
 		{
+			// Recon, deception, and withdrawal missions stay in their own phase; only offensive
+			// missions (attack, raid, counterattack, transport, special ops) walk the pipeline.
+			if (mission.Type == MissionType.Recon || mission.Type == MissionType.Feint
+				|| mission.Type == MissionType.Bait || mission.Type == MissionType.Retreat)
+				return true;
+
 			var phaseAge = blackboard.Tick - mission.PhaseTick;
 			var targetRegion = mission.Target != null ? blackboard.RegionOf(mission.Target.Value).Index : -1;
 
@@ -277,11 +285,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return true;
 
 				case MissionPhase.Deception:
-					// Deception completes after a fixed window, or immediately for missions without a
-					// real deception component (feints and baits ARE the deception and stay here).
-					if (mission.Type == MissionType.Feint || mission.Type == MissionType.Bait)
-						return true;
-
+					// Deception completes after a fixed window; feints and baits are excluded above
+					// so only attacks with a real deception component pass through here.
 					if (phaseAge >= 90)
 						return Transition(blackboard, mission, MissionPhase.Breach, "deception window elapsed");
 					return true;
