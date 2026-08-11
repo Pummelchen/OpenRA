@@ -270,6 +270,28 @@ The commander is offered tools; it must use them instead of estimating mechanics
 **Rule:** the commander may *not* move/attack individual units except through a
 tightly-scoped `emergency_unit_order` tool (survival only).
 
+### Tool endpoint (`tool.call.v1`)
+
+The engine serves the tools over HTTP from the running game (`ToolApiBotModule`,
+`http://127.0.0.1:8766/tools`). Every request is validated against the live blackboard
+(regions, forces, capabilities, coordinates) and answered from deterministic engine
+computations; the model server forwards the commander's function calls here and relays
+the results verbatim:
+
+```json
+// request
+{ "tool": "estimate_engagement", "arguments": { "force_a": "Multi0", "force_b": "Multi1" } }
+// response
+{ "ok": true, "result": { "force_a_power": 32.0, "force_b_power": 8.0, "win_ratio": 4.0,
+  "expected_friendly_loss_fraction": 0.0, "expected_enemy_loss_fraction": 0.75, "model_version": "v1" } }
+// rejection
+{ "ok": false, "error": "UNKNOWN_REFERENCE", "message": "Unknown region \"99\"." }
+```
+
+Error codes: `INVALID_REQUEST`, `INVALID_ARGUMENTS`, `UNKNOWN_TOOL`, `UNKNOWN_REFERENCE`,
+`NOT_READY` (engine state not yet built). The endpoint is read-only — tool calls never
+issue orders, so serving it cannot desync a game.
+
 ---
 
 ## 6. Combat estimate (`engagement_estimate.v1`)
@@ -320,7 +342,7 @@ Cadence: unit micro = engine tick · mission execution ≈ 0.2–1 s · operatio
 | `command.intent.v1` (strategy/roles/produce/retreat) | `TeamPlan` in `StrategicBrainBotModule.ApplyTeamPlan` | partial — needs missions, postures, reserve |
 | feint / counter / transport / roles | `UpdateTactics`, `ExecuteTransportMission` | done (v0 of these primitives) |
 | honesty ladder + confidence | `sightings` (tick + explored gate) | partial — needs status/confidence/age in the payload |
-| tools (estimate_engagement, plan_routes, …) | none | new |
+| tools (estimate_engagement, plan_routes, …) | `CommandToolApi` + `ToolApiBotModule` (HTTP `127.0.0.1:8766/tools`) | done — read-only, engine-validated; `model_server.py` forwards tool calls and relays results |
 | deterministic fallback | scripted brain on timeout/invalid plan | done |
 
 ---

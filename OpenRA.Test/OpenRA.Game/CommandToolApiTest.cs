@@ -1,0 +1,345 @@
+#region Copyright & License Information
+/*
+ * Copyright (c) The OpenRA Developers and Contributors
+ * This file is part of OpenRA, which is free software. It is made
+ * available to you under the terms of the GNU General Public License
+ * as published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version. For more
+ * information, see COPYING.
+ */
+#endregion
+
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using NUnit.Framework;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
+using OpenRA.Primitives;
+
+namespace OpenRA.Test
+{
+	[TestFixture]
+	sealed class CommandToolApiTest
+	{
+		// A 2x3 region grid: 0-1-2 on top, 3-4-5 on bottom, connected by vertical columns.
+		static CoalitionRegion[] GridRegions()
+		{
+			return
+			[
+				new CoalitionRegion(0, Rectangle.FromLTRB(0, 0, 5, 5)),
+				new CoalitionRegion(1, Rectangle.FromLTRB(5, 0, 10, 5)),
+				new CoalitionRegion(2, Rectangle.FromLTRB(10, 0, 15, 5)),
+				new CoalitionRegion(3, Rectangle.FromLTRB(0, 5, 5, 10)),
+				new CoalitionRegion(4, Rectangle.FromLTRB(5, 5, 10, 10)),
+				new CoalitionRegion(5, Rectangle.FromLTRB(10, 5, 15, 10))
+			];
+		}
+
+		static CoalitionMapAnalysis MapWith(List<int>[] adjacency)
+		{
+			var regions = GridRegions();
+			var chokepoints = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
+			var allComponents = new[] { components, components, components };
+			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency },
+				new[] { chokepoints, chokepoints, chokepoints },
+				allComponents, new[] { count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
+				new int[regions.Length], new float[regions.Length], new float[regions.Length]);
+		}
+
+		static List<int>[] Grid()
+		{
+			var adjacency = Enumerable.Range(0, 6).Select(_ => new List<int>()).ToArray();
+			void Link(int a, int b)
+			{
+				adjacency[a].Add(b);
+				adjacency[b].Add(a);
+			}
+
+			Link(0, 1);
+			Link(1, 2);
+			Link(3, 4);
+			Link(4, 5);
+			Link(0, 3);
+			Link(1, 4);
+			Link(2, 5);
+			return adjacency;
+		}
+
+		static float[][] Threats(CoalitionRegion[] regions)
+		{
+			// Populate the regions' own threat arrays (as ComputeThreats does in production); the
+			// threat field for route planning is the same arrays.
+			regions[5].Threats[(int)CoalitionCapability.StaticDefense] = 0.9f;
+			regions[5].Threats[(int)CoalitionCapability.Reinforcement] = 0.6f;
+			regions[2].Threats[(int)CoalitionCapability.AntiAir] = 0.8f;
+			return regions.Select(r => r.Threats).ToArray();
+		}
+
+		static ToolContext Context()
+		{
+			var regions = GridRegions();
+			var forces = new[]
+			{
+				new ForceGroup("Multi0")
+				{
+					TotalUnits = 12,
+					Strength = 1f,
+					Readiness = 1f,
+					Center = new CPos(2, 2)
+				},
+				new ForceGroup("Multi1")
+				{
+					TotalUnits = 10,
+					Strength = 0.8f,
+					Readiness = 1f,
+					Center = new CPos(7, 2)
+				}
+			};
+			forces[0].Counts[(int)UnitClass.Armor] = 10;
+			forces[0].Counts[(int)UnitClass.Infantry] = 2;
+			forces[1].Counts[(int)UnitClass.Infantry] = 10;
+
+			var intel = new[]
+			{
+				new EnemyIntel("weap", UnitClass.Structure) { LastSeenCell = new CPos(12, 8), LastSeenTick = 900, Confidence = 0.9f },
+				new EnemyIntel("powr", UnitClass.Structure) { LastSeenCell = new CPos(13, 8), LastSeenTick = 950, Confidence = 0.6f },
+				new EnemyIntel("3tnk", UnitClass.Armor) { LastSeenCell = new CPos(11, 2), LastSeenTick = 500, Confidence = 0.2f }
+			};
+
+			return new ToolContext
+			{
+				Tick = 1000,
+				Timestep = 40,
+				Regions = regions,
+				Forces = forces,
+				EnemyIntel = intel,
+				Events =
+				[
+					new CoalitionEvent(500, "enemy_base_discovered", new CPos(12, 8), "weap"),
+					new CoalitionEvent(900, "posture_change", null, "attack")
+				],
+				Opponent = new OpponentModel { ArmorBias = 0.7f, Playstyle = "rush", Confidence = 0.5f },
+				CoalitionCash = 5000,
+				MemberCash = new Dictionary<string, int> { ["Multi0"] = 3000, ["Multi1"] = 2000 },
+				HomeRegion = 0,
+				EnemyRegion = 5,
+				CoalitionArmyStrength = 60f,
+				EnemyArmyStrength = 20f,
+				EnemyArmyCount = 3,
+				DeceptionEffectiveness = 0.5f,
+				DeceptionEnemiesDrawn = 6,
+				MapAnalysis = MapWith(Grid()),
+				ThreatField = Threats(regions)
+			};
+		}
+
+		static string Call(ToolContext context, string tool, string argumentsJson = "{}")
+		{
+			return CommandToolApi.Execute(context, $"{{\"tool\":\"{tool}\",\"arguments\":{argumentsJson}}}");
+		}
+
+		static JsonElement Result(string response)
+		{
+			using var doc = JsonDocument.Parse(response);
+			return doc.RootElement.Clone();
+		}
+
+		[TestCase(TestName = "Unknown tools are rejected, not fabricated.")]
+		public void UnknownToolRejected()
+		{
+			var response = Result(Call(Context(), "teleport_army"));
+			Assert.That(response.GetProperty("ok").GetBoolean(), Is.False);
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("UNKNOWN_TOOL"));
+		}
+
+		[TestCase(TestName = "Malformed requests are rejected.")]
+		public void MalformedRequestRejected()
+		{
+			var response = Result(CommandToolApi.Execute(Context(), "not json"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_REQUEST"));
+
+			response = Result(CommandToolApi.Execute(Context(), "{\"arguments\":{}}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_REQUEST"));
+		}
+
+		[TestCase(TestName = "Missing required arguments are rejected.")]
+		public void MissingArgumentRejected()
+		{
+			var response = Result(Call(Context(), "inspect_region", "{}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"));
+		}
+
+		[TestCase(TestName = "Unknown regions and forces are rejected with engine codes.")]
+		public void UnknownReferencesRejected()
+		{
+			var response = Result(Call(Context(), "inspect_region", "{\"region\":99}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("UNKNOWN_REFERENCE"));
+
+			response = Result(Call(Context(), "inspect_force", "{\"force\":\"Multi9\"}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("UNKNOWN_REFERENCE"));
+		}
+
+		[TestCase(TestName = "Unknown enum values are rejected instead of silently defaulting.")]
+		public void UnknownEnumsRejected()
+		{
+			var response = Result(Call(Context(), "plan_routes", "{\"from_region\":0,\"to_region\":5,\"movement\":\"airship\"}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"));
+
+			response = Result(Call(Context(), "score_targets", "{\"posture\":\"siege\"}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"));
+
+			response = Result(Call(Context(), "plan_routes", "{\"from_region\":0,\"to_region\":5,\"profile\":\"siege\"}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"));
+
+			response = Result(Call(Context(), "plan_routes", "{\"from_region\":0,\"to_region\":5,\"weights\":{\"wormhole\":1}}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("UNKNOWN_REFERENCE"));
+		}
+
+		[TestCase(TestName = "Region ids accept indices and REGION_n labels.")]
+		public void RegionLabelForms()
+		{
+			var byIndex = Result(Call(Context(), "inspect_region", "{\"region\":3}"));
+			var byLabel = Result(Call(Context(), "inspect_region", "{\"region\":\"REGION_3\"}"));
+
+			Assert.That(byIndex.GetProperty("result").GetProperty("region").GetInt32(), Is.EqualTo(3));
+			Assert.That(byLabel.GetProperty("result").GetProperty("region").GetInt32(), Is.EqualTo(3));
+		}
+
+		[TestCase(TestName = "inspect_region reports the engine threat fields with contract keys.")]
+		public void InspectRegionThreats()
+		{
+			var response = Result(Call(Context(), "inspect_region", "{\"region\":5}"));
+			var result = response.GetProperty("result");
+			var threats = result.GetProperty("threats");
+
+			Assert.That(threats.GetProperty("static_defense").GetDouble(), Is.EqualTo(0.9).Within(0.001));
+			Assert.That(threats.GetProperty("reinforcement").GetDouble(), Is.EqualTo(0.6).Within(0.001));
+			Assert.That(threats.GetProperty("anti_air").GetDouble(), Is.EqualTo(0.0).Within(0.001));
+		}
+
+		[TestCase(TestName = "inspect_force reports engine-computed composition and strength.")]
+		public void InspectForce()
+		{
+			var response = Result(Call(Context(), "inspect_force", "{\"force\":\"Multi0\"}"));
+			var result = response.GetProperty("result");
+			var composition = result.GetProperty("composition");
+
+			Assert.That(composition.GetProperty("armor").GetInt32(), Is.EqualTo(10));
+			Assert.That(result.GetProperty("total_units").GetInt32(), Is.EqualTo(12));
+			Assert.That(result.GetProperty("strength").GetDouble(), Is.EqualTo(1.0).Within(0.001));
+		}
+
+		[TestCase(TestName = "inspect_enemy_intelligence filters by region and reports confidence.")]
+		public void InspectEnemyIntelligence()
+		{
+			var all = Result(Call(Context(), "inspect_enemy_intelligence"));
+			Assert.That(all.GetProperty("result").GetArrayLength(), Is.EqualTo(3));
+
+			var filtered = Result(Call(Context(), "inspect_enemy_intelligence", "{\"region\":5}"));
+			var intel = filtered.GetProperty("result").EnumerateArray().ToArray();
+			Assert.That(intel.Length, Is.EqualTo(2), "Both structures sit in region 5.");
+			Assert.That(intel.All(e => e.GetProperty("type").GetString() is "weap" or "powr"), Is.True);
+		}
+
+		[TestCase(TestName = "get_recent_events filters the engine event log by tick.")]
+		public void RecentEvents()
+		{
+			var all = Result(Call(Context(), "get_recent_events"));
+			Assert.That(all.GetProperty("result").GetArrayLength(), Is.EqualTo(2));
+
+			var recent = Result(Call(Context(), "get_recent_events", "{\"since_tick\":600}"));
+			var events = recent.GetProperty("result").EnumerateArray().ToArray();
+			Assert.That(events.Length, Is.EqualTo(1));
+			Assert.That(events[0].GetProperty("type").GetString(), Is.EqualTo("posture_change"));
+		}
+
+		[TestCase(TestName = "get_opponent_model returns the engine's behavioral profile.")]
+		public void OpponentModel()
+		{
+			var result = Result(Call(Context(), "get_opponent_model")).GetProperty("result");
+
+			Assert.That(result.GetProperty("armor_bias").GetDouble(), Is.EqualTo(0.7).Within(0.001));
+			Assert.That(result.GetProperty("playstyle").GetString(), Is.EqualTo("rush"));
+			Assert.That(result.GetProperty("confidence").GetDouble(), Is.EqualTo(0.5).Within(0.001));
+		}
+
+		[TestCase(TestName = "get_uncertainties lists stale or low-confidence intelligence.")]
+		public void Uncertainties()
+		{
+			var result = Result(Call(Context(), "get_uncertainties")).GetProperty("result");
+			var questions = result.EnumerateArray().ToArray();
+
+			// The 3tnk sighting (confidence 0.2) is the only uncertain entry; 500 ticks at 40 ms is 20 s.
+			Assert.That(questions.Length, Is.EqualTo(1));
+			Assert.That(questions[0].GetProperty("question").GetString(), Is.EqualTo("enemy_3tnk_position"));
+		}
+
+		[TestCase(TestName = "estimate_engagement computes the Lanchester estimate from force groups.")]
+		public void EstimateEngagement()
+		{
+			// Multi0: 10 armor (x3) + 2 infantry (x1) at full health = 32.
+			// Multi1: 10 infantry (x1) at 0.8 health = 8.
+			var result = Result(Call(Context(), "estimate_engagement", "{\"force_a\":\"Multi0\",\"force_b\":\"Multi1\"}")).GetProperty("result");
+
+			Assert.That(result.GetProperty("force_a_power").GetDouble(), Is.EqualTo(32.0).Within(0.001));
+			Assert.That(result.GetProperty("force_b_power").GetDouble(), Is.EqualTo(8.0).Within(0.001));
+			Assert.That(result.GetProperty("win_ratio").GetDouble(), Is.EqualTo(4.0).Within(0.001));
+			Assert.That(result.GetProperty("model_version").GetString(), Is.EqualTo("v1"));
+		}
+
+		[TestCase(TestName = "score_targets ranks enemy structures by the engine target model.")]
+		public void ScoreTargets()
+		{
+			var result = Result(Call(Context(), "score_targets")).GetProperty("result");
+			var targets = result.EnumerateArray().ToArray();
+
+			Assert.That(targets.Length, Is.EqualTo(2), "Both scouted structures are scored.");
+			Assert.That(targets.Select(t => t.GetProperty("type").GetString()).ToArray(),
+				Is.EqualTo(new[] { "weap", "powr" }), "Production outweighs a plain power plant.");
+
+			var scores = targets.Select(t => t.GetProperty("score").GetDouble()).ToArray();
+			Assert.That(scores[0], Is.GreaterThan(scores[1]), "Targets are ranked by score descending.");
+		}
+
+		[TestCase(TestName = "plan_routes returns an engine-planned region path with cost.")]
+		public void PlanRoutes()
+		{
+			var result = Result(Call(Context(), "plan_routes", "{\"from_region\":0,\"to_region\":5}")).GetProperty("result");
+
+			Assert.That(result.GetProperty("found").GetBoolean(), Is.True);
+			Assert.That(result.GetProperty("cost").GetDouble(), Is.GreaterThanOrEqualTo(0));
+
+			var regions = result.GetProperty("regions").EnumerateArray().Select(r => r.GetInt32()).ToArray();
+			Assert.That(regions[0], Is.EqualTo(0));
+			Assert.That(regions[^1], Is.EqualTo(5));
+		}
+
+		[TestCase(TestName = "plan_routes validates unknown regions and rejected weight keys.")]
+		public void PlanRoutesValidation()
+		{
+			var response = Result(Call(Context(), "plan_routes", "{\"from_region\":0,\"to_region\":99}"));
+			Assert.That(response.GetProperty("error").GetString(), Is.EqualTo("UNKNOWN_REFERENCE"));
+		}
+
+		[TestCase(TestName = "get_global_summary derives the posture from the engine force ratio.")]
+		public void GlobalSummary()
+		{
+			var result = Result(Call(Context(), "get_global_summary")).GetProperty("result");
+
+			Assert.That(result.GetProperty("posture").GetString(), Is.EqualTo("attack"), "Outnumbered enemy force ratio is below 0.8.");
+			Assert.That(result.GetProperty("coalition_cash").GetInt32(), Is.EqualTo(5000));
+			Assert.That(result.GetProperty("deception_effectiveness").GetDouble(), Is.EqualTo(0.5).Within(0.001));
+		}
+
+		[TestCase(TestName = "get_economy_state reports coalition and per-member cash.")]
+		public void EconomyState()
+		{
+			var result = Result(Call(Context(), "get_economy_state")).GetProperty("result");
+
+			Assert.That(result.GetProperty("coalition_cash").GetInt32(), Is.EqualTo(5000));
+			Assert.That(result.GetProperty("members").GetProperty("Multi1").GetInt32(), Is.EqualTo(2000));
+		}
+	}
+}

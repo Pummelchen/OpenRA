@@ -49,6 +49,25 @@ python3 ai/model_server.py
 
 Health check: `curl http://127.0.0.1:8765/health`
 
+## Engine tool API
+
+The game also serves an **engine-validated tool API** for the commander
+(`ToolApiBotModule`, `http://127.0.0.1:8766/tools`): `estimate_engagement`, `plan_routes`,
+`score_targets`, `inspect_region/force/enemy_intelligence`, `get_opponent_model`, ... Every
+call is validated against the live blackboard and answered from deterministic engine
+computations — the LLM never receives fabricated mechanics. The model server forwards the
+commander's function calls here and relays results back into the conversation:
+
+```sh
+curl -X POST http://127.0.0.1:8766/tools -d '{"tool":"get_global_summary","arguments":{}}'
+# {"ok":true,"result":{"posture":"attack","force_ratio":0.33,...}}
+```
+
+Set `AI_TOOL_ENDPOINT` (default `http://127.0.0.1:8766/tools`, empty disables) to point the
+server at a different engine; at startup the server probes the endpoint and only enables
+tool calls when the engine answers. The endpoint is read-only — tool calls never issue
+orders, so serving it cannot desync a game.
+
 ## Terminal monitor
 
 Every prompt sent to the model, the raw reply, and the parsed plan are written to

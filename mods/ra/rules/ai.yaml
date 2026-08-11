@@ -655,6 +655,9 @@ Player:
 	RadarCaptureBotModule:
 		RequiresCondition: enable-ai
 		RadarCaptureWidth: 1920
+	ToolApiBotModule:
+		RequiresCondition: enable-ai
+		ToolApiPort: 8766
 	CoalitionCommandCenterBotModule:
 		RequiresCondition: enable-ai
 		BlackboardInterval: 40

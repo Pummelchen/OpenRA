@@ -17,6 +17,10 @@ Usage:
   AI_MODEL_NAME=qwen3 \
   python3 model_server.py --llm                # LLM backend
 
+Tool API (optional): the commander may call engine-validated tools (estimate_engagement,
+plan_routes, score_targets, ...) served by the game's ToolApiBotModule. Set AI_TOOL_ENDPOINT
+to the game's tool endpoint (default http://127.0.0.1:8766/tools) or empty to disable tools.
+
 The server is deliberately dependency-free (Python standard library only).
 """
 
@@ -44,6 +48,14 @@ MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/
 MODEL_NAME = os.getenv("AI_MODEL_NAME", "qwen3")
 MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
 
+# The engine's tool API (ToolApiBotModule in the game). Tool calls from the commander are forwarded
+# here; the engine validates every request against its live blackboard and returns computed results
+# the LLM cannot fabricate. Empty disables tools.
+TOOL_ENDPOINT = os.getenv("AI_TOOL_ENDPOINT", "http://127.0.0.1:8766/tools")
+
+# How many tool rounds a consultation may use before the model must commit to a plan.
+MAX_TOOL_ROUNDS = 4
+
 # Units the dummy backend prefers to produce, in priority order.
 DUMMY_ARMY_PRIORITY = ["e1", "e3", "2tnk", "3tnk", "4tnk", "ttnk", "v2rl", "heli", "mig"]
 
@@ -65,7 +77,22 @@ Rules:
 - A "transport" mission can stealth-insert infantry behind enemy lines ("kind": "naval" or "air").
 - Coordinates are OpenRA map cells. Roles keys must exactly match the player ids in "team".
 
-Reply with ONLY a JSON object of the form:
+TOOLS (engine-validated: results come from the engine, never fabricated):
+- get_global_summary() -> posture, force ratio, cash, army/enemy strength
+- inspect_region(region) -> control, pressure, threat fields (region = int or "REGION_n")
+- inspect_force(force) -> composition, strength, readiness (force = player id)
+- inspect_enemy_intelligence(region?) -> enemy intel with confidence and age
+- get_recent_events(since_tick?) -> engine event log
+- get_opponent_model() -> behavioral profile of the enemy
+- get_uncertainties() -> low-confidence questions worth scouting
+- estimate_engagement(force_a, force_b) -> win ratio and expected losses
+- score_targets(region?, posture?) -> ranked targets by the engine target model
+- plan_routes(from_region, to_region, movement?, profile?, weights?) -> route and cost
+- get_economy_state() -> coalition and per-member cash
+
+Before estimating mechanics (combat odds, routes, target value, enemy behavior), call the matching
+tool. You may issue several tool calls at once; you then receive the engine's verified results.
+After your analysis, reply with ONLY the final plan, a JSON object of the form:
 {"posture": "attack|defend|build|turtle", "strategy": "attack|defend|build",
  "attack": {"x": 0, "y": 0}, "feint": {"x": 0, "y": 0}, "counter": {"x": 0, "y": 0},
  "roles": {"playerid": "main|escort|naval|defend"}, "produce": ["unit1", "unit2"],
@@ -185,8 +212,14 @@ def dummy_plan(state: dict) -> dict:
     }
 
 
-def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool) -> dict:
-    """Asks an OpenAI-compatible model for a team plan and parses its JSON response."""
+def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool, tools: bool) -> dict:
+    """Asks an OpenAI-compatible model for a team plan and parses its JSON response.
+
+    When the engine tool API is reachable, the model may call tools first (either through the native
+    tool_calls protocol or by emitting the tool_calls JSON inside its content). Every call is
+    forwarded to the engine, which validates it and returns a computed result; the model then commits
+    to the final plan. Tool results are relayed verbatim - the model never sees raw engine internals.
+    """
     prompt = team_summary(state)
 
     content = [{"type": "text", "text": prompt}]
@@ -204,12 +237,56 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
 
     log_brain(f"PROMPT -> {model}: {prompt}{image_note}")
 
+    system_prompt = SYSTEM_PROMPT + (
+        "\n\nThe engine tool API is available: call tools before estimating mechanics."
+        if tools else
+        "\n\nThe engine tool API is unavailable; estimate from the state alone."
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content},
+    ]
+
+    for _ in range(MAX_TOOL_ROUNDS + 1):
+        reply = chat_completion(endpoint, model, api_key, messages)
+        message = reply.get("message", {})
+        tool_calls = list(message.get("tool_calls") or [])
+        reply_text = message.get("content") or ""
+
+        # Some backends surface tool calls as JSON inside content instead of the native field.
+        if not tool_calls:
+            tool_calls = tool_calls_from_content(reply_text)
+            if tool_calls:
+                reply_text = None
+
+        if not tool_calls:
+            plan = sanitize_team_plan(parse_plan_content(reply_text), state)
+            log_brain(f"PLAN  -> {json.dumps(plan)}")
+            return plan
+
+        messages.append({"role": "assistant", "content": reply_text, "tool_calls": tool_calls})
+        log_brain(f"TOOL CALLS -> {model}: " + ", ".join(
+            tc.get("function", {}).get("name", "?") for tc in tool_calls))
+
+        for tool_call in tool_calls:
+            result = execute_tool_call(tool_call, TOOL_ENDPOINT)
+            log_brain(f"TOOL RESULT <- {json.dumps(result)[:300]}")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.get("id", ""),
+                "content": json.dumps(result),
+            })
+
+    # The model kept calling tools past the round limit: fall back to the deterministic plan.
+    log_brain("Tool rounds exhausted; falling back to the deterministic plan.")
+    return empty_team_plan()
+
+
+def chat_completion(endpoint: str, model: str, api_key: str, messages: list) -> dict:
+    """One chat-completion round against an OpenAI-compatible endpoint."""
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ],
+        "messages": messages,
         "temperature": 0.1,
         "max_tokens": 200,
     }
@@ -220,16 +297,70 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool)
     req = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers)
     with urllib.request.urlopen(req, timeout=15) as response:
         data = json.loads(response.read().decode("utf-8"))
+    return data["choices"][0]
 
-    content = data["choices"][0]["message"]["content"]
+
+def tool_calls_from_content(reply_text: str) -> list:
+    """Recognizes a tool_calls object embedded in a plain-text reply (non-native function calling)."""
+    stripped = reply_text.strip()
+    if not stripped.startswith("{"):
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return []
+    calls = parsed.get("tool_calls") if isinstance(parsed, dict) else None
+    return list(calls) if isinstance(calls, list) else []
+
+
+def execute_tool_call(tool_call: dict, endpoint: str) -> dict:
+    """Forwards one tool call to the engine's tool API and returns its validated result."""
+    function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+    name = function.get("name")
+    arguments = function.get("arguments") or "{}"
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    request = {"tool": name, "arguments": arguments}
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(request).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - the model sees an honest failure, not a fabricated result
+        return {"ok": False, "error": "TOOL_ENDPOINT_UNREACHABLE", "message": str(exc)}
+
+
+def probe_tool_endpoint(endpoint: str) -> bool:
+    """True when the engine's tool API answers (an ok:false NOT_READY is still a live engine)."""
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps({"tool": "get_global_summary", "arguments": {}}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return isinstance(body, dict) and "ok" in body
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def parse_plan_content(content: str) -> dict:
+    """Strips code fences from a model reply and parses the plan JSON."""
     content = content.strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0]
-    log_brain(f"REPLY <- {model}: {content[:500]}")
-    plan = json.loads(content)
-    plan = sanitize_team_plan(plan, state)
-    log_brain(f"PLAN  -> {json.dumps(plan)}")
-    return plan
+    log_brain(f"REPLY <- {json.dumps(content[:500])}")
+    return json.loads(content)
 
 
 def summarize(units) -> str:
@@ -388,10 +519,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.llm:
-        def decide(state):
-            return llm_plan(state, MODEL_ENDPOINT, MODEL_NAME, MODEL_API_KEY, args.vision)
+        tools = bool(TOOL_ENDPOINT) and probe_tool_endpoint(TOOL_ENDPOINT)
+        if tools:
+            print(f"Engine tool API reachable at {TOOL_ENDPOINT}; tool calls are enabled.", flush=True)
+        else:
+            print("Engine tool API unreachable; the commander plans without tools.", flush=True)
 
-        backend_name = f"llm ({MODEL_NAME} @ {MODEL_ENDPOINT})" + (" + vision" if args.vision else "")
+        def decide(state):
+            return llm_plan(state, MODEL_ENDPOINT, MODEL_NAME, MODEL_API_KEY, args.vision, tools)
+
+        backend_name = f"llm ({MODEL_NAME} @ {MODEL_ENDPOINT})" + (" + vision" if args.vision else "") + (" + tools" if tools else "")
     else:
         decide = dummy_plan
         backend_name = "dummy"

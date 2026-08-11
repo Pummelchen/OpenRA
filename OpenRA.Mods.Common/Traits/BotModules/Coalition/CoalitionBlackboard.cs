@@ -109,6 +109,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Confidence = 1f;
 			MinCount = ExpectedCount = MaxCount = 1;
 		}
+
+		/// <summary>Test-friendly constructor: plain intel without an actor reference.</summary>
+		public EnemyIntel(string type, UnitClass unitClass)
+		{
+			Type = type;
+			Class = unitClass;
+			Confidence = 1f;
+			MinCount = ExpectedCount = MaxCount = 1;
+		}
 	}
 
 	/// <summary>A behavioral profile of the enemy, built from observed patterns.</summary>

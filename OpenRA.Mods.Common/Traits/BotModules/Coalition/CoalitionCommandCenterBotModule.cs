@@ -765,6 +765,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
 		}
 
+		/// <summary>
+		/// Snapshots the live blackboard into the plain-data tool context consumed by the LLM tool
+		/// API. Called on the game thread; the HTTP tool server only reads the snapshot, so tool calls
+		/// never race the game loop.
+		/// </summary>
+		public ToolContext BuildToolContext()
+		{
+			if (blackboard == null)
+				return null;
+
+			var members = TeamPlayers();
+			return new ToolContext
+			{
+				Tick = blackboard.Tick,
+				Timestep = (int)world.Timestep,
+				Regions = blackboard.Regions,
+				Forces = blackboard.Forces.ToArray(),
+				EnemyIntel = blackboard.EnemyIntel.ToArray(),
+				Events = blackboard.Events.ToArray(),
+				Opponent = blackboard.Opponent,
+				CoalitionCash = blackboard.CoalitionCash,
+				MemberCash = members.ToDictionary(p => p.InternalName,
+					p => p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0),
+				HomeRegion = blackboard.HomeRegion,
+				EnemyRegion = blackboard.EnemyRegion,
+				CoalitionArmyStrength = blackboard.CoalitionArmyStrength,
+				EnemyArmyStrength = blackboard.EnemyArmyStrength,
+				EnemyArmyCount = (int)blackboard.EnemyArmyCount,
+				DeceptionEffectiveness = blackboard.DeceptionEffectiveness,
+				DeceptionEnemiesDrawn = blackboard.DeceptionEnemiesDrawn,
+				MapAnalysis = blackboard.MapAnalysis,
+				ThreatField = blackboard.ThreatField()
+			};
+		}
+
 		/// <summary>Returns the least explored region that is reachable from the home region on the ground.</summary>
 		CPos? LeastExploredRegionNear()
 		{
