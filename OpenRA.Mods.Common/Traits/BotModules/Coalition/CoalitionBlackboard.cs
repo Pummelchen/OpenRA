@@ -175,6 +175,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public readonly List<CoalitionEvent> Events = [];
 		public readonly OpponentModel Opponent = new();
 
+		/// <summary>Static terrain analysis of the map: region graph, chokepoints, components, resources.</summary>
+		public readonly CoalitionMapAnalysis MapAnalysis;
+
 		public int CoalitionCash;
 		public float CoalitionArmyStrength;
 		public float EnemyArmyStrength;
@@ -195,7 +198,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly Func<Actor, UnitClass> classify;
 
 		public CoalitionBlackboard(World world, Player player, Player[] team, Func<Actor, UnitClass> classify,
-			FrozenSet<string> waterTerrainTypes = null, int bigWaterMinimumCells = 0)
+			FrozenSet<string> waterTerrainTypes = null, int bigWaterMinimumCells = 0,
+			FrozenSet<string> valuableResourceTypes = null)
 		{
 			World = world;
 			Player = player;
@@ -203,7 +207,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Tick = world.WorldTick;
 			this.classify = classify;
 
-			Regions = BuildRegions(world);
+			// Static terrain analysis: region graph, chokepoints, components, resources. Cached per map.
+			MapAnalysis = CoalitionMapAnalysis.ForMap(world, waterTerrainTypes ?? new HashSet<string> { "Water" }.ToFrozenSet(),
+				valuableResourceTypes ?? new HashSet<string> { "Ore", "Gems" }.ToFrozenSet());
+
+			Regions = MapAnalysis.Regions;
 			ExtractForces();
 			ExtractEnemyIntel();
 			ExtractEconomy();
@@ -217,29 +225,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// same result.
 			HasBigWater = waterTerrainTypes != null && AIUtils.HasLargeWaterBody(World.Map,
 				c => Team.Any(ally => ally.Shroud.IsExplored(c)), waterTerrainTypes, bigWaterMinimumCells);
-		}
-
-		static CoalitionRegion[] BuildRegions(World world)
-		{
-			var map = world.Map;
-			var width = map.MapSize.Width;
-			var height = map.MapSize.Height;
-
-			// Partition the map into a coarse grid (at most 4x4 regions).
-			var cols = Math.Min(4, Math.Max(1, width / 16));
-			var rows = Math.Min(4, Math.Max(1, height / 16));
-			var regions = new List<CoalitionRegion>();
-			for (var r = 0; r < rows; r++)
-				for (var c = 0; c < cols; c++)
-				{
-					var x0 = width * c / cols;
-					var y0 = height * r / rows;
-					var x1 = width * (c + 1) / cols;
-					var y1 = height * (r + 1) / rows;
-					regions.Add(new CoalitionRegion(regions.Count, Rectangle.FromLTRB(x0, y0, x1, y1)));
-				}
-
-			return regions.ToArray();
 		}
 
 		public CoalitionRegion RegionOf(CPos cell)

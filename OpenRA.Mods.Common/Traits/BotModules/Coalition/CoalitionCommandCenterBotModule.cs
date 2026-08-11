@@ -60,6 +60,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Terrain types that count as water for naval feasibility decisions.")]
 		public readonly FrozenSet<string> WaterTerrainTypes = new HashSet<string> { "Water" }.ToFrozenSet();
 
+		[Desc("Resource types that count as valuable for expansion scoring.")]
+		public readonly FrozenSet<string> ValuableResourceTypes = new HashSet<string> { "Ore", "Gems" }.ToFrozenSet();
+
 		[Desc("Minimum size (in cells) of a contiguous explored water body before naval production is " +
 			"considered worthwhile. A shipyard on a tiny lake is wasted, so below this threshold no naval " +
 			"corps is assigned and coordinated strikes do not wait for ships.")]
@@ -120,7 +123,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lastBlackboardTick = tick;
 				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
-					info.WaterTerrainTypes, info.BigWaterMinimumCells);
+					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes);
 				UpdateOpponentModel();
 			}
 
@@ -482,13 +485,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
 		}
 
-		/// <summary>Returns the region with the least friendly coverage.</summary>
+		/// <summary>Returns the least explored region that is reachable from the home region on the ground.</summary>
 		CPos? LeastExploredRegionNear()
 		{
 			CoalitionRegion best = null;
 			var bestCoverage = 1f;
 			for (var i = 0; i < blackboard.Regions.Length; i++)
 			{
+				// Skip regions the coalition cannot reach on the ground: reconning an island or a
+				// sea body the army can never enter wastes scouts and produces unusable intel.
+				if (!ReachableFromHome(i))
+					continue;
+
 				var coverage = blackboard.Regions[i].FriendlyControl;
 				if (coverage < bestCoverage)
 				{
@@ -500,17 +508,40 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return best == null ? null : RegionCenter(best.Index);
 		}
 
-		/// <summary>Picks a distinct enemy-facing region for the feint (not the main attack target).</summary>
+		/// <summary>
+		/// Picks a distinct enemy-facing region for the feint. Prefers a region that is ground-adjacent
+		/// to the main attack's region, so the feint threatens the same approach corridor from a second
+		/// axis and forces the enemy to split its response.
+		/// </summary>
 		CPos? FeintRegionTarget()
 		{
 			var attack = missions.Missions.FirstOrDefault(m => m.Type == MissionType.Attack && m.Target != null);
+			var attackRegion = attack?.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
 			for (var i = 0; i < blackboard.Regions.Length; i++)
 			{
-				if (blackboard.Regions[i].EnemyPressure > 0 && (attack == null || attack.Target == null || blackboard.RegionOf(attack.Target.Value).Index != i))
+				if (blackboard.Regions[i].EnemyPressure <= 0)
+					continue;
+
+				if (attackRegion >= 0 && blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, attackRegion, i))
 					return RegionCenter(i);
 			}
 
+			// Fall back to any enemy-facing region distinct from the main target.
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+				if (blackboard.Regions[i].EnemyPressure > 0 && i != attackRegion)
+					return RegionCenter(i);
+
 			return null;
+		}
+
+		/// <summary>True when the region is in the same ground-connected component as the home region.</summary>
+		bool ReachableFromHome(int regionIndex)
+		{
+			if (regionIndex < 0 || blackboard.HomeRegion < 0)
+				return false;
+
+			return blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, regionIndex)
+				== blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, blackboard.HomeRegion);
 		}
 
 		CPos? RegionCenter(int regionIndex)
