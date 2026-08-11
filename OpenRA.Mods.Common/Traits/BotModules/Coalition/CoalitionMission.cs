@@ -40,6 +40,38 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	}
 
 	/// <summary>
+	/// Operational phases an offensive mission passes through. Each phase has explicit transition
+	/// conditions evaluated against the blackboard; phases are skipped when their precondition is
+	/// already satisfied (e.g. the enemy is already located, so RECON is skipped).
+	/// </summary>
+	public enum MissionPhase
+	{
+		/// <summary>Confirm the target's current position and route before committing forces.</summary>
+		Recon,
+
+		/// <summary>Assemble the assigned force at a safe staging area near the axis of advance.</summary>
+		Staging,
+
+		/// <summary>Suppress or pin the target (artillery, feints, support powers).</summary>
+		Shaping,
+
+		/// <summary>Feint or bait to draw the enemy's response away from the main axis.</summary>
+		Deception,
+
+		/// <summary>Breach the enemy's perimeter at the designated point.</summary>
+		Breach,
+
+		/// <summary>Exploit the breach and push into the objective region.</summary>
+		Exploitation,
+
+		/// <summary>Hold the objective while follow-on forces consolidate.</summary>
+		Consolidation,
+
+		/// <summary>Withdraw surviving forces from a losing or completed engagement.</summary>
+		Withdrawal
+	}
+
+	/// <summary>
 	/// One coalition operation. Missions are stable: the manager keeps executing until the objective
 	/// is achieved, an abort condition is reached, or a superior mission supersedes it.
 	/// </summary>
@@ -52,8 +84,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int Priority;
 		public CPos? Target;
 		public MissionStatus Status = MissionStatus.Ready;
-		public int Phase;
+		public MissionPhase Phase = MissionPhase.Recon;
+		public int PhaseTick;
 		public int MinForce;
+
+		/// <summary>Human-readable reason for the terminal state, set when the mission aborts or fails.</summary>
+		public string OutcomeReason;
 
 		// Telemetry.
 		public int FriendlyValueCommitted;
@@ -68,6 +104,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Priority = priority;
 			Target = target;
 			Objective = objective;
+			Phase = InitialPhase(type);
+		}
+
+		/// <summary>The phase a mission starts in; reconnaissance and deception are pre-staged.</summary>
+		static MissionPhase InitialPhase(MissionType type)
+		{
+			switch (type)
+			{
+				case MissionType.Recon:
+					return MissionPhase.Recon;
+				case MissionType.Feint:
+				case MissionType.Bait:
+					return MissionPhase.Deception;
+				case MissionType.Retreat:
+					return MissionPhase.Withdrawal;
+				default:
+					return MissionPhase.Recon;
+			}
 		}
 	}
 
@@ -98,8 +152,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
-		/// Advances mission lifecycle against the blackboard: missions complete when their target region
-		/// no longer holds the objective, and abort when the coalition force is decisively weaker.
+		/// Advances mission lifecycle against the blackboard: phases transition when their conditions
+		/// are met, offensive missions complete when their target region no longer holds the objective,
+		/// and missions abort (with a reason) when the coalition force is decisively weaker or the
+		/// target becomes unreachable.
 		/// </summary>
 		public void Update(CoalitionBlackboard blackboard, float coalitionStrength, float enemyStrength)
 		{
@@ -109,10 +165,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				{
 					case MissionStatus.Ready:
 						mission.Status = MissionStatus.Executing;
-						mission.Phase = 1;
+						mission.PhaseTick = blackboard.Tick;
 						break;
 
 					case MissionStatus.Executing:
+						if (!AdvancePhase(blackboard, mission))
+							continue;
+
 						if (mission.Type == MissionType.Attack || mission.Type == MissionType.Raid || mission.Type == MissionType.Counterattack)
 						{
 							// Completed when nothing of the target remains known in the target region.
@@ -122,7 +181,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							if (enemiesThere == 0)
 							{
 								mission.Status = MissionStatus.Succeeded;
-								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} ({mission.Type}) succeeded: target cleared");
+								mission.OutcomeReason = "target cleared";
+								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} ({mission.Type}) succeeded: {mission.OutcomeReason}");
 								continue;
 							}
 						}
@@ -131,6 +191,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						if (mission.Type == MissionType.Recon && blackboard.EnemyRegion >= 0)
 						{
 							mission.Status = MissionStatus.Succeeded;
+							mission.OutcomeReason = "enemy located";
 							continue;
 						}
 
@@ -144,6 +205,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							if (nearby > mission.FeintBaselineEnemyCount && nearby >= 2)
 							{
 								mission.EnemyValueEngaged = nearby - mission.FeintBaselineEnemyCount;
+								mission.OutcomeReason = "enemy redeployed toward feint";
 								CoalitionTelemetry.Log(blackboard.World,
 									$"Feint {mission.Id} effective: drew {mission.EnemyValueEngaged} enemy units; FEINT_EFFECTIVENESS={mission.EnemyValueEngaged * 100f / System.Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
 								mission.Status = MissionStatus.Succeeded;
@@ -151,15 +213,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							}
 						}
 
-						// Abort when the coalition cannot win the fight.
+						// Abort when the coalition cannot win the fight, or the target became unreachable.
 						if (enemyStrength > coalitionStrength * 1.8f)
 						{
 							mission.Status = MissionStatus.Aborted;
-							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: coalition outmatched");
+							mission.OutcomeReason = "coalition outmatched";
+							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason}");
 							continue;
 						}
 
-						mission.Phase++;
+						if (mission.Target != null && !CoalitionRoutePlanner.RouteExists(blackboard.MapAnalysis,
+							blackboard.HomeRegion, blackboard.RegionOf(mission.Target.Value).Index, MovementClass.Ground))
+						{
+							mission.Status = MissionStatus.Aborted;
+							mission.OutcomeReason = "target unreachable on the ground";
+							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason}");
+							continue;
+						}
+
+						mission.PhaseTick++;
 						break;
 
 					default:
@@ -168,6 +240,84 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						break;
 				}
 			}
+		}
+
+		/// <summary>
+		/// Advances the mission one phase when its transition condition is satisfied. Returns false when
+		/// the mission should not receive further objective evaluation this tick (it just changed phase).
+		/// </summary>
+		static bool AdvancePhase(CoalitionBlackboard blackboard, CoalitionMission mission)
+		{
+			var phaseAge = blackboard.Tick - mission.PhaseTick;
+			var targetRegion = mission.Target != null ? blackboard.RegionOf(mission.Target.Value).Index : -1;
+
+			switch (mission.Phase)
+			{
+				case MissionPhase.Recon:
+					// Recon completes when the target region is at least partially explored (we can
+					// see where we are going), or the enemy is already located elsewhere.
+					if (blackboard.EnemyRegion >= 0 || (targetRegion >= 0 && blackboard.Regions[targetRegion].FriendlyControl > 0.05f))
+						return Transition(blackboard, mission, MissionPhase.Staging, "recon complete");
+					return true;
+
+				case MissionPhase.Staging:
+					// Staging completes once the coalition has enough force to matter and enough time
+					// has passed for the force to actually assemble.
+					if (phaseAge >= 120 && blackboard.CoalitionArmyStrength >= mission.MinForce)
+						return Transition(blackboard, mission, MissionPhase.Shaping, "force assembled");
+					return true;
+
+				case MissionPhase.Shaping:
+					// Shaping is a fixed suppression window; it rolls directly into deception for
+					// missions that use it, otherwise into the breach.
+					if (phaseAge >= 60)
+						return Transition(blackboard, mission,
+							mission.Type == MissionType.Attack ? MissionPhase.Deception : MissionPhase.Breach,
+							"shaping complete");
+					return true;
+
+				case MissionPhase.Deception:
+					// Deception completes after a fixed window, or immediately for missions without a
+					// real deception component (feints and baits ARE the deception and stay here).
+					if (mission.Type == MissionType.Feint || mission.Type == MissionType.Bait)
+						return true;
+
+					if (phaseAge >= 90)
+						return Transition(blackboard, mission, MissionPhase.Breach, "deception window elapsed");
+					return true;
+
+				case MissionPhase.Breach:
+					// Breach completes once we are in the target region (it is at least partially
+					// explored) or the enemy there is gone.
+					if (targetRegion < 0 || blackboard.Regions[targetRegion].FriendlyControl > 0.1f)
+						return Transition(blackboard, mission, MissionPhase.Exploitation, "breach opened");
+					return true;
+
+				case MissionPhase.Exploitation:
+					// Exploitation rolls into consolidation after a holding window.
+					if (phaseAge >= 180)
+						return Transition(blackboard, mission, MissionPhase.Consolidation, "objective seized");
+					return true;
+
+				case MissionPhase.Consolidation:
+					// Consolidation is terminal: the objective is held until the enemy is cleared,
+					// which the caller detects as mission success.
+					return true;
+
+				case MissionPhase.Withdrawal:
+					return true;
+
+				default:
+					return true;
+			}
+		}
+
+		static bool Transition(CoalitionBlackboard blackboard, CoalitionMission mission, MissionPhase next, string reason)
+		{
+			mission.Phase = next;
+			mission.PhaseTick = blackboard.Tick;
+			CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} phase -> {next} ({reason})");
+			return false;
 		}
 
 		/// <summary>
