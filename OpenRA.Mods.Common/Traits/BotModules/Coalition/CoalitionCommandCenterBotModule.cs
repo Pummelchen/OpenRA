@@ -327,16 +327,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (!hasAsset)
 				return null;
 
-			var home = RegionCenter(blackboard.HomeRegion);
 			CPos? best = null;
 			var bestScore = float.MaxValue;
+			var homeRegion = blackboard.HomeRegion;
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
-				var region = blackboard.RegionOf(intel.LastSeenCell);
+				// Special insertions travel by stealth profile: the route cost already weights
+				// vision exposure, detection, and chokepoint risk, so unreachable targets are
+				// skipped rather than sending Tanya on a one-way trip into the sea.
+				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
+				var route = CoalitionRoutePlanner.FindRoute(
+					blackboard.MapAnalysis, blackboard.ThreatField(), homeRegion, targetRegion,
+					MovementClass.Ground, RouteWeights.Stealth());
+				if (!route.Found)
+					continue;
+
+				var region = blackboard.Regions[targetRegion];
 				var threat = region.Threats[(int)CoalitionCapability.StaticDefense]
-					+ region.Threats[(int)CoalitionCapability.VisionExposure];
-				if (home != null)
-					threat += 2f * CombatEstimator.RouteRisk(blackboard, home.Value, intel.LastSeenCell);
+					+ region.Threats[(int)CoalitionCapability.VisionExposure]
+					+ route.Cost * 0.5f;
 
 				if (threat < bestScore)
 				{
@@ -348,17 +357,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return best;
 		}
 
-		/// <summary>Highest-value enemy structure target, adjusted for the approach route risk.</summary>
+		/// <summary>
+		/// Highest-value enemy structure target, adjusted for the approach route cost. Targets that
+		/// are not reachable from home on the ground (islands, enemy-held sea bodies) are skipped:
+		/// assaulting them would send the army to drown at the water's edge.
+		/// </summary>
 		CPos? BestScoredTarget()
 		{
-			var home = RegionCenter(blackboard.HomeRegion);
 			CPos? best = null;
 			var bestScore = float.MinValue;
+			var homeRegion = blackboard.HomeRegion;
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
+				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
+				var route = CoalitionRoutePlanner.FindRoute(
+					blackboard.MapAnalysis, blackboard.ThreatField(), homeRegion, targetRegion,
+					MovementClass.Ground, RouteWeights.Assault());
+				if (!route.Found)
+					continue;
+
 				var value = CombatEstimator.TargetValue(intel.Actor, Classify);
-				var risk = home != null ? CombatEstimator.RouteRisk(blackboard, home.Value, intel.LastSeenCell) : 0;
-				var score = value - 2f * risk;
+				var score = value / (1f + route.Cost * 0.1f);
 				if (score > bestScore)
 				{
 					bestScore = score;

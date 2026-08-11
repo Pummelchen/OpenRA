@@ -66,7 +66,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Defensibility per region, 0..1 (land fraction weighted against border crossings).</summary>
 		public readonly float[] Defensibility;
 
-		CoalitionMapAnalysis(CoalitionRegion[] regions, List<int>[][] adjacency, FrozenSet<int>[][] chokepoints,
+		/// <summary>
+		/// Builds an analysis from precomputed graph data. Production code should use
+		/// <see cref="ForMap"/>; this constructor is also used by unit tests to exercise the
+		/// pure graph algorithms with synthetic maps.
+		/// </summary>
+		public CoalitionMapAnalysis(CoalitionRegion[] regions, List<int>[][] adjacency, FrozenSet<int>[][] chokepoints,
 			int[][] components, int[] componentCount, HashSet<CPos> bridgeCells, int width, int height,
 			int[] resourceCells, float[] resourceRichness, float[] defensibility)
 		{

@@ -190,6 +190,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int EnemyRegion = -1;
 
 		/// <summary>
+		/// Per-region threat arrays in map-analysis order, for route planning. The route planner
+		/// consumes this as a <c>float[][]</c> keyed by region index then capability.
+		/// </summary>
+		public float[][] ThreatField()
+		{
+			var field = new float[Regions.Length][];
+			for (var i = 0; i < Regions.Length; i++)
+				field[i] = Regions[i].Threats;
+			return field;
+		}
+
+		/// <summary>
 		/// True when the coalition has explored a water body large enough to make naval production worthwhile.
 		/// A tiny lake is not worth a shipyard, and without it coordinated strikes never wait for ships.
 		/// </summary>
