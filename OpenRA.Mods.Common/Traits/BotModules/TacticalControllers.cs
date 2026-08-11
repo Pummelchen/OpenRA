@@ -124,16 +124,34 @@ namespace OpenRA.Mods.Common.Traits
 	}
 
 	/// <summary>
-	/// Transport controller: loads, transits, and unloads payload units at the insertion point.
-	/// Operates independently of the main army; the payload is claimed so no other controller
-	/// orders it mid-insertion.
+	/// Transport controller: drives the explicit transport state machine - assemble, load,
+	/// wait-for-window, transit, approach, unload, and extraction when requested - and aborts
+	/// (holding position) when the transit becomes unsafe. Operates independently of the main
+	/// army; the payload is claimed so no other controller orders it mid-insertion.
 	/// </summary>
 	public sealed class TransportController : TacticalController
 	{
+		readonly TransportStateMachine machine = new(extractOnCompletion: false);
+		int windowElapsed;
+
 		public TransportController(StrategicBrainBotModule brain)
 			: base(brain) { }
 
-		public bool Execute(CPos? target, string kind, int phase)
+		/// <summary>The current transport state, for telemetry and the directive.</summary>
+		public TransportState State => machine.State;
+
+		/// <summary>True when the transport mission completed its cycle this tick.</summary>
+		public bool Completed => machine.Complete;
+
+		/// <summary>True when the mission aborted because transit became unsafe.</summary>
+		public bool Aborted => machine.Aborted;
+
+		/// <summary>
+		/// Executes the current state and advances when its completion condition is met. Returns true
+		/// when the mission is still active (the caller keeps the transport target), false when it
+		/// finished or aborted this tick.
+		/// </summary>
+		public bool Execute(CPos? target, string kind, int worldTick)
 		{
 			if (target == null || kind == null)
 				return false;
@@ -148,9 +166,13 @@ namespace OpenRA.Mods.Common.Traits
 			var targetCell = target.Value;
 			var cargo = transport.TraitOrDefault<Cargo>();
 
-			switch (phase)
+			switch (machine.State)
 			{
-				case 0:
+				case TransportState.Assemble:
+					// Advance to loading as soon as the transport exists.
+					return AdvanceAndContinue();
+
+				case TransportState.Load:
 				{
 					// Load payload units; they are claimed so the main army does not order them elsewhere.
 					var payload = Claim(World.Actors
@@ -161,24 +183,89 @@ namespace OpenRA.Mods.Common.Traits
 						Bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
 
 					// Advance once loaded, or when there is nothing to load (no cargo trait / no payload).
-					return cargo == null || cargo.PassengerCount > 0 || payload.Length == 0;
+					return cargo == null || cargo.PassengerCount > 0 || payload.Length == 0
+						? AdvanceAndContinue()
+						: true;
 				}
 
-				case 1:
+				case TransportState.WaitForWindow:
+					// Hold until the synchronization window elapses (deception/distraction timing).
+					windowElapsed++;
+					return windowElapsed >= 30
+						? AdvanceAndContinue()
+						: true;
+
+				case TransportState.Transit:
+				{
+					// Move toward the insertion point; abort (hold) if the transit becomes unsafe:
+					// the transport takes heavy damage.
+					var distance = (transport.CenterPosition - World.Map.CenterOfCell(targetCell)).LengthSquared;
+					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
+
+					var health = transport.TraitOrDefault<IHealth>();
+					var fraction = health == null ? 100 : health.HP * 100 / health.MaxHP;
+					if (fraction < Info.RetreatHealthPercent)
+					{
+						Log($"Transport mission aborted: transport at {fraction}% health during transit");
+						machine.Abort();
+						return false;
+					}
+
+					if (distance <= BaseRadiusSquared(10))
+						return AdvanceAndContinue();
+					return true;
+				}
+
+				case TransportState.Approach:
 				{
 					var distance = (transport.CenterPosition - World.Map.CenterOfCell(targetCell)).LengthSquared;
-					if (distance > BaseRadiusSquared(5))
-						Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
-					return distance <= BaseRadiusSquared(5);
+					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
+					return distance <= BaseRadiusSquared(5)
+						? AdvanceAndContinue()
+						: true;
 				}
 
-				case 2:
+				case TransportState.Unload:
 					Bot.QueueOrder(new Order("Unload", transport, false));
-					return true;
+					Log($"Transport unloaded at {targetCell}");
+					return AdvanceAndContinue();
+
+				case TransportState.ExtractionRequest:
+				case TransportState.ReturnForExtraction:
+					// The extraction cycle reuses the transit approach toward the same target: the
+					// transport returns, payload reboards, and the mission completes on extraction.
+					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
+					return AdvanceAndContinue();
+
+				case TransportState.Reload:
+				{
+					var payload = Claim(World.Actors
+						.Where(a => a.IsInWorld && !a.IsDead && a.Owner == Player && Info.TransportPayloadTypes.Contains(a.Info.Name)))
+						.Take(4)
+						.ToArray();
+					if (payload.Length > 0 && (cargo == null || cargo.PassengerCount == 0))
+						Bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
+					return cargo != null && cargo.PassengerCount > 0
+						? AdvanceAndContinue()
+						: true;
+				}
+
+				case TransportState.Extract:
+					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, transport.Location), false));
+					return AdvanceAndContinue();
+
+				case TransportState.Hold:
+					return false;
 
 				default:
-					return true;
+					return false;
 			}
+		}
+
+		bool AdvanceAndContinue()
+		{
+			machine.Advance();
+			return !machine.Complete;
 		}
 
 		static long BaseRadiusSquared(int cells)

@@ -232,7 +232,6 @@ namespace OpenRA.Mods.Common.Traits
 		string[] produceBoost;
 		bool teamRetreat;
 		int feintTick;
-		int transportPhase;
 
 		static readonly System.Text.Json.JsonSerializerOptions PlanOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -883,24 +882,19 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>
-		/// Executes a transport mission in phases: load payload units, move the transport to the
-		/// target, then unload. Delegated to the transport controller, which claims the payload so
-		/// the main army does not order it elsewhere during the insertion.
+		/// Executes a transport mission through the transport controller's state machine. The
+		/// controller claims the payload so the main army does not order it elsewhere during the
+		/// insertion, and clears the target when the mission completes or aborts.
 		/// </summary>
 		void ExecuteTransportMission()
 		{
-			var advanced = transport.Execute(transportTarget, transportKind, transportPhase);
-			if (advanced)
+			var active = transport.Execute(transportTarget, transportKind, world.WorldTick);
+			if (!active)
 			{
-				// After unload the mission is complete: release the target and start over.
-				if (transportPhase == 2)
-				{
-					transportPhase = 0;
-					transportTarget = null;
-					transportKind = null;
-				}
-				else
-					transportPhase++;
+				if (transport.Aborted)
+					CoalitionTelemetry.Log(world, "Transport mission aborted during transit");
+				transportTarget = null;
+				transportKind = null;
 			}
 		}
 
