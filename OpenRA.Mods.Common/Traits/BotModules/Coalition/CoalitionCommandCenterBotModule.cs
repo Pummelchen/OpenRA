@@ -119,6 +119,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastCommandTick;
 		string lastPosture;
 
+		/// <summary>The coalition's main effort: the single highest-value objective, re-selected
+		/// every command tick so effort concentrates on one area instead of spreading evenly.</summary>
+		CPos? mainEffort;
+
 		static readonly JsonSerializerOptions IntentOptions = new() { PropertyNameCaseInsensitive = true };
 
 		public CoalitionCommandCenterBotModule(CoalitionCommandCenterBotModuleInfo info, ActorInitializer init)
@@ -197,9 +201,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			if (wantAttack && blackboard.EnemyRegion >= 0)
 			{
-				var target = BestScoredTarget() ?? RegionCenter(blackboard.EnemyRegion);
+				// Main effort: concentrate the coalition on the single highest-value objective so
+				// effort is not spread evenly across all fronts.
+				var scored = BestScoredTarget();
+				if (scored != mainEffort)
+				{
+					mainEffort = scored;
+					blackboard.AddEvent("main_effort", scored, scored != null ? "concentrate on highest-value objective" : "no main effort");
+					CoalitionTelemetry.Log(world, scored != null ? $"Main effort set to {scored.Value}" : "Main effort cleared: no scored target");
+				}
+
+				var target = scored ?? RegionCenter(blackboard.EnemyRegion);
 				EnsureMission(MissionType.Attack, 90, target, "Destroy enemy concentration");
 			}
+			else
+				mainEffort = null;
 
 			if (wantDefend)
 				EnsureMission(MissionType.Defend, 80, RegionCenter(blackboard.HomeRegion), "Hold the base");
@@ -378,15 +394,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
-		/// Highest-value enemy structure target, adjusted for the approach route cost. Targets that
-		/// are not reachable from home on the ground (islands, enemy-held sea bodies) are skipped:
-		/// assaulting them would send the army to drown at the water's edge.
+		/// Highest-value enemy structure target, scored by the full target model: strategic
+		/// consequence (economy, production, technology, position, follow-on) minus approach cost
+		/// (friendly losses, travel, reinforcement, counterattack risk) and intelligence
+		/// uncertainty. Unreachable targets are skipped. The winner is the coalition's main effort.
 		/// </summary>
 		CPos? BestScoredTarget()
 		{
 			CPos? best = null;
 			var bestScore = float.MinValue;
 			var homeRegion = blackboard.HomeRegion;
+			var weights = lastPosture == "attack" ? TargetWeights.Breakthrough() : TargetWeights.Balanced();
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
 				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
@@ -396,8 +414,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (!route.Found)
 					continue;
 
-				var value = CombatEstimator.TargetValue(intel.Actor, Classify);
-				var score = value / (1f + route.Cost * 0.1f);
+				var type = intel.Actor.Info.Name;
+				var (economy, production, technology) = TargetEvaluator.Classify(type);
+				var uncertainty = intel.Confidence < 0.5f ? 1f : 0.3f;
+				var reinforcementRisk = blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.Reinforcement];
+				var counterattackRisk = blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.GroundAntiArmor];
+
+				var breakdown = TargetEvaluator.Score(
+					type, economy, production, technology, targetRegion, route.Cost,
+					friendlyLossRisk: 0.2f, enemyReinforcementRisk: reinforcementRisk,
+					enemyCounterattackRisk: counterattackRisk, uncertainty: uncertainty,
+					blackboard.MapAnalysis, MovementClass.Ground, weights);
+
+				var score = breakdown.Total;
 				if (score > bestScore)
 				{
 					bestScore = score;
