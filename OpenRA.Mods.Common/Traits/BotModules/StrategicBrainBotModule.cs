@@ -104,20 +104,49 @@ namespace OpenRA.Mods.Common.Traits
 		public readonly int ScoutSendPerInterval = 3;
 
 		[Desc("Difficulty 0-3 (easy, normal, hard, impossible): scales the coordinated-attack threshold, " +
-			"the reserve, and how aggressively the bot commits.")]
+			"the reserve, and how aggressively the bot commits. Convenience knob that sets all " +
+			"independent axes together; set the per-axis fields below to override individually.")]
 		public readonly int Difficulty = 3;
 
-		/// <summary>Scales a base value by difficulty: 1.5x at 0 down to 0.75x at 3.</summary>
-		public float ScaleDifficulty(float baseValue)
+		[Desc("Command quality 0-3: how demanding the coordinated-attack threshold is.")]
+		public readonly int CommandQuality = -1;
+
+		[Desc("Reaction speed 0-3: how slowly the bot reacts to battlefield changes.")]
+		public readonly int ReactionSpeed = -1;
+
+		[Desc("Economic bonus 0-3: fractional cash injection; 0 is a strictly fair game.")]
+		public readonly int EconomicBonus = 0;
+
+		[Desc("Micro precision 0-3: how early the bot pulls damaged units back.")]
+		public readonly int MicroPrecision = -1;
+
+		[Desc("Coordination strength 0-3: how tightly the reserve and feints are managed.")]
+		public readonly int CoordinationStrength = -1;
+
+		/// <summary>The resolved independent difficulty axes, honoring per-axis overrides.</summary>
+		public CoalitionDifficulty ResolvedDifficulty()
 		{
-			return baseValue * (1.5f - 0.25f * Difficulty);
+			var scalar = CoalitionDifficulty.FromScalar(Difficulty);
+			return new CoalitionDifficulty
+			{
+				CommandQuality = CommandQuality >= 0 ? CommandQuality : scalar.CommandQuality,
+				ReactionSpeed = ReactionSpeed >= 0 ? ReactionSpeed : scalar.ReactionSpeed,
+				EconomicBonus = EconomicBonus,
+				MicroPrecision = MicroPrecision >= 0 ? MicroPrecision : scalar.MicroPrecision,
+				CoordinationStrength = CoordinationStrength >= 0 ? CoordinationStrength : scalar.CoordinationStrength
+			};
 		}
 
-		/// <summary>The reserve fraction gets tighter with difficulty: 8 at easy, 3 at impossible.</summary>
+		/// <summary>Scales a base value by command quality: 1.5x at easy down to 0.75x at supreme.</summary>
+		public float ScaleDifficulty(float baseValue)
+		{
+			return ResolvedDifficulty().Scale(baseValue);
+		}
+
+		/// <summary>The reserve fraction gets tighter with coordination strength.</summary>
 		public int ScaledReserveFraction()
 		{
-			var fractions = new[] { 8, 6, 4, 3 };
-			return fractions[Math.Clamp(Difficulty, 0, 3)];
+			return ResolvedDifficulty().ScaledReserveFraction();
 		}
 
 		[Desc("Interval (in ticks) between tactical updates.")]
@@ -277,6 +306,15 @@ namespace OpenRA.Mods.Common.Traits
 			queues = player.PlayerActor.TraitsImplementing<ProductionQueue>()
 				.Where(q => q.Enabled)
 				.ToArray();
+
+			// Optional economic bonus: a per-tick cash injection scaled by the difficulty axis.
+			// 0 (the default) is a strictly fair game with no hidden income.
+			var economicBonus = info.ResolvedDifficulty().EconomicBonus;
+			if (economicBonus > 0 && world.WorldTick % 100 == 0)
+			{
+				var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
+				resources?.GiveCash(50 * economicBonus);
+			}
 
 			var tick = world.WorldTick;
 
@@ -608,6 +646,9 @@ namespace OpenRA.Mods.Common.Traits
 			var units = OwnCombatUnits().ToList();
 			var retreatCell = world.Map.CellContaining(baseCenter.Value);
 
+			// Micro-precision scales the retreat threshold: a precise bot pulls units earlier.
+			var retreatThreshold = info.ResolvedDifficulty().RetreatHealthPercent();
+
 			foreach (var a in units)
 			{
 				var health = a.TraitOrDefault<IHealth>();
@@ -626,7 +667,7 @@ namespace OpenRA.Mods.Common.Traits
 					}
 				}
 
-				if (fraction < info.RetreatHealthPercent)
+				if (fraction < retreatThreshold)
 				{
 					retreating.Add(a);
 					bot.QueueOrder(new Order("Move", a, Target.FromCell(world, retreatCell), false));
@@ -662,6 +703,22 @@ namespace OpenRA.Mods.Common.Traits
 				if (defenders.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
 				return;
+			}
+
+			// Reserve edge behavior: the uncommitted reserve intercepts raids on non-base assets
+			// (harvesters, refineries, expansions) and defends allied bases, without stripping the
+			// available army that is staged for missions.
+			var reserve = activeArmy.Where(a => !availableArmy.Contains(a)).ToArray();
+			var raidThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(info.BaseDefenseScanRadius * 3));
+			if (raidThreat != null && reserve.Length >= info.MinWaveSize / 2 && world.WorldTick - lastDefendTick > info.CounterDelayTicks)
+			{
+				SetPosture(Posture.Defend);
+				var interceptors = Claim(reserve).ToArray();
+				if (interceptors.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat.CenterPosition), false, groupedActors: interceptors));
+					CoalitionTelemetry.Log(world, $"Reserve intercepted raid with {interceptors.Length} units");
+				}
 			}
 
 			// Counterattack-after-defense: shortly after repelling an attack, strike back at the

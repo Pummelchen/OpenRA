@@ -330,10 +330,46 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 		}
 
+		/// <summary>0..1 fraction of allied support powers that are ready to fire, for planning.</summary>
+		public float SupportPowerReadiness;
+
+		/// <summary>True when the coalition holds at least one ready strategic superweapon.</summary>
+		public bool HasReadySuperweapon;
+
 		void ExtractEconomy()
 		{
 			foreach (var p in Team)
 				CoalitionCash += p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0;
+
+			// Support-power readiness: count ready powers across the team, weighted by whether
+			// they are strategic (superweapon-like) or tactical.
+			var ready = 0;
+			var total = 0;
+			var readySuperweapon = false;
+			foreach (var p in Team)
+			{
+				var manager = p.PlayerActor.TraitOrDefault<SupportPowerManager>();
+				if (manager == null)
+					continue;
+
+				foreach (var kv in manager.Powers)
+				{
+					total++;
+					if (!kv.Value.Ready)
+						continue;
+
+					ready++;
+					if (supportPowerStructures.Count == 0)
+						continue;
+
+					// Approximate superweapons by the structures that grant them.
+					readySuperweapon |= World.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == p
+						&& supportPowerStructures.Contains(a.Info.Name));
+				}
+			}
+
+			SupportPowerReadiness = total == 0 ? 0f : ready * 1f / total;
+			HasReadySuperweapon = readySuperweapon;
 		}
 
 		void ComputeRegions()

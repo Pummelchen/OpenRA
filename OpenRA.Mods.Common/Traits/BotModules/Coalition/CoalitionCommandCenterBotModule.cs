@@ -135,6 +135,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly CoalitionMatchMetrics matchMetrics = new();
 		int lastMetricsSummaryTick = int.MinValue;
 
+		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
+		public CoalitionBlackboard Blackboard => blackboard;
+
 		/// <summary>The tick of the most recent coalition attack wave, for response-time measurement.</summary>
 		public int LastWaveTick => lastWaveTick;
 

@@ -65,6 +65,12 @@ namespace OpenRA.Mods.Common.Traits
 			public float Friendly { get; set; }
 			public float Enemy { get; set; }
 			public float WinRatio { get; set; }
+
+			/// <summary>0..1 fraction of coalition support powers ready, so the commander can plan with them.</summary>
+			public float SupportPowerReadiness { get; set; }
+
+			/// <summary>True when the coalition holds a ready strategic superweapon.</summary>
+			public bool HasSuperweapon { get; set; }
 		}
 
 		sealed class MemberState
@@ -277,11 +283,16 @@ namespace OpenRA.Mods.Common.Traits
 			var friendlyPower = CombatEstimator.ForcePower(friendly, Classify);
 			var enemyPower = CombatEstimator.ForcePower(enemyActors, Classify);
 			var (winRatio, _) = CombatEstimator.Estimate(friendlyPower, enemyPower);
+
+			// Support-power readiness from the blackboard so the commander plans with them.
+			var blackboard = commander?.Blackboard;
 			return new EstimateState
 			{
 				Friendly = friendlyPower,
 				Enemy = enemyPower,
-				WinRatio = winRatio
+				WinRatio = winRatio,
+				SupportPowerReadiness = blackboard?.SupportPowerReadiness ?? 0f,
+				HasSuperweapon = blackboard?.HasReadySuperweapon ?? false
 			};
 		}
 
