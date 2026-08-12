@@ -1,4 +1,6 @@
-# OpenRA — Supreme Allied Command AI fork
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/54b40334-e283-4b1f-b2dd-0f406476b6b5" />
+
+# OpenRA — AI Mod - Extreme LLM Edition
 
 A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not described here is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
