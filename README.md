@@ -16,15 +16,25 @@ The AI is a hybrid:
 
 The AI respects fog of war — it only sees territory the team has explored — but it uses that radar ruthlessly: combined-arms multi-pronged attacks, deception, special operations behind enemy lines, and opponent modeling that adapts to how you play. The design target is an AI that is **nearly impossible to beat by skilled human players**.
 
+## Feature overview
+
+- **Coalition command** — one strategic brain, up to four allied bots, one shared deterministic world model.
+- **Hybrid intelligence** — a local vision-capable LLM sets strategy every ~15 s; deterministic engine controllers execute it at tick speed. The AI plays fully without the LLM.
+- **Fair fog of war** — the AI only ever sees explored territory; no omniscience, no hidden income.
+- **Independent difficulty axes** — command quality, reaction speed, micro precision, coordination strength, and economic bonus (0% = strictly fair) are configurable separately.
+- **Deception with measurement** — feints and baits are launched, their effect on enemy behavior is measured, and the results feed back into planning.
+- **Engine-validated LLM tool API** — the commander queries combat estimates, routes, and target scores through read-only engine endpoints; it cannot fabricate mechanics or bypass game rules.
+- **Headless harness & self-play** — `--simulate` runs full skirmishes without a renderer; `ai/selfplay.py` batches seeds and parameter sweeps for tuning.
+
 ## Project layout
 
-- `ai/` — the model stack: `run.sh` launcher, `model_server.py` (brain server, port 8765), `COMMAND_API.md` (the C#↔LLM contract), `brain.log` (prompt/reply monitor).
-- `OpenRA.Mods.Common/Traits/BotModules/` — the AI bot modules: coalition command center, strategic brain, external brain, radar capture.
+- `ai/` — the model stack: `run.sh` launcher, `model_server.py` (brain server, port 8765), `COMMAND_API.md` (the C#↔LLM contract), `brain.log` (prompt/reply monitor), `selfplay.py` (batch evaluation).
+- `OpenRA.Mods.Common/Traits/BotModules/` — the AI bot modules: coalition command center, strategic brain, external brain, radar capture, engine tool API.
 - `OpenRA.Game/HeadlessSkirmish.cs` + `OpenRA.Mods.Common/UtilityCommands/SimulateCommand.cs` — headless simulation harness (`--simulate`) for self-play, batch evaluation, and scenario testing.
 
 ## Documentation
 
-All design details — the P0–P10 development plan, the AI model stack, and what the skilled human player can expect — live in the [project wiki](https://github.com/Pummelchen/OpenRA/wiki).
+The project's design goals, architecture, and what the skilled human player can expect are described in the [project wiki](https://github.com/Pummelchen/OpenRA/wiki). The C#↔LLM interface contract lives in [`ai/COMMAND_API.md`](ai/COMMAND_API.md).
 
 ## License
 
