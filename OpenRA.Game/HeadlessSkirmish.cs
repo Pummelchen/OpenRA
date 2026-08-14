@@ -34,6 +34,13 @@ namespace OpenRA
 		/// </summary>
 		public static Func<Player, bool> IsBotEnabled;
 
+		/// <summary>
+		/// Optional per-run override of the coalition commander's intelligence axis (0 = fair fog,
+		/// 2 = reveal structures, 3 = omniscient). When null, the ai.yaml value is used. Lets
+		/// scenario tests and self-play sweeps force a specific fog/intelligence level.
+		/// </summary>
+		public static int? CommanderIntelligence;
+
 		/// <summary>One lobby client entry as reported by a finished simulation.</summary>
 		public sealed class ClientSummary
 		{

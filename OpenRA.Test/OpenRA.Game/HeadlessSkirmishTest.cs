@@ -393,26 +393,36 @@ namespace OpenRA.Test
 			}
 		}
 
-		[Test(Description = "Acceptance 432: the coalition commander runs against a scripted turtle opponent (mixed self-play).")]
+		[Test(Description = "Acceptance 432: the opponent model classifies a scripted turtle opponent under full observation.")]
 		public void OpponentModelClassifiesScriptedOpponent()
 		{
 			try
 			{
-				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
-				var offset = TelemetryLength(telemetryPath);
-				HeadlessSkirmish.Run(modData, map, new[] { "ai", "turtle", "ai", "turtle" }, 2, 3000, 700);
-				var lines = TelemetryLines(telemetryPath, offset);
+				// Force omniscient so the coalition observes the scripted opponent's full composition
+				// regardless of fog; fair-fog observation is unreliable on a large map.
+				HeadlessSkirmish.CommanderIntelligence = 3;
+				try
+				{
+					var (modData, map) = LoadModAndMap();
+					var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+					var offset = TelemetryLength(telemetryPath);
+					HeadlessSkirmish.Run(modData, map, new[] { "ai", "turtle", "ai", "turtle" }, 2, 2400, 700);
+					var lines = TelemetryLines(telemetryPath, offset);
 
-				// The opponent-model classification itself (rush/turtle/balanced) is unit-tested via
-				// OpponentModel.DerivePlaystyle/DerivePredictedBuild; here we verify the commander runs
-				// against a scripted opponent. Enemy observation is fog/timing dependent, so the
-				// "Opponent model:" telemetry only appears once contact is made.
-				Assert.That(lines.Any(l => l.Contains("Posture ")), Is.True,
-					"The coalition commander must run against the scripted opponent.");
+					var modelLine = lines.FirstOrDefault(l => l.Contains("Opponent model:"));
+					Assert.That(modelLine, Is.Not.Null,
+						"The opponent model must observe and classify the scripted opponent.");
+					Assert.That(modelLine, Does.Not.Contain("Opponent model: unknown,"),
+						"The opponent model must produce a non-unknown playstyle under full observation.");
+				}
+				finally
+				{
+					HeadlessSkirmish.CommanderIntelligence = null;
+				}
 			}
 			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
 			{
+				HeadlessSkirmish.CommanderIntelligence = null;
 				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
 			}
 		}

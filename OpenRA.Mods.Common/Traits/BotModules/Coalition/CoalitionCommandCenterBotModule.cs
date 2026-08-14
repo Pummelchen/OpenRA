@@ -101,8 +101,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"visible, 3 = omniscient (every enemy actor visible). Fair fog is the default.")]
 		public readonly int Intelligence = 0;
 
+		/// <summary>The effective intelligence axis, overridable per-run by the headless harness.</summary>
+		public int EffectiveIntelligence => HeadlessSkirmish.CommanderIntelligence ?? Intelligence;
+
 		/// <summary>True at the top intelligence setting: the coalition sees every enemy actor.</summary>
-		public bool IsOmniscient => Intelligence >= 3;
+		public bool IsOmniscient => EffectiveIntelligence >= 3;
 
 		public override object Create(ActorInitializer init) { return new CoalitionCommandCenterBotModule(this, init); }
 	}
@@ -617,7 +620,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return true;
 			if (team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
 				return true;
-			if (info.Intelligence >= 2 && Classify(a) == UnitClass.Structure)
+			if (info.EffectiveIntelligence >= 2 && Classify(a) == UnitClass.Structure)
 				return true;
 			return false;
 		}
