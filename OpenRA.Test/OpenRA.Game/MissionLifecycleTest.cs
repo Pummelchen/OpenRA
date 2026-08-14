@@ -226,5 +226,26 @@ namespace OpenRA.Test
 			var directive = manager.BuildDirectiveJson(null, null, false);
 			Assert.That(directive, Does.Contain("\"feint\":{\"x\":10,\"y\":20}"));
 		}
+
+		[TestCase(TestName = "The counterattack, defend, and withdrawal types each map to a single family.")]
+		public void FamilyCompleteness()
+		{
+			// A counterattack is an offensive operation launched from a defensive posture, so it walks
+			// the offensive pipeline; a plain defend is a static directive; a retreat is withdrawal.
+			Assert.That(MissionManager.IsOffensive(MissionType.Counterattack), Is.True);
+			Assert.That(MissionManager.IsStaticDirective(MissionType.Counterattack), Is.False);
+
+			Assert.That(MissionManager.IsDefensive(MissionType.Defend), Is.True);
+			Assert.That(MissionManager.IsStaticDirective(MissionType.Defend), Is.False);
+
+			Assert.That(MissionManager.IsStaticDirective(MissionType.Retreat), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.Retreat), Is.False);
+
+			// Every recon family type is recognized (recon generates intelligence questions).
+			Assert.That(MissionManager.IsRecon(MissionType.NavalRecon), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.RouteRecon), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.DefenseProbe), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.ExpansionSearch), Is.True);
+		}
 	}
 }

@@ -88,5 +88,30 @@ namespace OpenRA.Test
 			Assert.That(arbiter.MissionOf("Multi0"), Is.Null);
 			Assert.That(arbiter.Assign("OP-2", "main", ArbiterPriority.ActiveCombat, "Multi0"), Is.Empty);
 		}
+
+		[TestCase(TestName = "Priority levels order emergency survival above active combat above staging.")]
+		public void PriorityOrdering()
+		{
+			// The enum is the contract: an emergency (survival) must outrank a combat mission, which
+			// outranks routine defense and staging. Kept strictly increasing so a higher value always wins.
+			Assert.That(ArbiterPriority.Survival, Is.GreaterThan(ArbiterPriority.SpecialMission));
+			Assert.That(ArbiterPriority.SpecialMission, Is.GreaterThan(ArbiterPriority.ActiveCombat));
+			Assert.That(ArbiterPriority.ActiveCombat, Is.GreaterThan(ArbiterPriority.Defense));
+			Assert.That(ArbiterPriority.Defense, Is.GreaterThan(ArbiterPriority.Reserve));
+			Assert.That(ArbiterPriority.Reserve, Is.GreaterThan(ArbiterPriority.Recon));
+			Assert.That(ArbiterPriority.Recon, Is.GreaterThan(ArbiterPriority.Staging));
+			Assert.That(ArbiterPriority.Staging, Is.GreaterThan(ArbiterPriority.Idle));
+		}
+
+		[TestCase(TestName = "An emergency survival commitment overrides active combat.")]
+		public void SurvivalOverridesCombat()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+
+			Assert.That(arbiter.Assign("RETREAT-1", "withdraw", ArbiterPriority.Survival, "Multi0"), Is.Empty,
+				"An emergency withdrawal must override a combat commitment.");
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("RETREAT-1"));
+		}
 	}
 }
