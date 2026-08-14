@@ -1132,6 +1132,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				SpecialAssets = blackboard.SpecialAssets.ToArray(),
 				Transports = blackboard.Transports.ToArray(),
 				Facilities = blackboard.Facilities.ToArray(),
+				Missions = missions.Missions.Select(m => new MissionState
+				{
+					Id = m.Id,
+					Type = m.Type.ToString().ToLowerInvariant(),
+					Status = m.Status.ToString().ToLowerInvariant(),
+					Phase = m.Phase.ToString().ToLowerInvariant(),
+					Target = m.Target,
+					Priority = m.Priority,
+					Readiness = m.Readiness,
+					Progress = m.Progress,
+					OutcomeReason = m.OutcomeReason
+				}).ToArray(),
 				EnemyIntel = blackboard.EnemyIntel.ToArray(),
 				Events = blackboard.Events.ToArray(),
 				Opponent = blackboard.Opponent,
@@ -1147,6 +1159,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				DeceptionEnemiesDrawn = blackboard.DeceptionEnemiesDrawn,
 				PowerProvided = blackboard.PowerProvided,
 				PowerDrained = blackboard.PowerDrained,
+				RefineryCount = blackboard.RefineryCount,
+				HarvesterCount = blackboard.HarvesterCount,
+				ActiveHarvesterCount = blackboard.ActiveHarvesterCount,
+				ResourceCellsRemaining = blackboard.ResourceCellsRemaining,
 				MapAnalysis = blackboard.MapAnalysis,
 				ThreatField = blackboard.ThreatField()
 			};

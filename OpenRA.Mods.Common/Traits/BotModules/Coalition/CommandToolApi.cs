@@ -17,6 +17,20 @@ using System.Text.Json.Nodes;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
+	/// <summary>A plain-data view of one mission, for the mission-status tool.</summary>
+	public sealed class MissionState
+	{
+		public string Id;
+		public string Type;
+		public string Status;
+		public string Phase;
+		public CPos? Target;
+		public int Priority;
+		public float Readiness;
+		public float Progress;
+		public string OutcomeReason;
+	}
+
 	/// <summary>
 	/// A plain-data snapshot of the blackboard state that the tool API executes against. The command
 	/// center builds one from the live blackboard each tick; tests build it directly, so every tool is
@@ -31,6 +45,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public SpecialAsset[] SpecialAssets = [];
 		public SpecialAsset[] Transports = [];
 		public ProductionFacility[] Facilities = [];
+		public MissionState[] Missions = [];
 		public EnemyIntel[] EnemyIntel = [];
 		public CoalitionEvent[] Events = [];
 		public OpponentModel Opponent = new();
@@ -46,6 +61,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int PowerProvided;
 		public int PowerDrained;
 		public int PowerExcess => PowerProvided - PowerDrained;
+		public int RefineryCount;
+		public int HarvesterCount;
+		public int ActiveHarvesterCount;
+		public int ResourceCellsRemaining;
 		public CoalitionMapAnalysis MapAnalysis;
 		public float[][] ThreatField;
 
@@ -136,6 +155,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							return GetEconomyState(context);
 						case "get_production_state":
 							return GetProductionState(context);
+						case "compare_force_packages":
+							return CompareForcePackages(context, args);
+						case "estimate_enemy_response":
+							return EstimateEnemyResponse(context);
+						case "find_attack_windows":
+							return FindAttackWindows(context);
+						case "find_special_ops_routes":
+							return FindSpecialOpsRoutes(context);
+						case "get_mission_status":
+							return GetMissionStatus(context, args);
+						case "get_force_readiness":
+							return GetForceReadiness(context, args);
+						case "get_transport_status":
+							return GetTransportStatus(context);
+						case "get_route_status":
+							return GetRouteStatus(context, args);
 						default:
 							return Error("UNKNOWN_TOOL", $"Unknown tool \"{tool}\".");
 					}
@@ -496,6 +531,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["power_provided"] = context.PowerProvided,
 				["power_drained"] = context.PowerDrained,
 				["power_excess"] = context.PowerExcess,
+				["refineries"] = context.RefineryCount,
+				["harvesters"] = context.HarvesterCount,
+				["active_harvesters"] = context.ActiveHarvesterCount,
+				["resource_cells_remaining"] = context.ResourceCellsRemaining,
 				["members"] = members
 			});
 		}
@@ -518,6 +557,149 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				.ToArray();
 
 			return Ok(new JsonArray(facilities));
+		}
+
+		static string CompareForcePackages(ToolContext context, JsonElement args)
+		{
+			var against = ResolveForce(context, Require(args, "against"), "against");
+
+			var ranked = context.Forces
+				.OrderByDescending(f => CombatEstimator.MatchupPower(f.Counts, against.Counts, Health(f)))
+				.Select(f => new JsonObject
+				{
+					["owner"] = f.Owner,
+					["matchup_power"] = Round(CombatEstimator.MatchupPower(f.Counts, against.Counts, Health(f)))
+				})
+				.ToArray();
+
+			return Ok(new JsonArray(ranked));
+		}
+
+		static string EstimateEnemyResponse(ToolContext context)
+		{
+			var opponent = context.Opponent;
+			return Ok(new JsonObject
+			{
+				["responds_strongly_to_raids"] = opponent.RespondsStronglyToRaids,
+				["moves_whole_army_to_defend"] = opponent.MovesWholeArmyToDefend,
+				["average_response_time"] = Round(opponent.AverageResponseTime),
+				["deception_effectiveness"] = Round(context.DeceptionEffectiveness),
+				["likely_reactions"] = new JsonArray((opponent.MovesWholeArmyToDefend
+					? new[] { "whole_army_redeploys", "counterattack" }
+					: opponent.RespondsStronglyToRaids
+						? new[] { "local_defense", "raid_response" }
+						: new[] { "hold", "limited_response" })
+					.Select(r => (JsonNode)r).ToArray())
+			});
+		}
+
+		static string FindAttackWindows(ToolContext context)
+		{
+			var windows = context.Regions
+				.Where(r => r.EnemyPressure > 0)
+				.OrderBy(r => r.Threats.Sum())
+				.Select(r => new JsonObject
+				{
+					["region"] = r.Index,
+					["static_defense"] = Round(r.Threats[(int)CoalitionCapability.StaticDefense]),
+					["anti_air"] = Round(r.Threats[(int)CoalitionCapability.AntiAir]),
+					["total_threat"] = Round(r.Threats.Sum())
+				})
+				.ToArray();
+
+			return Ok(new JsonArray(windows));
+		}
+
+		static string FindSpecialOpsRoutes(ToolContext context)
+		{
+			var targets = context.EnemyIntel
+				.Where(i => i.Class == UnitClass.Structure)
+				.Select(i => new
+				{
+					Type = i.Type,
+					Cell = i.LastSeenCell,
+					Value = TargetEvaluator.EconomicValue(i.Type) + TargetEvaluator.ProductionValue(i.Type) + TargetEvaluator.TechnologyValue(i.Type),
+					Region = context.RegionOf(i.LastSeenCell)
+				})
+				.Where(t => context.HomeRegion >= 0 && CoalitionRoutePlanner.RouteExists(
+					context.MapAnalysis, context.HomeRegion, t.Region, MovementClass.Ground))
+				.OrderByDescending(t => t.Value)
+				.Select(t => new JsonObject
+				{
+					["type"] = t.Type,
+					["x"] = t.Cell.X,
+					["y"] = t.Cell.Y,
+					["region"] = t.Region,
+					["value"] = t.Value
+				})
+				.ToArray();
+
+			return Ok(new JsonArray(targets));
+		}
+
+		static string GetMissionStatus(ToolContext context, JsonElement args)
+		{
+			var missions = context.Missions.Select(m => new JsonObject
+			{
+				["id"] = m.Id,
+				["type"] = m.Type,
+				["status"] = m.Status,
+				["phase"] = m.Phase,
+				["x"] = m.Target.HasValue ? m.Target.Value.X : -1,
+				["y"] = m.Target.HasValue ? m.Target.Value.Y : -1,
+				["priority"] = m.Priority,
+				["readiness"] = Round(m.Readiness),
+				["progress"] = Round(m.Progress),
+				["outcome"] = m.OutcomeReason
+			}).ToArray();
+
+			return Ok(new JsonArray(missions));
+		}
+
+		static string GetForceReadiness(ToolContext context, JsonElement args)
+		{
+			var force = ResolveForce(context, Require(args, "force"), "force");
+
+			return Ok(new JsonObject
+			{
+				["owner"] = force.Owner,
+				["readiness"] = Round(force.Readiness),
+				["strength"] = Round(force.Strength),
+				["status"] = force.Status.ToString().ToLowerInvariant(),
+				["mission"] = force.MissionId,
+				["casualty_fraction"] = Round(force.CasualtyFraction)
+			});
+		}
+
+		static string GetTransportStatus(ToolContext context)
+		{
+			var transports = context.Transports
+				.Select(t => new JsonObject
+				{
+					["owner"] = t.Owner,
+					["type"] = t.Type,
+					["x"] = t.Cell.X,
+					["y"] = t.Cell.Y,
+					["cargo"] = t.Cargo
+				})
+				.ToArray();
+
+			return Ok(new JsonArray(transports));
+		}
+
+		static string GetRouteStatus(ToolContext context, JsonElement args)
+		{
+			var from = ResolveRegion(context, Require(args, "from_region"), "from_region");
+			var to = ResolveRegion(context, Require(args, "to_region"), "to_region");
+			var route = CoalitionRoutePlanner.FindRoute(context.MapAnalysis, context.ThreatField, from, to,
+				MovementClass.Ground, RouteWeights.Assault());
+
+			return Ok(new JsonObject
+			{
+				["found"] = route.Found,
+				["cost"] = route.Found ? Round(route.Cost) : double.MaxValue,
+				["regions"] = new JsonArray((route.Regions ?? []).Select(r => (JsonNode)r).ToArray())
+			});
 		}
 
 		// ------------------------------------------------------------------------------------

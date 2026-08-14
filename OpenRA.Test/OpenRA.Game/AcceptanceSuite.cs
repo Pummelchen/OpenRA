@@ -86,7 +86,10 @@ namespace OpenRA.Test
 			{
 				"get_global_summary", "inspect_region", "inspect_force", "inspect_enemy_intelligence",
 				"get_recent_events", "get_opponent_model", "get_uncertainties", "estimate_engagement",
-				"score_targets", "plan_routes", "get_economy_state"
+				"score_targets", "plan_routes", "get_economy_state", "get_production_state",
+				"compare_force_packages", "estimate_enemy_response", "find_attack_windows",
+				"find_special_ops_routes", "get_mission_status", "get_force_readiness",
+				"get_transport_status", "get_route_status"
 			};
 
 			foreach (var tool in tools)

@@ -58,6 +58,22 @@ namespace OpenRA.Mods.Common.Traits
 			public EnemyState Enemies { get; set; }
 			public ForceState Force { get; set; }
 			public EstimateState Estimate { get; set; }
+			public ArmyGroupState[] ArmyGroups { get; set; }
+			public string[] RecentEvents { get; set; }
+			public string[] Uncertainties { get; set; }
+		}
+
+		sealed class ArmyGroupState
+		{
+			public string Owner { get; set; }
+			public string Mission { get; set; }
+			public string Role { get; set; }
+			public string Status { get; set; }
+			public int TotalUnits { get; set; }
+			public float Strength { get; set; }
+			public float Readiness { get; set; }
+			public Dictionary<string, int> Composition { get; set; }
+			public Dictionary<string, int> Capabilities { get; set; }
 		}
 
 		sealed class EstimateState
@@ -256,7 +272,10 @@ namespace OpenRA.Mods.Common.Traits
 				Team = members,
 				Enemies = enemies,
 				Force = ComputeForce(world, player, team),
-				Estimate = ComputeEstimate(world, player, team, enemyActors)
+				Estimate = ComputeEstimate(world, player, team, enemyActors),
+				ArmyGroups = CommanderArmyGroups(player),
+				RecentEvents = CommanderRecentEvents(player),
+				Uncertainties = CommanderUncertainties(player)
 			};
 
 			return JsonSerializer.Serialize(state, SnapshotOptions);
@@ -324,6 +343,55 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			return breakdown;
+		}
+
+		/// <summary>Army-group records: per-owner force composition, capabilities, and assignment.</summary>
+		static ArmyGroupState[] CommanderArmyGroups(Player player)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			var blackboard = commander?.Blackboard;
+			if (blackboard == null)
+				return [];
+
+			return blackboard.Forces.Select(f => new ArmyGroupState
+			{
+				Owner = f.Owner,
+				Mission = f.MissionId,
+				Role = f.Role,
+				Status = f.Status.ToString().ToLowerInvariant(),
+				TotalUnits = f.TotalUnits,
+				Strength = f.Strength,
+				Readiness = f.Readiness,
+				Composition = new Dictionary<string, int>(f.ByType),
+				Capabilities = Enumerable.Range(0, f.Capabilities.Length)
+					.Where(c => f.Capabilities[c] > 0)
+					.ToDictionary(c => CommandToolApi.FriendlyCapabilityKeys[c], c => 1)
+			}).ToArray();
+		}
+
+		/// <summary>Recent strategically significant events, summarized for the snapshot.</summary>
+		static string[] CommanderRecentEvents(Player player)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			return commander?.Blackboard?.Events
+				.Select(e => $"{e.Type}{(e.Payload != null ? ":" + e.Payload : string.Empty)}")
+				.ToArray() ?? [];
+		}
+
+		/// <summary>Unresolved intelligence uncertainties, summarized for the snapshot.</summary>
+		static string[] CommanderUncertainties(Player player)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			var blackboard = commander?.Blackboard;
+			if (blackboard == null)
+				return [];
+
+			return blackboard.EnemyIntel
+				.Where(i => i.Status == IntelStatus.Suspected || i.Confidence < 0.5f)
+				.Select(i => i.Status == IntelStatus.Suspected
+					? $"suspected_enemy_in_region_{blackboard.RegionOf(i.LastSeenCell).Index}"
+					: $"enemy_{i.Type}_position_conf{System.Math.Round(i.Confidence, 2)}")
+				.ToArray();
 		}
 
 		/// <summary>Compresses an actor list into per-type counts plus average health.</summary>

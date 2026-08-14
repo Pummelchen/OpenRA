@@ -236,6 +236,7 @@ namespace OpenRA.Mods.Common.Traits
 		int lastAttackTick;
 		int lastDefendTick;
 		CPos? counterPos;
+		int enemyCountAtDefense;
 		bool reserveCommitted;
 		bool lastReserveCommitted;
 		string lastCoordGate;
@@ -711,6 +712,7 @@ namespace OpenRA.Mods.Common.Traits
 				SetPosture(Posture.Defend);
 				lastDefendTick = world.WorldTick;
 				counterPos = world.Map.CellContaining(baseThreat.CenterPosition);
+				enemyCountAtDefense = enemyArmyCount;
 
 				var nearby = sightings.Count(kv => kv.Key.IsInWorld && !kv.Key.IsDead
 					&& (kv.Key.CenterPosition - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
@@ -774,7 +776,9 @@ namespace OpenRA.Mods.Common.Traits
 				if (counter.Length > 0)
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterPos.Value), false, groupedActors: counter));
-					CoalitionTelemetry.Log(world, $"Counterattack with {counter.Length} units after defense");
+					var depleted = enemyCountAtDefense > 0 && enemyArmyCount < enemyCountAtDefense;
+					CoalitionTelemetry.Log(world,
+						$"Counterattack with {counter.Length} units after defense{(depleted ? " (enemy depleted)" : string.Empty)}");
 				}
 
 				return;

@@ -234,6 +234,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Power surplus (negative = deficit), in engine power units.</summary>
 		public int PowerExcess => PowerProvided - PowerDrained;
 
+		/// <summary>Number of refineries across the coalition.</summary>
+		public int RefineryCount;
+
+		/// <summary>Number of harvesters across the coalition.</summary>
+		public int HarvesterCount;
+
+		/// <summary>Number of harvesters currently active (not idle).</summary>
+		public int ActiveHarvesterCount;
+
+		/// <summary>Approximate remaining resource cells on the map.</summary>
+		public int ResourceCellsRemaining;
+
 		/// <summary>The region index of the coalition's average base position, or -1.</summary>
 		public int HomeRegion = -1;
 
@@ -304,6 +316,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			ExtractForces();
 			ExtractSpecialAssets();
 			ExtractProduction();
+			ExtractEconomyState();
 			ExtractEnemyIntel(seedIntel, omniscient);
 			ComputeHomeAndEnemyRegions();
 			ComputeRegions();
@@ -446,6 +459,37 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (item == null || item.TotalTime <= 0)
 				return 0;
 			return (int)(100L * (item.TotalTime - item.RemainingTime) / item.TotalTime);
+		}
+
+		/// <summary>
+		/// Extracts the coalition's economy: refinery and harvester counts, active harvesters, and the
+		/// approximate remaining resource cells, so expansion and raiding decisions can weigh resources.
+		/// </summary>
+		void ExtractEconomyState()
+		{
+			var teamIds = Team.Select(p => p.InternalName).ToHashSet();
+			foreach (var a in World.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || !teamIds.Contains(a.Owner.InternalName))
+					continue;
+
+				if (a.Info.HasTraitInfo<RefineryInfo>())
+					RefineryCount++;
+				else if (a.Info.HasTraitInfo<HarvesterInfo>())
+				{
+					HarvesterCount++;
+					if (!a.IsIdle)
+						ActiveHarvesterCount++;
+				}
+			}
+
+			var resourceLayer = World.WorldActor.TraitOrDefault<IResourceLayer>();
+			if (resourceLayer != null)
+			{
+				foreach (var cell in World.Map.AllCells)
+					if (resourceLayer.GetResource(cell).Type != null)
+						ResourceCellsRemaining++;
+			}
 		}
 
 		CPos CenterOf(Player p)
