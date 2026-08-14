@@ -352,7 +352,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						? $"suspected_enemy_in_region_{context.RegionOf(i.LastSeenCell)}"
 						: $"enemy_{i.Type}_position",
 					["value"] = Round(i.Confidence),
-					["status"] = i.Status.ToString().ToLowerInvariant()
+					["status"] = IntelStatusKey(i.Status)
 				})
 				.ToArray();
 
@@ -433,8 +433,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					};
 			}
 
+			// Suspected entries are hypotheses about a region, not confirmed sightings, so they are
+			// never scored as targets even if they happen to carry a structure class.
 			var scored = new List<(string Type, int X, int Y, int Region, float Score, float Confidence)>();
-			foreach (var intel in context.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			foreach (var intel in context.EnemyIntel.Where(i => i.Class == UnitClass.Structure && i.Status != IntelStatus.Suspected))
 			{
 				var targetRegion = context.RegionOf(intel.LastSeenCell);
 				if (region >= 0 && region != targetRegion)
@@ -717,7 +719,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				["type"] = intel.Type,
 				["class"] = intel.Class.ToString().ToLowerInvariant(),
-				["status"] = intel.Status.ToString().ToLowerInvariant(),
+				["status"] = IntelStatusKey(intel.Status),
 				["last_seen"] = new JsonObject
 				{
 					["x"] = intel.LastSeenCell.X,
@@ -734,6 +736,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					["expected"] = intel.ExpectedCount,
 					["max"] = intel.MaxCount
 				}
+			};
+		}
+
+		/// <summary>Wire form of an intelligence status, kept snake_case to match the rest of the API.</summary>
+		static string IntelStatusKey(IntelStatus status)
+		{
+			return status switch
+			{
+				IntelStatus.Observed => "observed",
+				IntelStatus.LastKnown => "last_known",
+				IntelStatus.Inferred => "inferred",
+				IntelStatus.Suspected => "suspected",
+				_ => "unknown"
 			};
 		}
 

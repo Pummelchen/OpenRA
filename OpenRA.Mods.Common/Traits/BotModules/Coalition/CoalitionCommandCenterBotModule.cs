@@ -1484,8 +1484,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			try
 			{
 				var intent = JsonSerializer.Deserialize<LlmIntent>(intentJson, IntentOptions);
-				if (intent is not null)
-					llmIntent = intent;
+				if (intent is null)
+					return;
+
+				// Validate the non-mission intent fields engine-side: an unknown posture is rejected
+				// and cleared (the deterministic posture applies), and malformed production entries are
+				// dropped. The deterministic commander remains authoritative on any rejection.
+				var postureRejection = CommandValidator.ValidatePosture(intent.Posture);
+				if (postureRejection != null)
+				{
+					CoalitionTelemetry.Log(world, $"Command validator: {postureRejection}");
+					intent.Posture = null;
+				}
+
+				var produceRejections = CommandValidator.ValidateProduce(intent.Produce);
+				foreach (var (_, reason) in produceRejections)
+					CoalitionTelemetry.Log(world, $"Command validator: {reason}");
+
+				if (produceRejections.Count > 0)
+					intent.Produce = intent.Produce.Where((_, i) => !produceRejections.Any(r => r.Index == i)).ToArray();
+
+				llmIntent = intent;
 			}
 			catch
 			{

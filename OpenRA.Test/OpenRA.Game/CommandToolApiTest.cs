@@ -419,5 +419,60 @@ namespace OpenRA.Test
 			Assert.That(result.GetProperty("buildable_cells").GetInt32(), Is.EqualTo(20));
 			Assert.That(result.GetProperty("expansion_value").GetDouble(), Is.EqualTo(1.5).Within(0.001));
 		}
+
+		[TestCase(TestName = "inspect_enemy_intelligence carries the honesty status so fact is distinguishable from inference.")]
+		public void IntelStatusHonesty()
+		{
+			var context = Context();
+			context.EnemyIntel = new[]
+			{
+				new EnemyIntel("3tnk", UnitClass.Armor) { LastSeenCell = new CPos(2, 2), LastSeenTick = 1000, Confidence = 1f, Status = IntelStatus.Observed },
+				new EnemyIntel("3tnk", UnitClass.Armor) { LastSeenCell = new CPos(4, 4), LastSeenTick = 500, Confidence = 0.4f, Status = IntelStatus.LastKnown, PositionErrorCells = 4 },
+				new EnemyIntel(string.Empty, UnitClass.Support) { LastSeenCell = new CPos(12, 8), LastSeenTick = 1000, Confidence = 0.2f, Status = IntelStatus.Suspected, PositionErrorCells = 16 }
+			};
+
+			var result = Result(Call(context, "inspect_enemy_intelligence")).GetProperty("result");
+			var entries = result.EnumerateArray().ToArray();
+
+			Assert.That(entries, Has.Length.EqualTo(3));
+			Assert.That(entries[0].GetProperty("status").GetString(), Is.EqualTo("observed"));
+			Assert.That(entries[0].GetProperty("confidence").GetDouble(), Is.EqualTo(1.0).Within(0.001));
+			Assert.That(entries[0].GetProperty("position_error_cells").GetInt32(), Is.EqualTo(0));
+
+			Assert.That(entries[1].GetProperty("status").GetString(), Is.EqualTo("last_known"));
+			Assert.That(entries[1].GetProperty("confidence").GetDouble(), Is.LessThan(1.0));
+			Assert.That(entries[1].GetProperty("position_error_cells").GetInt32(), Is.GreaterThanOrEqualTo(1));
+
+			Assert.That(entries[2].GetProperty("status").GetString(), Is.EqualTo("suspected"));
+			Assert.That(entries[2].GetProperty("type").GetString(), Is.Empty, "A suspected region has no specific unit type.");
+		}
+
+		[TestCase(TestName = "Suspected intel is a hypothesis, surfaced as an uncertainty and never scored as a target.")]
+		public void SuspectedIntelNotScored()
+		{
+			var context = Context();
+			context.EnemyIntel = context.EnemyIntel.Concat(new[]
+			{
+				new EnemyIntel(string.Empty, UnitClass.Structure)
+				{
+					LastSeenCell = new CPos(1, 1),
+					LastSeenTick = 1000,
+					Confidence = 0.2f,
+					Status = IntelStatus.Suspected,
+					PositionErrorCells = 16
+				}
+			}).ToArray();
+
+			// The suspected structure-class entry is a hypothesis, not a confirmed sighting, so it is
+			// excluded from target scoring even though it carries a structure class.
+			var targets = Result(Call(context, "score_targets")).GetProperty("result").EnumerateArray().ToArray();
+			Assert.That(targets.Length, Is.EqualTo(2), "Only the two confirmed structures are scored.");
+			Assert.That(targets.All(t => t.GetProperty("type").GetString() != string.Empty), Is.True);
+
+			// It instead surfaces as an intelligence question the commander can act on.
+			var uncertainties = Result(Call(context, "get_uncertainties")).GetProperty("result").EnumerateArray().ToArray();
+			Assert.That(uncertainties.Any(u => u.GetProperty("question").GetString().StartsWith("suspected_enemy_in_region_")),
+				Is.True, "Suspected presence is reported as a recon question, not a target.");
+		}
 	}
 }

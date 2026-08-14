@@ -84,5 +84,49 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			return replyRound >= 0 && currentRound >= 0 && replyRound < currentRound;
 		}
+
+		/// <summary>The posture vocabulary the commander intent surface accepts (from the model prompt).</summary>
+		public static readonly IReadOnlySet<string> KnownPostures = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+		{
+			"attack", "defend", "build", "turtle"
+		};
+
+		/// <summary>Cap on production entries so a malformed reply cannot flood the directive list.</summary>
+		public const int MaxProduceEntries = 64;
+
+		/// <summary>
+		/// Validates a posture hint. A null/empty posture is valid (the deterministic posture applies);
+		/// an unknown value is rejected with a machine-readable reason.
+		/// </summary>
+		public static string ValidatePosture(string posture)
+		{
+			if (string.IsNullOrWhiteSpace(posture))
+				return null;
+
+			return KnownPostures.Contains(posture.Trim())
+				? null
+				: $"REJECTED_UNKNOWN_POSTURE: unknown posture \"{posture}\"";
+		}
+
+		/// <summary>
+		/// Validates production requests. A null/empty list is valid (no directive); blank entries and
+		/// oversized lists are rejected. Unit-name existence is checked against the production queues by
+		/// the caller, not here, because that requires the live ruleset.
+		/// </summary>
+		public static IReadOnlyList<(int Index, string Reason)> ValidateProduce(IReadOnlyList<string> produce)
+		{
+			var rejections = new List<(int Index, string Reason)>();
+			if (produce == null)
+				return rejections;
+
+			if (produce.Count > MaxProduceEntries)
+				rejections.Add((-1, $"REJECTED_INVALID_PRODUCE: {produce.Count} entries exceed the cap of {MaxProduceEntries}"));
+
+			for (var i = 0; i < produce.Count; i++)
+				if (string.IsNullOrWhiteSpace(produce[i]))
+					rejections.Add((i, "REJECTED_INVALID_PRODUCE: blank production entry"));
+
+			return rejections;
+		}
 	}
 }

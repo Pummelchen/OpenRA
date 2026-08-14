@@ -70,5 +70,52 @@ namespace OpenRA.Test
 			Assert.That(CommandValidator.IsStale(5, 3), Is.False);
 			Assert.That(CommandValidator.IsStale(-1, 5), Is.False, "No round means no staleness check.");
 		}
+
+		[TestCase(TestName = "A null, empty, or known posture is accepted.")]
+		public void ValidPosture()
+		{
+			Assert.That(CommandValidator.ValidatePosture(null), Is.Null);
+			Assert.That(CommandValidator.ValidatePosture(""), Is.Null);
+			Assert.That(CommandValidator.ValidatePosture("attack"), Is.Null);
+			Assert.That(CommandValidator.ValidatePosture("defend"), Is.Null);
+			Assert.That(CommandValidator.ValidatePosture("build"), Is.Null);
+			Assert.That(CommandValidator.ValidatePosture("TURTLE"), Is.Null, "Postures are case-insensitive.");
+		}
+
+		[TestCase(TestName = "An unknown posture is rejected with a machine-readable reason.")]
+		public void UnknownPosture()
+		{
+			Assert.That(CommandValidator.ValidatePosture("blitzkrieg"), Does.Contain("REJECTED_UNKNOWN_POSTURE"));
+			Assert.That(CommandValidator.ValidatePosture("PRESSURE"), Does.Contain("REJECTED_UNKNOWN_POSTURE"),
+				"Internal enum names are not part of the intent vocabulary.");
+		}
+
+		[TestCase(TestName = "A null or well-formed production list is accepted.")]
+		public void ValidProduce()
+		{
+			Assert.That(CommandValidator.ValidateProduce(null), Is.Empty);
+			Assert.That(CommandValidator.ValidateProduce([]), Is.Empty);
+			Assert.That(CommandValidator.ValidateProduce(new[] { "2tnk", "mig" }), Is.Empty);
+		}
+
+		[TestCase(TestName = "A blank production entry is rejected with its index.")]
+		public void BlankProduceEntry()
+		{
+			var rejections = CommandValidator.ValidateProduce(new[] { "2tnk", "", "mig" }).ToArray();
+
+			Assert.That(rejections, Has.Length.EqualTo(1));
+			Assert.That(rejections[0].Index, Is.EqualTo(1));
+			Assert.That(rejections[0].Reason, Does.Contain("REJECTED_INVALID_PRODUCE"));
+		}
+
+		[TestCase(TestName = "An oversized production list is rejected.")]
+		public void OversizedProduce()
+		{
+			var produce = new string[CommandValidator.MaxProduceEntries + 1];
+			for (var i = 0; i < produce.Length; i++)
+				produce[i] = "2tnk";
+
+			Assert.That(CommandValidator.ValidateProduce(produce).Any(r => r.Reason.Contains("REJECTED_INVALID_PRODUCE")), Is.True);
+		}
 	}
 }
