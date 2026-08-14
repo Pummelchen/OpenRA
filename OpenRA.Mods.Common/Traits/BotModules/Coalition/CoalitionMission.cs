@@ -51,7 +51,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		NavalRecon,
 		RouteRecon,
 		ExpansionSearch,
-		DefenseProbe
+		DefenseProbe,
+		Demonstration,
+		DecoyTransport
 	}
 
 	public enum MissionStatus
@@ -118,6 +120,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The strategic effects this mission aims to achieve, derived from its type.</summary>
 		public List<string> DesiredEffects = [];
 
+		/// <summary>The enemy reaction a deception mission intends to provoke (feint/bait/demonstration).</summary>
+		public string IntendedReaction;
+
 		/// <summary>The force groups (owner ids) assigned to this mission by the order arbiter.</summary>
 		public List<string> AssignedForces = [];
 
@@ -156,8 +161,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Objective = objective;
 			Phase = InitialPhase(type);
 			DesiredEffects = DesiredEffectsFor(type);
+			IntendedReaction = IntendedReactionFor(type);
 			LaunchConditions = LaunchConditionsFor(type);
 			Contingencies = ContingenciesFor(type);
+		}
+
+		static string IntendedReactionFor(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Feint => "enemy redeploys toward the feint",
+				MissionType.Bait => "enemy pursues the bait into the ambush",
+				MissionType.Demonstration => "enemy holds or shifts reserves",
+				MissionType.DecoyTransport => "enemy reacts to the apparent insertion",
+				_ => null
+			};
 		}
 
 		static List<string> DesiredEffectsFor(MissionType type)
@@ -182,6 +200,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.ExpansionSearch => ["find_expansion_site", "reveal_resources"],
 				MissionType.DefenseProbe => ["probe_defenses", "reveal_garrison"],
 				MissionType.Feint or MissionType.Bait => ["draw_enemy_response", "expose_enemy_position"],
+				MissionType.Demonstration => ["show_force", "draw_attention"],
+				MissionType.DecoyTransport => ["feign_insertion", "draw_enemy_response"],
 				MissionType.Transport or MissionType.SpecialOps => ["insert_asset", "destroy_rear_target"],
 				MissionType.Defend => ["protect_base", "repel_attack"],
 				MissionType.MobileDefense => ["intercept_enemy", "shield_advance"],
@@ -233,6 +253,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionPhase.Recon;
 				case MissionType.Feint:
 				case MissionType.Bait:
+				case MissionType.Demonstration:
+				case MissionType.DecoyTransport:
 					return MissionPhase.Deception;
 				case MissionType.Retreat:
 					return MissionPhase.Withdrawal;
@@ -276,7 +298,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			missions.Add(mission);
 
 			// A created feint or bait is a deception attempt; the outcome record feeds the planner.
-			if (type == MissionType.Feint || type == MissionType.Bait)
+			if (IsDeception(type))
 				DeceptionAttempts++;
 
 			return mission;
@@ -318,7 +340,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
 				or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort
 				or MissionType.DeepRecon or MissionType.AirRecon or MissionType.NavalRecon
-				or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe;
+				or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe
+				or MissionType.Demonstration or MissionType.DecoyTransport;
+		}
+
+		/// <summary>True for deception missions whose success is measured by the enemy's reaction.</summary>
+		public static bool IsDeception(MissionType type)
+		{
+			return type is MissionType.Feint or MissionType.Bait or MissionType.Demonstration
+				or MissionType.DecoyTransport;
 		}
 
 		/// <summary>True for the reconnaissance family.</summary>
@@ -394,7 +424,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						// A feint or bait succeeds when it changes enemy behavior: enemy units redeploy
 						// toward it. The drawn response feeds the deception record, which the commander
 						// uses to keep funding deception or drop it when the enemy ignores it.
-						if ((mission.Type == MissionType.Feint || mission.Type == MissionType.Bait) && mission.Target != null)
+						if (IsDeception(mission.Type) && mission.Target != null)
 						{
 							var nearby = blackboard.EnemyIntel.Count(i =>
 								(i.LastSeenCell - mission.Target.Value).LengthSquared <= 20 * 20);
@@ -405,8 +435,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							if (drew)
 							{
 								mission.EnemyValueEngaged = engaged;
-								mission.OutcomeReason = mission.Type == MissionType.Feint
-									? "enemy redeployed toward feint" : "enemy redeployed toward bait";
+								mission.OutcomeReason = $"enemy redeployed toward {mission.Type.ToString().ToLowerInvariant()}";
 								DeceptionSuccesses++;
 								DeceptionEnemiesDrawn += engaged;
 								CoalitionTelemetry.Log(blackboard.World,
@@ -540,11 +569,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var attack = active.FirstOrDefault(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
 				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
-			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint);
+			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint || m.Type == MissionType.Demonstration);
 			var defend = active.FirstOrDefault(m => IsDefensive(m.Type));
 			var recon = active.FirstOrDefault(m => IsRecon(m.Type));
 			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
-			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps);
+			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps || m.Type == MissionType.DecoyTransport);
 			var airStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike || m.Type == MissionType.NavalStrike);
 			var supportPower = active.FirstOrDefault(m => m.Type == MissionType.SupportPowerStrike);
 			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat);

@@ -200,5 +200,31 @@ namespace OpenRA.Test
 
 			Assert.That(deep.DesiredEffects, Does.Contain("locate_enemy_main_force"));
 		}
+
+		[TestCase(TestName = "Deception missions carry their intended enemy reaction.")]
+		public void DeceptionIntendedReaction()
+		{
+			var manager = new MissionManager();
+			var feint = manager.CreateMission(MissionType.Feint, 60, null, "Test");
+			var demonstration = manager.CreateMission(MissionType.Demonstration, 50, null, "Test");
+
+			Assert.That(feint.IntendedReaction, Does.Contain("redeploys"));
+			Assert.That(demonstration.IntendedReaction, Does.Contain("reserves"));
+
+			Assert.That(MissionManager.IsDeception(MissionType.DecoyTransport), Is.True);
+			Assert.That(MissionManager.IsDeception(MissionType.Attack), Is.False);
+			Assert.That(manager.DeceptionAttempts, Is.EqualTo(2));
+		}
+
+		[TestCase(TestName = "A demonstration maps to the feint directive.")]
+		public void DemonstrationDirective()
+		{
+			var manager = new MissionManager();
+			var demonstration = manager.CreateMission(MissionType.Demonstration, 50, new CPos(10, 20), "Test");
+			demonstration.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			Assert.That(directive, Does.Contain("\"feint\":{\"x\":10,\"y\":20}"));
+		}
 	}
 }

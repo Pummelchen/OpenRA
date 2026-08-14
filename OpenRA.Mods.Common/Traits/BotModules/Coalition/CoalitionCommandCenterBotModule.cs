@@ -382,6 +382,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					EnsureMission(MissionType.Bait, 55, home.Value + (enemy.Value - home.Value) / 2, "Lure the enemy into an ambush");
 			}
 
+			// Demonstration: a show of force against a second axis that never commits, to pin enemy
+			// reserves while the main attack goes in elsewhere.
+			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
+				&& !missions.Missions.Any(m => m.Type == MissionType.Demonstration)
+				&& !DeceptionSaturated())
+			{
+				var demonstrationTarget = FeintRegionTarget();
+				if (demonstrationTarget != null)
+					EnsureMission(MissionType.Demonstration, 50, demonstrationTarget, "Show of force to pin reserves");
+			}
+
 			// Special operations: if a scarce asset is available and enemy structures are known, insert
 			// it against the least-observed enemy region (lowest static-defense and vision threat).
 			if (!missions.Missions.Any(m => m.Type == MissionType.SpecialOps || m.Type == MissionType.Transport))
@@ -421,9 +432,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Build and apply the execution directives. The attack tick is fixed at mission creation,
 			// so every allied bot reads the same launch window and the waves hit together (time-on-target).
 			var attack = missions.Missions.FirstOrDefault(m =>
-				(m.Type == MissionType.Attack || m.Type == MissionType.Counterattack || m.Type == MissionType.Raid)
+				MissionManager.IsOffensive(m.Type) && m.Type != MissionType.AirStrike
+				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike
 				&& m.Status == MissionStatus.Executing);
-			var attackTick = attack != null ? attack.CreatedTick + 400 : -1;
+
+			// Time-on-target accounts for travel distance (each route region adds a launch delay), and
+			// a staged feint that has not yet drawn a response delays the main attack so the deception
+			// has time to pull the enemy away first.
+			var attackTick = -1;
+			if (attack != null)
+			{
+				attackTick = attack.CreatedTick + 400 + attack.PlannedRegions.Length * 40;
+				if (missions.Missions.Any(m => m.Type == MissionType.Feint) && missions.DeceptionSuccesses == 0)
+					attackTick += 200;
+			}
+
 			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
 			if (llmIntent != null)
 				CoalitionTelemetry.Log(world,
@@ -643,7 +666,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return null;
 
 			CPos? best = null;
-			var bestScore = float.MaxValue;
+			var bestScore = float.MinValue;
 			var homeRegion = blackboard.HomeRegion;
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
@@ -657,14 +680,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (!route.Found)
 					continue;
 
+				// Consequence-aware scoring: the target's strategic value minus the approach risk.
+				var value = TargetEvaluator.EconomicValue(intel.Type)
+					+ TargetEvaluator.ProductionValue(intel.Type)
+					+ TargetEvaluator.TechnologyValue(intel.Type);
 				var region = blackboard.Regions[targetRegion];
-				var threat = region.Threats[(int)CoalitionCapability.StaticDefense]
+				var risk = region.Threats[(int)CoalitionCapability.StaticDefense]
 					+ region.Threats[(int)CoalitionCapability.VisionExposure]
 					+ route.Cost * 0.5f;
+				var score = value * 2f - risk;
 
-				if (threat < bestScore)
+				if (score > bestScore)
 				{
-					bestScore = threat;
+					bestScore = score;
 					best = intel.LastSeenCell;
 				}
 			}
@@ -804,6 +832,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				case "defenseprobe":
 				case "defense_probe":
 					return MissionType.DefenseProbe;
+				case "demonstration":
+					return MissionType.Demonstration;
+				case "decoytransport":
+				case "decoy_transport":
+					return MissionType.DecoyTransport;
 				default:
 					return null;
 			}
@@ -997,7 +1030,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
 					or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => ArbiterPriority.Defense,
 				MissionType.Recon or MissionType.Feint or MissionType.Bait or MissionType.DeepRecon or MissionType.AirRecon
-					or MissionType.NavalRecon or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe => ArbiterPriority.Recon,
+					or MissionType.NavalRecon or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe
+					or MissionType.Demonstration or MissionType.DecoyTransport => ArbiterPriority.Recon,
 				_ => ArbiterPriority.Staging
 			};
 		}
@@ -1013,9 +1047,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.AirStrike => "air",
 				MissionType.NavalStrike => "naval",
 				MissionType.SupportPowerStrike => "support",
-				MissionType.Feint => "feint",
+				MissionType.Feint or MissionType.Demonstration => "feint",
 				MissionType.Bait => "bait",
-				MissionType.Transport or MissionType.SpecialOps => "special",
+				MissionType.Transport or MissionType.SpecialOps or MissionType.DecoyTransport => "special",
 				MissionType.Defend or MissionType.MobileDefense or MissionType.DelayingAction
 					or MissionType.Evacuation or MissionType.Escort => "defend",
 				MissionType.AntiAirUmbrella => "aa",
@@ -1177,6 +1211,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var highValue = BestScoredTarget();
 			if (hasAir && enemyAA < 0.5f && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.AirStrike))
 				EnsureMission(MissionType.AirStrike, 70, highValue, "Air strike on high-value target");
+
+			// Shaping: soften enemy air defenses before a staged ground assault, even when AA is strong.
+			var stagedAttack = missions.Missions.Any(m => MissionManager.IsOffensive(m.Type) && m.Status == MissionStatus.Executing
+				&& m.Type != MissionType.AirStrike && m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
+			if (hasAir && enemyAA >= 0.5f && stagedAttack && !missions.Missions.Any(m => m.Type == MissionType.AirStrike))
+				EnsureMission(MissionType.AirStrike, 65, RegionCenter(blackboard.EnemyRegion), "Soften enemy air defenses before the assault");
 
 			if (blackboard.HasReadySuperweapon && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.SupportPowerStrike))
 				EnsureMission(MissionType.SupportPowerStrike, 95, highValue, "Support-power strike");

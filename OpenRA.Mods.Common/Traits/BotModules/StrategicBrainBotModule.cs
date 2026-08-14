@@ -940,6 +940,7 @@ namespace OpenRA.Mods.Common.Traits
 				var waveLand = wave.Length - waveAir - waveNaval;
 				CoalitionTelemetry.Log(world,
 					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} " +
+					$"(sync error {world.WorldTick - attackTick}t) " +
 					$"[{waveLand} land ({waveArtillery} artillery, {waveAA} aa), {waveAir} air, {waveNaval} naval]");
 			}
 		}
