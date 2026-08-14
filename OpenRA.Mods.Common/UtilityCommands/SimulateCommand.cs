@@ -27,8 +27,9 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			return args.Length >= 2;
 		}
 
-		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type]",
-			  "Run a headless skirmish simulation and report the outcome.")]
+		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...]",
+			  "Run a headless skirmish simulation and report the outcome. BOT_TYPES lists one bot type " +
+			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all.")]
 		void IUtilityCommand.Run(Utility utility, string[] args)
 		{
 			// The engine assumes Game.ModData is set; do so before touching any map data.
@@ -46,6 +47,7 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			var ticks = ParseInt(args, "TICKS", 12000);
 			var seed = ParseInt(args, "SEED", 12345);
 			var botType = ParseArg(args, "BOT", "ai");
+			var botTypesArg = ParseArg(args, "BOT_TYPES", null);
 
 			Map map;
 			try
@@ -63,12 +65,19 @@ namespace OpenRA.Mods.Common.UtilityCommands
 
 			HeadlessSkirmish.IsBotEnabled = p => p.PlayerActor.TraitsImplementing<ModularBot>().Any(b => b.IsEnabled);
 
-			Console.WriteLine($"Simulating {map.Title} ({map.Uid}): {bots} bots in {teams} teams for {ticks} ticks (seed {seed})...");
+			var botTypes = botTypesArg != null
+				? botTypesArg.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray()
+				: null;
+			var botCount = botTypes?.Length ?? bots;
+
+			Console.WriteLine($"Simulating {map.Title} ({map.Uid}): {botCount} bots in {teams} teams for {ticks} ticks (seed {seed})...");
 
 			HeadlessSkirmish.Result result;
 			try
 			{
-				result = HeadlessSkirmish.Run(utility.ModData, map, botType, bots, teams, ticks, seed);
+				result = botTypes != null
+					? HeadlessSkirmish.Run(utility.ModData, map, botTypes, teams, ticks, seed)
+					: HeadlessSkirmish.Run(utility.ModData, map, botType, botCount, teams, ticks, seed);
 			}
 			catch (Exception e)
 			{
