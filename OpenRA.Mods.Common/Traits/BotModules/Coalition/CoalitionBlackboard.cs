@@ -32,7 +32,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Detection,
 		StaticDefense,
 		Reinforcement,
-		SupportPowerRisk
+		SupportPowerRisk,
+		ActiveCombat,
+		Congestion
 	}
 
 	/// <summary>Broad unit classification used for force aggregation.</summary>
@@ -653,11 +655,40 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				foreach (var capability in CapabilitiesFor(intel.Class, intel.Type, artilleryTypes, submarineTypes,
 					detectionTypes, supportPowerStructures, productionStructures))
 					threats[(int)capability] = Max(threats[(int)capability], intel.Confidence);
+
+				// Active combat: recently-observed enemy presence marks a region as a live combat zone.
+				if (intel.Status == IntelStatus.Observed)
+					threats[(int)CoalitionCapability.ActiveCombat] = Max(threats[(int)CoalitionCapability.ActiveCombat], intel.Confidence);
 			}
 
 			// Exposure: regions with little friendly coverage are riskier to move through.
 			foreach (var region in Regions)
 				region.Threats[(int)CoalitionCapability.VisionExposure] = 1f - region.FriendlyControl;
+
+			ComputeCongestion();
+		}
+
+		/// <summary>
+		/// Congestion: how densely the coalition's own combat units are packed into each region,
+		/// normalized to 0..1. Overloaded corridors are slower and riskier to route through.
+		/// </summary>
+		void ComputeCongestion()
+		{
+			var teamIds = Team.Select(p => p.InternalName).ToHashSet();
+			var counts = new int[Regions.Length];
+			foreach (var a in World.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || a.OccupiesSpace == null || !teamIds.Contains(a.Owner.InternalName))
+					continue;
+				if (a.Info.HasTraitInfo<BuildingInfo>())
+					continue;
+
+				counts[RegionOf(a.Location).Index]++;
+			}
+
+			var max = counts.DefaultIfEmpty(0).Max();
+			foreach (var region in Regions)
+				region.Threats[(int)CoalitionCapability.Congestion] = max == 0 ? 0f : counts[region.Index] * 1f / max;
 		}
 
 		static float Max(float a, float b)

@@ -72,7 +72,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			"ground_anti_armor", "ground_anti_infantry", "artillery", "anti_air", "air_to_air",
 			"naval", "submarine", "vision_exposure", "detection", "static_defense",
-			"reinforcement", "support_power_risk"
+			"reinforcement", "support_power_risk", "active_combat", "congestion"
 		};
 
 		/// <summary>Snake_case keys for the friendly functional capability profile.</summary>
@@ -329,10 +329,28 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var a = ResolveForce(context, Require(args, "force_a"), "force_a");
 			var b = ResolveForce(context, Require(args, "force_b"), "force_b");
 
-			var powerA = ForcePower(a);
-			var powerB = ForcePower(b);
-			var (winRatio, friendlyLoss) = CombatEstimator.Estimate(powerA, powerB);
-			var (_, enemyLoss) = CombatEstimator.Estimate(powerB, powerA);
+			// Matchup-adjusted power, air suppression, artillery range advantage, and terrain.
+			var healthA = Health(a);
+			var healthB = Health(b);
+			var airWeight = CombatEstimator.ClassWeight(UnitClass.Air);
+			var airA = a.Counts[(int)UnitClass.Air] * airWeight * healthA;
+			var airB = b.Counts[(int)UnitClass.Air] * airWeight * healthB;
+			var artilleryA = a.Capabilities[(int)FriendlyCapability.Artillery] > 0 ? 2f * healthA : 0f;
+			var artilleryB = b.Capabilities[(int)FriendlyCapability.Artillery] > 0 ? 2f * healthB : 0f;
+			var antiAirA = a.Capabilities[(int)FriendlyCapability.AntiAir] > 0 ? 0.5f : 0f;
+			var antiAirB = b.Capabilities[(int)FriendlyCapability.AntiAir] > 0 ? 0.5f : 0f;
+
+			var powerA = CombatEstimator.MatchupPower(a.Counts, b.Counts, healthA);
+			var powerB = CombatEstimator.MatchupPower(b.Counts, a.Counts, healthB);
+
+			var region = context.RegionOf(a.Center);
+			var staticDefense = region >= 0 && region < context.Regions.Length ? context.Regions[region].Threats[(int)CoalitionCapability.StaticDefense] : 0f;
+			var exposure = region >= 0 && region < context.Regions.Length ? context.Regions[region].Threats[(int)CoalitionCapability.VisionExposure] : 0f;
+
+			var (winRatio, friendlyLoss) = CombatEstimator.Estimate(
+				powerA, powerB, airA, airB, artilleryA, artilleryB, antiAirA, antiAirB, staticDefense, exposure);
+			var (_, enemyLoss) = CombatEstimator.Estimate(
+				powerB, powerA, airB, airA, artilleryB, artilleryA, antiAirB, antiAirA, staticDefense, exposure);
 
 			return Ok(new JsonObject
 			{
@@ -343,8 +361,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["win_ratio"] = Round(winRatio),
 				["expected_friendly_loss_fraction"] = Round(friendlyLoss),
 				["expected_enemy_loss_fraction"] = Round(enemyLoss),
-				["model_version"] = "v1"
+				["model_version"] = "v2"
 			});
+		}
+
+		static float Health(ForceGroup force)
+		{
+			return force.Strength > 0 ? force.Strength : 1f;
 		}
 
 		static string ScoreTargets(ToolContext context, JsonElement args)
@@ -490,17 +513,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// ------------------------------------------------------------------------------------
 		// Engine helpers
 		// ------------------------------------------------------------------------------------
-
-		/// <summary>Lanchester-style power of a force group: class weights scaled by average health.</summary>
-		static float ForcePower(ForceGroup force)
-		{
-			var health = force.Strength > 0 ? force.Strength : 1f;
-			var power = 0f;
-			for (var c = 0; c < force.Counts.Length; c++)
-				power += CombatEstimator.ClassWeight((UnitClass)c) * force.Counts[c] * health;
-
-			return power;
-		}
 
 		static float AgeSeconds(ToolContext context, EnemyIntel intel)
 		{

@@ -41,10 +41,10 @@ namespace OpenRA.Test
 			var regions = GridRegions();
 			var chokepoints = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
-			var allComponents = new[] { components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
+			var allComponents = new[] { components, components, components, components };
+			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
+				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
+				allComponents, new[] { count, count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length]);
 		}
 
@@ -276,17 +276,17 @@ namespace OpenRA.Test
 			Assert.That(questions[0].GetProperty("question").GetString(), Is.EqualTo("enemy_3tnk_position"));
 		}
 
-		[TestCase(TestName = "estimate_engagement computes the Lanchester estimate from force groups.")]
+		[TestCase(TestName = "estimate_engagement computes the matchup-adjusted estimate from force groups.")]
 		public void EstimateEngagement()
 		{
-			// Multi0: 10 armor (x3) + 2 infantry (x1) at full health = 32.
-			// Multi1: 10 infantry (x1) at 0.8 health = 8.
+			// Multi0: 10 armor (x3, +25% vs infantry) + 2 infantry (x1) = 37.5 + 2 = 39.5.
+			// Multi1: 10 infantry (x1) at 0.8 health, matched against armor = 8.
 			var result = Result(Call(Context(), "estimate_engagement", "{\"force_a\":\"Multi0\",\"force_b\":\"Multi1\"}")).GetProperty("result");
 
-			Assert.That(result.GetProperty("force_a_power").GetDouble(), Is.EqualTo(32.0).Within(0.001));
+			Assert.That(result.GetProperty("force_a_power").GetDouble(), Is.EqualTo(39.5).Within(0.001));
 			Assert.That(result.GetProperty("force_b_power").GetDouble(), Is.EqualTo(8.0).Within(0.001));
-			Assert.That(result.GetProperty("win_ratio").GetDouble(), Is.EqualTo(4.0).Within(0.001));
-			Assert.That(result.GetProperty("model_version").GetString(), Is.EqualTo("v1"));
+			Assert.That(result.GetProperty("win_ratio").GetDouble(), Is.EqualTo(39.5 / 8.0).Within(0.001));
+			Assert.That(result.GetProperty("model_version").GetString(), Is.EqualTo("v2"));
 		}
 
 		[TestCase(TestName = "score_targets ranks enemy structures by the engine target model.")]

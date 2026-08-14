@@ -23,7 +23,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	{
 		Ground,
 		Naval,
-		Air
+		Air,
+		Foot
 	}
 
 	/// <summary>
@@ -267,6 +268,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var regionArray = regions.ToArray();
 			var groundLocomotor = FindLocomotor(world, "tracked") ?? FindLocomotor(world, "wheeled") ?? FindLocomotor(world, "foot");
 			var navalLocomotor = FindLocomotor(world, "naval") ?? FindLocomotor(world, "lcraft");
+			var footLocomotor = FindLocomotor(world, "foot");
 
 			bool TerrainIsWater(int x, int y)
 			{
@@ -283,6 +285,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return map.Contains(cell) && groundLocomotor.MovementCostForCell(cell) != PathGraph.MovementCostForUnreachableCell;
 			}
 
+			bool FootPassable(int x, int y)
+			{
+				// Infantry can cross terrain vehicles cannot. Without a distinct foot locomotor the
+				// foot graph collapses to the ground graph (no terrain difference on this map).
+				if (footLocomotor == null || footLocomotor == groundLocomotor)
+					return GroundPassable(x, y);
+
+				var cell = new CPos(x, y);
+				return map.Contains(cell) && footLocomotor.MovementCostForCell(cell) != PathGraph.MovementCostForUnreachableCell;
+			}
+
 			bool NavalPassable(int x, int y)
 			{
 				if (navalLocomotor == null)
@@ -293,21 +306,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			var groundPassable = ComputePassability(width, height, GroundPassable);
+			var footPassable = ComputePassability(width, height, FootPassable);
 			var navalPassable = ComputePassability(width, height, NavalPassable);
 			var airPassable = ComputePassability(width, height, (x, y) => true);
 
 			var groundGraph = BuildRegionGraph(width, height, groundPassable, regionArray);
+			var footGraph = BuildRegionGraph(width, height, footPassable, regionArray);
 			var navalGraph = BuildRegionGraph(width, height, navalPassable, regionArray);
 			var airGraph = BuildRegionGraph(width, height, airPassable, regionArray);
 
 			var groundComponents = ConnectedComponents(groundGraph.Adjacency);
+			var footComponents = ConnectedComponents(footGraph.Adjacency);
 			var navalComponents = ConnectedComponents(navalGraph.Adjacency);
 			var airComponents = ConnectedComponents(airGraph.Adjacency);
 
-			var adjacency = new[] { groundGraph.Adjacency, navalGraph.Adjacency, airGraph.Adjacency };
-			var chokepoints = new[] { groundGraph.Chokepoints, navalGraph.Chokepoints, airGraph.Chokepoints };
-			var components = new[] { groundComponents.Components, navalComponents.Components, airComponents.Components };
-			var componentCount = new[] { groundComponents.Count, navalComponents.Count, airComponents.Count };
+			var adjacency = new[] { groundGraph.Adjacency, navalGraph.Adjacency, airGraph.Adjacency, footGraph.Adjacency };
+			var chokepoints = new[] { groundGraph.Chokepoints, navalGraph.Chokepoints, airGraph.Chokepoints, footGraph.Chokepoints };
+			var components = new[] { groundComponents.Components, navalComponents.Components, airComponents.Components, footComponents.Components };
+			var componentCount = new[] { groundComponents.Count, navalComponents.Count, airComponents.Count, footComponents.Count };
 
 			// Bridges: terrain cells whose type is a bridge (fixed crossings between land masses).
 			var bridgeCells = new HashSet<CPos>();

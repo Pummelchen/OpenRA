@@ -67,5 +67,60 @@ namespace OpenRA.Test
 			Assert.That(winRatio, Is.EqualTo(0.5f));
 			Assert.That(loss, Is.EqualTo(0.5f));
 		}
+
+		[TestCase(TestName = "Matchups favor armor over infantry and punish rifles versus planes.")]
+		public void MatchupFactors()
+		{
+			Assert.That(CombatEstimator.MatchupFactor(UnitClass.Armor, UnitClass.Infantry), Is.EqualTo(1.25f));
+			Assert.That(CombatEstimator.MatchupFactor(UnitClass.Air, UnitClass.Naval), Is.EqualTo(1.2f));
+			Assert.That(CombatEstimator.MatchupFactor(UnitClass.Infantry, UnitClass.Air), Is.EqualTo(0.5f));
+			Assert.That(CombatEstimator.MatchupFactor(UnitClass.Naval, UnitClass.Armor), Is.EqualTo(0.5f));
+			Assert.That(CombatEstimator.MatchupFactor(UnitClass.Infantry, UnitClass.Infantry), Is.EqualTo(1f));
+		}
+
+		[TestCase(TestName = "Matchup power scales each class against the enemy's dominant class.")]
+		public void MatchupPower()
+		{
+			var friendly = new int[6];
+			friendly[(int)UnitClass.Armor] = 10;
+			var enemy = new int[6];
+			enemy[(int)UnitClass.Infantry] = 10;
+
+			// 10 armor × 3 weight × 1.25 (vs infantry) = 37.5.
+			Assert.That(CombatEstimator.MatchupPower(friendly, enemy, 1f), Is.EqualTo(37.5f).Within(0.001f));
+		}
+
+		[TestCase(TestName = "Anti-air coverage suppresses air power linearly.")]
+		public void SuppressAir()
+		{
+			Assert.That(CombatEstimator.SuppressAir(10f, 0f), Is.EqualTo(10f));
+			Assert.That(CombatEstimator.SuppressAir(10f, 0.5f), Is.EqualTo(5f));
+			Assert.That(CombatEstimator.SuppressAir(10f, 1f), Is.EqualTo(0f));
+		}
+
+		[TestCase(TestName = "Artillery contributes a pre-contact range advantage.")]
+		public void RangeAdvantage()
+		{
+			Assert.That(CombatEstimator.RangeAdvantage(8f), Is.EqualTo(2f));
+			Assert.That(CombatEstimator.RangeAdvantage(0f), Is.EqualTo(0f));
+		}
+
+		[TestCase(TestName = "Terrain factor penalizes attacking into hard, exposed ground.")]
+		public void TerrainFactor()
+		{
+			Assert.That(CombatEstimator.TerrainFactor(0f, 0f), Is.EqualTo(1f));
+			Assert.That(CombatEstimator.TerrainFactor(1f, 0f), Is.EqualTo(0.75f));
+			Assert.That(CombatEstimator.TerrainFactor(0f, 1f), Is.EqualTo(0.9f));
+		}
+
+		[TestCase(TestName = "The composed estimate suppresses air and rewards artillery.")]
+		public void ComposedEstimate()
+		{
+			// 10 friendly power (5 air) with 2 artillery, against 10 enemy power with no AA, on open ground.
+			var (winRatio, _) = CombatEstimator.Estimate(10f, 10f, 5f, 0f, 2f, 0f, 0f, 0f, 0f, 0f);
+
+			// Friendly = (10 - 5 air + 5 air + 0.5 artillery) = 10.5 vs enemy 10 -> slight edge.
+			Assert.That(winRatio, Is.EqualTo(10.5f / 10f).Within(0.001f));
+		}
 	}
 }

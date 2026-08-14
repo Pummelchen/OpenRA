@@ -66,6 +66,90 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return (ratio, Math.Clamp(loss, 0f, 1f));
 		}
 
+		/// <summary>Class-matchup multiplier: how effective an attacker class is against a defender class.</summary>
+		public static float MatchupFactor(UnitClass attacker, UnitClass defender)
+		{
+			return (attacker, defender) switch
+			{
+				(UnitClass.Armor, UnitClass.Infantry) => 1.25f,   // armor overruns infantry
+				(UnitClass.Air, UnitClass.Naval) => 1.2f,        // air harasses ships
+				(UnitClass.Infantry, UnitClass.Air) => 0.5f,     // rifles barely hurt planes
+				(UnitClass.Naval, UnitClass.Armor) => 0.5f,      // ships cannot engage tanks
+				(UnitClass.Armor, UnitClass.Structure) => 1.2f,  // armor cracks static defenses
+				(UnitClass.Structure, UnitClass.Structure) => 0f, // static defenses do not duel each other
+				_ => 1f
+			};
+		}
+
+		/// <summary>
+		/// Friendly power adjusted for class matchups against the enemy's dominant class. Returns the
+		/// sum of each class's weight and count scaled by its matchup against the enemy composition.
+		/// </summary>
+		public static float MatchupPower(int[] friendlyCounts, int[] enemyCounts, float health)
+		{
+			var defender = DominantClass(enemyCounts);
+			var power = 0f;
+			for (var c = 0; c < friendlyCounts.Length; c++)
+			{
+				if (friendlyCounts[c] <= 0)
+					continue;
+				power += ClassWeight((UnitClass)c) * friendlyCounts[c] * MatchupFactor((UnitClass)c, defender);
+			}
+
+			return power * (health > 0 ? health : 1f);
+		}
+
+		static UnitClass DominantClass(int[] counts)
+		{
+			var best = 0;
+			var bestCount = 0;
+			for (var c = 0; c < counts.Length; c++)
+				if (counts[c] > bestCount)
+				{
+					bestCount = counts[c];
+					best = c;
+				}
+
+			return (UnitClass)best;
+		}
+
+		/// <summary>Air power suppressed by the opposing anti-air coverage (0..1).</summary>
+		public static float SuppressAir(float airPower, float antiAirCoverage)
+		{
+			return airPower * (1f - Math.Clamp(antiAirCoverage, 0f, 1f));
+		}
+
+		/// <summary>Artillery contributes a pre-contact range advantage: a free fraction of its power.</summary>
+		public static float RangeAdvantage(float artilleryPower)
+		{
+			return Math.Max(0f, artilleryPower) * 0.25f;
+		}
+
+		/// <summary>Terrain factor: defending hard or exposed ground shifts the balance.</summary>
+		public static float TerrainFactor(float staticDefenseThreat, float visionExposure)
+		{
+			return 1f - 0.25f * Math.Clamp(staticDefenseThreat, 0f, 1f) - 0.1f * Math.Clamp(visionExposure, 0f, 1f);
+		}
+
+		/// <summary>
+		/// Matchup- and terrain-adjusted estimate: air is suppressed by the opposing anti-air coverage,
+		/// artillery contributes a range advantage, and hard/exposed ground penalizes the attacker.
+		/// <paramref name="friendlyPower"/>/<paramref name="enemyPower"/> should already be matchup-adjusted
+		/// (see <see cref="MatchupPower"/>); this composes the air, artillery, and terrain factors.
+		/// </summary>
+		public static (float WinRatio, float LossFraction) Estimate(
+			float friendlyPower, float enemyPower,
+			float friendlyAir, float enemyAir,
+			float friendlyArtillery, float enemyArtillery,
+			float friendlyAntiAir, float enemyAntiAir,
+			float staticDefenseThreat, float visionExposure)
+		{
+			var terrain = TerrainFactor(staticDefenseThreat, visionExposure);
+			var adjustedFriendly = (friendlyPower - friendlyAir + SuppressAir(friendlyAir, enemyAntiAir) + RangeAdvantage(friendlyArtillery)) * terrain;
+			var adjustedEnemy = enemyPower - enemyAir + SuppressAir(enemyAir, friendlyAntiAir) + RangeAdvantage(enemyArtillery);
+			return Estimate(adjustedFriendly, adjustedEnemy);
+		}
+
 		/// <summary>Strategic value of an enemy target: economy and tech first, military by class weight.</summary>
 		public static float TargetValue(Actor target, Func<Actor, UnitClass> classify)
 		{

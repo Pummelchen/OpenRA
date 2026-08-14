@@ -43,10 +43,10 @@ namespace OpenRA.Test
 			var regions = GridRegions();
 			var chokepoints = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
-			var allComponents = new[] { components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
+			var allComponents = new[] { components, components, components, components };
+			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
+				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
+				allComponents, new[] { count, count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length]);
 		}
 
@@ -155,6 +155,35 @@ namespace OpenRA.Test
 
 			Assert.That(heavy.Cost, Is.GreaterThan(light.Cost),
 				"Stealth weights AA threat higher than assault does.");
+		}
+
+		[TestCase(TestName = "Infantry routes over the foot movement graph.")]
+		public void FootRouting()
+		{
+			var map = MapWith(Grid());
+			var threats = Threats();
+			var route = CoalitionRoutePlanner.FindRoute(map, threats, 0, 2, MovementClass.Foot, RouteWeights.Assault());
+
+			Assert.That(route.Found, Is.True);
+			Assert.That(route.Regions[0], Is.EqualTo(0));
+			Assert.That(route.Regions[^1], Is.EqualTo(2));
+		}
+
+		[TestCase(TestName = "Routes bend around congested active-combat zones.")]
+		public void AvoidsCongestionAndActiveCombat()
+		{
+			var map = MapWith(Grid());
+			var contested = new float[System.Enum.GetValues<CoalitionCapability>().Length];
+			contested[(int)CoalitionCapability.ActiveCombat] = 1f;
+			contested[(int)CoalitionCapability.Congestion] = 1f;
+
+			var route = CoalitionRoutePlanner.FindRoute(map, Threats((1, contested)), 0, 2,
+				MovementClass.Ground, RouteWeights.Assault());
+
+			Assert.That(route.Found, Is.True);
+			Assert.That(route.Regions, Does.Not.Contain(1), "The congested, contested corridor must be avoided.");
+			Assert.That(route.Regions[0], Is.EqualTo(0));
+			Assert.That(route.Regions[^1], Is.EqualTo(2));
 		}
 
 		[TestCase(TestName = "No path between disconnected components.")]

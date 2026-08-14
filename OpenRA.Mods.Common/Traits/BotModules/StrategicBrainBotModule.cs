@@ -644,7 +644,7 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 
 			var units = OwnCombatUnits().ToList();
-			var retreatCell = world.Map.CellContaining(baseCenter.Value);
+			var retreatCell = RetreatCell(baseCenter.Value);
 
 			// Micro-precision scales the retreat threshold: a precise bot pulls units earlier.
 			var retreatThreshold = info.ResolvedDifficulty().RetreatHealthPercent();
@@ -1055,6 +1055,40 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			return closest;
+		}
+
+		/// <summary>
+		/// The planned retreat fallback: the center of the safest ground-reachable region (lowest total
+		/// threat), so retreats route away from danger instead of blindly running to the base. Falls
+		/// back to the base center when the coalition blackboard is unavailable.
+		/// </summary>
+		CPos RetreatCell(WPos baseCenter)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			var blackboard = commander?.Blackboard;
+			if (blackboard == null || blackboard.HomeRegion < 0)
+				return world.Map.CellContaining(baseCenter);
+
+			var home = blackboard.HomeRegion;
+			var best = home;
+			var bestThreat = float.MaxValue;
+			foreach (var region in blackboard.Regions)
+			{
+				if (blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, region.Index)
+					!= blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, home))
+					continue;
+
+				var threat = region.Threats.Sum();
+				if (threat < bestThreat)
+				{
+					bestThreat = threat;
+					best = region.Index;
+				}
+			}
+
+			var bounds = blackboard.Regions[best].Bounds;
+			return new CPos((bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
 		}
 
 		/// <summary>

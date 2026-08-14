@@ -186,10 +186,10 @@ namespace OpenRA.Test
 			var regions = TwoByTwoRegions();
 			chokepoints ??= regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
-			var allComponents = new[] { components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count }, new HashSet<CPos>(), 10, 10,
+			var allComponents = new[] { components, components, components, components };
+			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
+				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
+				allComponents, new[] { count, count, count, count }, new HashSet<CPos>(), 10, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length],
 				buildable ?? new int[regions.Length]);
 		}

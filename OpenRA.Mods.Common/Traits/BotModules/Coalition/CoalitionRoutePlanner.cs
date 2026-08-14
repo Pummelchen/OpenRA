@@ -31,6 +31,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Extra cost for a crossing that is a bridge (a fixed, easily contested connector).</summary>
 		public float BridgeRisk = 0.5f;
 
+		/// <summary>Cost of moving through a region with live enemy presence (an active combat zone).</summary>
+		public float ActiveCombatZone = 2f;
+
+		/// <summary>Cost of moving through a region overloaded with our own units (congestion).</summary>
+		public float Congestion = 1.5f;
+
 		/// <summary>Stealth-biased profile for transports and special forces.</summary>
 		public static RouteWeights Stealth()
 		{
@@ -151,7 +157,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						+ weights.VisionExposure * regionThreats[(int)CoalitionCapability.VisionExposure]
 						+ weights.DetectionExposure * regionThreats[(int)CoalitionCapability.Detection]
 						+ weights.ReinforcementRisk * regionThreats[(int)CoalitionCapability.Reinforcement]
-						+ weights.SupportPowerRisk * regionThreats[(int)CoalitionCapability.SupportPowerRisk];
+						+ weights.SupportPowerRisk * regionThreats[(int)CoalitionCapability.SupportPowerRisk]
+						+ weights.ActiveCombatZone * regionThreats[(int)CoalitionCapability.ActiveCombat]
+						+ weights.Congestion * regionThreats[(int)CoalitionCapability.Congestion];
 
 					if (chokepoints[current].Contains(next))
 						cost += weights.ChokepointRisk * 4f;
