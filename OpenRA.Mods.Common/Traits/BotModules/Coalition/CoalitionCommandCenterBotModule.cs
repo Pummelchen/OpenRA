@@ -97,9 +97,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"explored territory, before it is dropped back to UNKNOWN.")]
 		public readonly int SightingMemoryTicks = 600;
 
-		[Desc("When true, the coalition sees every enemy actor regardless of fog (a separate, non-default " +
-			"difficulty mode). Fair fog is the default.")]
-		public readonly bool Omniscient = false;
+		[Desc("Intelligence/fog advantage (0..3): 0 = fair fog (default), 2 = enemy structures are always " +
+			"visible, 3 = omniscient (every enemy actor visible). Fair fog is the default.")]
+		public readonly int Intelligence = 0;
+
+		/// <summary>True at the top intelligence setting: the coalition sees every enemy actor.</summary>
+		public bool IsOmniscient => Intelligence >= 3;
 
 		public override object Create(ActorInitializer init) { return new CoalitionCommandCenterBotModule(this, init); }
 	}
@@ -222,7 +225,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
 					info.SupportPowerStructures, info.ProductionStructures,
 					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes, info.AntiAirUnits, info.SpecialTypes,
-					seedIntel, info.Omniscient);
+					seedIntel, info.IsOmniscient);
 
 				// The deception record is durable across blackboard rebuilds: it lives on the mission
 				// manager and is copied into every fresh model for the planner and the LLM snapshot.
@@ -592,7 +595,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					continue;
 				if (player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
 					continue;
-				if (!info.Omniscient && !team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+				if (!SeesEnemy(a, team))
 					continue;
 
 				var cell = a.Location;
@@ -600,6 +603,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			return intelTracker.Age(tick);
+		}
+
+		/// <summary>
+		/// The fog-of-war gate for enemy observation. Fair fog (levels 0-1) only sees explored cells;
+		/// level 2 additionally reveals enemy structures (but not mobile units); level 3 is omniscient.
+		/// </summary>
+		bool SeesEnemy(Actor a, IEnumerable<Player> team)
+		{
+			if (info.IsOmniscient)
+				return true;
+			if (team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+				return true;
+			if (info.Intelligence >= 2 && Classify(a) == UnitClass.Structure)
+				return true;
+			return false;
 		}
 
 		static int RegionOfCell(CoalitionMapAnalysis map, CPos cell)

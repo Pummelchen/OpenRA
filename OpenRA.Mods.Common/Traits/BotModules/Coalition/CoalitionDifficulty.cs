@@ -37,6 +37,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>0..3: coalition coordination strength - how much the team trusts feints and commits reserves.</summary>
 		public int CoordinationStrength = 3;
 
+		/// <summary>0..3: intelligence/fog advantage. 0 = fair fog (default), 2 = structures always visible, 3 = omniscient.</summary>
+		public int Intelligence = 0;
+
+		/// <summary>True at the top intelligence setting: the coalition sees every enemy actor regardless of fog.</summary>
+		public bool IsOmniscient => Intelligence >= 3;
+
 		/// <summary>Multiplier in 0.75..1.5 by difficulty, shared by the existing scaled thresholds.</summary>
 		public float Scale(float baseValue)
 		{

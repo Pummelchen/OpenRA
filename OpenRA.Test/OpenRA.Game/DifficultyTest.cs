@@ -26,6 +26,31 @@ namespace OpenRA.Test
 			Assert.That(difficulty.MicroPrecision, Is.EqualTo(2));
 			Assert.That(difficulty.CoordinationStrength, Is.EqualTo(2));
 			Assert.That(difficulty.EconomicBonus, Is.EqualTo(0), "The scalar must not grant an economic bonus.");
+			Assert.That(difficulty.Intelligence, Is.EqualTo(0), "The scalar must not grant an intelligence advantage.");
+		}
+
+		[TestCase(TestName = "Intelligence is an independent axis: fair fog by default, omniscient only at the top.")]
+		public void IntelligenceAxis()
+		{
+			var fair = new CoalitionDifficulty { Intelligence = 0 };
+			var revealed = new CoalitionDifficulty { Intelligence = 2 };
+			var omniscient = new CoalitionDifficulty { Intelligence = 3 };
+
+			Assert.That(fair.IsOmniscient, Is.False, "Fair fog must be the default.");
+			Assert.That(revealed.IsOmniscient, Is.False, "Revealed structures is still not omniscient.");
+			Assert.That(omniscient.IsOmniscient, Is.True);
+
+			// The fair-but-brutal profile keeps intelligence at fair fog, like the economic bonus.
+			var brutal = new CoalitionDifficulty
+			{
+				CommandQuality = 3,
+				CoordinationStrength = 3,
+				ReactionSpeed = 3,
+				MicroPrecision = 3,
+				EconomicBonus = 0,
+				Intelligence = 0
+			};
+			Assert.That(brutal.IsOmniscient, Is.False, "Extreme command does not imply omniscience.");
 		}
 
 		[TestCase(TestName = "The scalar is clamped to 0..3.")]
