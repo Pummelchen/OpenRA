@@ -161,6 +161,9 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("A retreating unit rejoins the army once its health recovers above this percentage.")]
 		public readonly int RegroupHealthPercent = 60;
 
+		[Desc("Below this force cohesion the army holds position to regroup instead of launching a wave.")]
+		public readonly float RegroupCohesionThreshold = 0.3f;
+
 		[Desc("Enemy units within this many cells of the base center trigger base defense.")]
 		public readonly int BaseDefenseScanRadius = 25;
 
@@ -866,6 +869,24 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				FireSupportPower(supportPowerTarget.Value);
 				supportPowerTarget = null;
+			}
+
+			// Cohesion: a scattered army regroups before launching, so it does not attack as isolated
+			// units. The force's cohesion comes from the shared blackboard (spread around its center).
+			var commanderCenter = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			var ownCohesion = commanderCenter?.Blackboard?.Forces
+				.FirstOrDefault(f => f.Owner == player.InternalName)?.Cohesion ?? 1f;
+			if (ownCohesion < info.RegroupCohesionThreshold)
+			{
+				var regroupers = Claim(activeArmy).ToArray();
+				if (regroupers.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: regroupers));
+					CoalitionTelemetry.Log(world, $"Army regrouping: cohesion {ownCohesion:0.00} below {info.RegroupCohesionThreshold}");
+				}
+
+				return;
 			}
 
 			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed

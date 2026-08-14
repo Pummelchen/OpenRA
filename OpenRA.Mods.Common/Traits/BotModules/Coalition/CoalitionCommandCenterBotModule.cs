@@ -431,12 +431,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			// LLM-intended missions override/expand the deterministic set.
 			if (llmIntent?.Missions != null)
-				foreach (var lm in llmIntent.Missions)
+			{
+				// Validate the commander's mission requests before execution: unknown types,
+				// out-of-bounds targets, bad priorities, and duplicate missions are rejected with a
+				// machine-readable reason and logged; the deterministic commander remains authoritative.
+				var requests = llmIntent.Missions
+					.Select(lm => (lm.Type, lm.X, lm.Y, lm.Priority))
+					.ToList();
+				var rejections = CommandValidator.ValidateMissions(requests, world.Map.MapSize.Width, world.Map.MapSize.Height);
+
+				var rejected = rejections.Select(r => r.Index).ToHashSet();
+				foreach (var (_, reason) in rejections)
+					CoalitionTelemetry.Log(world, $"Command validator: {reason}");
+
+				for (var i = 0; i < llmIntent.Missions.Length; i++)
 				{
+					if (rejected.Contains(i))
+						continue;
+					var lm = llmIntent.Missions[i];
 					var type = ParseMissionType(lm.Type);
 					if (type != null)
 						EnsureMission(type.Value, lm.Priority > 0 ? lm.Priority : 50, new CPos(lm.X, lm.Y), "LLM directive");
 				}
+			}
 
 			if (llmIntent?.Retreat == true)
 				EnsureMission(MissionType.Retreat, 100, null, "Withdraw");

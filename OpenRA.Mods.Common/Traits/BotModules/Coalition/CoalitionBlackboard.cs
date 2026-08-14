@@ -84,6 +84,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int TotalUnits;
 		public float Strength;
 		public float Readiness;
+		public float Cohesion = 1f;
 		public CPos Center;
 
 		/// <summary>Coarse movement state: idle when every member is idle, moving otherwise.</summary>
@@ -344,8 +345,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			var teamIds = Team.Select(p => p.InternalName).ToHashSet();
 			var groupByOwner = new Dictionary<string, ForceGroup>();
+			var positions = new Dictionary<string, List<WPos>>();
 			foreach (var teamPlayer in Team)
+			{
 				groupByOwner[teamPlayer.InternalName] = new ForceGroup(teamPlayer.InternalName);
+				positions[teamPlayer.InternalName] = [];
+			}
 
 			foreach (var a in World.Actors)
 			{
@@ -362,6 +367,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				{
 					group = new ForceGroup(owner);
 					groupByOwner[owner] = group;
+					positions[owner] = [];
 				}
 
 				group.Counts[(int)unitClass]++;
@@ -374,6 +380,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (group.Status != ForceStatus.Moving && !a.IsIdle)
 					group.Status = ForceStatus.Moving;
 
+				if (unitClass != UnitClass.Structure)
+					positions[owner].Add(a.CenterPosition);
+
 				var health = a.TraitOrDefault<IHealth>();
 				if (health != null)
 					group.Strength += health.HP * 1f / health.MaxHP;
@@ -383,9 +392,36 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				if (group.TotalUnits > 0)
 					group.Strength /= group.TotalUnits;
+				group.Cohesion = ComputeCohesion(positions[group.Owner]);
 				group.Center = CenterOf(Team.First(t => t.InternalName == group.Owner));
 				Forces.Add(group);
 			}
+		}
+
+		/// <summary>0..1 cohesion: how tightly the force clusters around its own average position.</summary>
+		public static float ComputeCohesion(List<WPos> positions)
+		{
+			if (positions.Count < 2)
+				return 1f;
+
+			var sumX = 0L;
+			var sumY = 0L;
+			var sumZ = 0L;
+			foreach (var p in positions)
+			{
+				sumX += p.X;
+				sumY += p.Y;
+				sumZ += p.Z;
+			}
+
+			var center = new WPos((int)(sumX / positions.Count), (int)(sumY / positions.Count), (int)(sumZ / positions.Count));
+			var sumDistance = 0L;
+			foreach (var p in positions)
+				sumDistance += (p - center).Length;
+
+			// One cell is 1024 length units; cohesion halves around a ~30-cell spread.
+			var averageDistance = sumDistance * 1f / positions.Count;
+			return 1f / (1f + averageDistance / (30 * 1024f));
 		}
 
 		/// <summary>
@@ -746,7 +782,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			foreach (var force in Forces)
 			{
 				CoalitionArmyStrength += force.TotalUnits > 0 ? force.Strength * force.TotalUnits : 0;
-				force.Readiness = force.TotalUnits > 0 ? 1f : 0f;
+				force.Readiness = force.TotalUnits > 0 ? force.Strength * force.Cohesion : 0f;
 			}
 
 			// Enemy strength = confirmed/retained sightings. Confidence decay and status transitions

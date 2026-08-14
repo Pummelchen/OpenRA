@@ -293,11 +293,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Number of missions that aborted or failed.</summary>
 		public int MissionAborts;
 
+		/// <summary>Number of special-operations/transport missions that succeeded.</summary>
+		public int SpecialOpsSuccesses;
+
+		/// <summary>Number of reconnaissance missions that succeeded.</summary>
+		public int ReconSuccesses;
+
 		/// <summary>One-line mission-outcome summary for the telemetry log.</summary>
 		public string MissionSummary()
 		{
 			var total = MissionSuccesses + MissionAborts;
-			return $"Missions: {total} concluded ({MissionSuccesses} succeeded, {MissionAborts} aborted/failed)";
+			return $"Missions: {total} concluded ({MissionSuccesses} succeeded, {MissionAborts} aborted/failed; " +
+				$"{SpecialOpsSuccesses} special ops, {ReconSuccesses} recon)";
 		}
 
 		public IReadOnlyList<CoalitionMission> Missions => missions;
@@ -482,7 +489,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					default:
 						// Terminal missions are dropped after they are reported; count the outcome for telemetry.
 						if (mission.Status == MissionStatus.Succeeded)
+						{
 							MissionSuccesses++;
+							if (mission.Type == MissionType.SpecialOps || mission.Type == MissionType.Transport)
+								SpecialOpsSuccesses++;
+							else if (IsRecon(mission.Type))
+								ReconSuccesses++;
+						}
 						else if (mission.Status == MissionStatus.Aborted || mission.Status == MissionStatus.Failed)
 							MissionAborts++;
 						missions.Remove(mission);
