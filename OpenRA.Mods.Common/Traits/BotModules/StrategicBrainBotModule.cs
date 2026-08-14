@@ -1040,6 +1040,15 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				if (transport.Aborted)
 					CoalitionTelemetry.Log(world, "Transport mission aborted during transit");
+				else
+				{
+					var transportActor = world.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == player
+						&& info.TransportTypes.Contains(a.Info.Name));
+					var health = transportActor?.TraitOrDefault<IHealth>();
+					var percent = health == null ? 100 : health.HP * 100 / health.MaxHP;
+					CoalitionTelemetry.Log(world, $"Transport mission completed; transport survived at {percent}% health");
+				}
+
 				transportTarget = null;
 				transportKind = null;
 			}

@@ -131,7 +131,8 @@ namespace OpenRA.Mods.Common.Traits
 	/// </summary>
 	public sealed class TransportController : TacticalController
 	{
-		readonly TransportStateMachine machine = new(extractOnCompletion: false);
+		// Extraction is enabled so a special asset inserted by transport can be recovered and reused.
+		readonly TransportStateMachine machine = new(extractOnCompletion: true);
 		int windowElapsed;
 
 		public TransportController(StrategicBrainBotModule brain)

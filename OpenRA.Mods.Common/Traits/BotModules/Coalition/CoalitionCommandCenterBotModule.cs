@@ -135,6 +135,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastBlackboardTick;
 		int lastCommandTick;
 		string lastPosture;
+		StrategicPosture strategicPosture;
 
 		/// <summary>The coalition's main effort: the single highest-value objective, re-selected
 		/// every command tick so effort concentrates on one area instead of spreading evenly.</summary>
@@ -153,6 +154,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// Match-quality telemetry, sampled once per command.
 		readonly CoalitionMatchMetrics matchMetrics = new();
 		int lastMetricsSummaryTick = int.MinValue;
+		int lastFloatingTick = int.MinValue;
 
 		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
 		public CoalitionBlackboard Blackboard => blackboard;
@@ -462,6 +464,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CoalitionTelemetry.Log(world, $"Posture {strategy}; coalition {blackboard.CoalitionArmyStrength:0} vs enemy {blackboard.EnemyArmyStrength:0}");
 			}
 
+			// Strategic posture: the overall stance derived from the force balance and the enemy's
+			// shape. It selects the target-scoring profile and whether the reserve is committed.
+			var enemyRatio = blackboard.CoalitionArmyStrength <= 0 ? 1f : blackboard.EnemyArmyStrength / blackboard.CoalitionArmyStrength;
+			var enemyStaticDefense = blackboard.EnemyRegion >= 0
+				? blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense]
+				: 0f;
+			var enemyEconomyStrong = blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
+			var ownArmy = (int)blackboard.CoalitionArmyStrength;
+			var newPosture = PostureSelection.Select(enemyRatio, enemyStaticDefense, ownArmy, enemyEconomyStrong);
+			if (newPosture != strategicPosture)
+			{
+				strategicPosture = newPosture;
+				CoalitionTelemetry.Log(world, $"Strategic posture: {strategicPosture.ToString().ToLowerInvariant()}");
+			}
+
 			brain?.ApplyTeamPlan(directiveJson);
 
 			SampleMatchMetrics();
@@ -496,6 +513,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
 			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
+
+			// Excess resource floating: a growing, unspent cash pile means production is not keeping up.
+			if (blackboard.CoalitionCash > 12000 && (lastFloatingTick == int.MinValue || world.WorldTick - lastFloatingTick >= 6000))
+			{
+				lastFloatingTick = world.WorldTick;
+				CoalitionTelemetry.Log(world, $"Excess cash floating: {blackboard.CoalitionCash}");
+			}
 
 			if (lastMetricsSummaryTick == int.MinValue || world.WorldTick - lastMetricsSummaryTick >= 6000)
 			{
@@ -711,7 +735,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			CPos? best = null;
 			var bestScore = float.MinValue;
 			var homeRegion = blackboard.HomeRegion;
-			var weights = lastPosture == "attack" ? TargetWeights.Breakthrough() : TargetWeights.Balanced();
+			var weights = PostureSelection.TargetWeightsFor(strategicPosture);
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
 				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
@@ -893,6 +917,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), blackboard.HasBigWater);
+
+			// Recon requirement: with the enemy position unknown, produce scouts to locate them.
+			if (blackboard.EnemyRegion < 0 && brain?.Info.ScoutUnitTypes is { Count: > 0 } scoutTypes)
+				units = units == null ? scoutTypes.ToArray() : scoutTypes.Concat(units).Distinct().ToArray();
+
 			if (units == null || units.Length == 0)
 				return null;
 
@@ -1073,9 +1102,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var naval = counts[(int)UnitClass.Naval];
 			var land = counts[(int)UnitClass.Infantry] + counts[(int)UnitClass.Armor];
 
+			// Coalition reserve: the sum of each force's held-back reserve (the army the coalition
+			// keeps uncommitted), so the brain and the LLM see how much is in reserve.
+			var reserveFraction = Math.Max(1, brain?.Info.ScaledReserveFraction() ?? 4);
+			var reserve = blackboard.Forces.Sum(f => f.TotalUnits / reserveFraction);
+
 			// "water" tells the brain whether a big explored water body exists. Without it the mixed-arms
 			// gate must not demand a naval arm, and naval production is skipped.
-			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
+			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"reserve\":{reserve},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
 		}
 
 		/// <summary>

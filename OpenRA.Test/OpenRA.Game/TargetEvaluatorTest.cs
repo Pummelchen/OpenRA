@@ -42,6 +42,14 @@ namespace OpenRA.Test
 			Assert.That(TargetEvaluator.TechnologyValue("weap"), Is.EqualTo(0f));
 		}
 
+		[TestCase(TestName = "Detection and vision structures carry information value.")]
+		public void InformationValue()
+		{
+			Assert.That(TargetEvaluator.InformationValue("dome"), Is.EqualTo(6f));
+			Assert.That(TargetEvaluator.InformationValue("rdr"), Is.EqualTo(6f));
+			Assert.That(TargetEvaluator.InformationValue("weap"), Is.EqualTo(0f));
+		}
+
 		[TestCase(TestName = "An economy target scores higher under raiding weights.")]
 		public void RaidingPrefersEconomy()
 		{

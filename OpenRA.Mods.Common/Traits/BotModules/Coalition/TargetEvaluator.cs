@@ -25,6 +25,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float EconomicDamage = 1f;
 		public float ProductionDenial = 1f;
 		public float TechnologyDenial = 1f;
+		public float InformationWeight = 1f;
 		public float PositionalValue = 1f;
 		public float FollowOnOpportunity = 1f;
 		public float FriendlyLossRisk = 1f;
@@ -70,6 +71,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float EconomicDamage;
 		public float ProductionDenial;
 		public float TechnologyDenial;
+		public float InformationValue;
 		public float PositionalValue;
 		public float FollowOnOpportunity;
 		public float FriendlyLossRisk;
@@ -79,7 +81,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float IntelligenceUncertainty;
 
 		public float Total =>
-			StrategicValue + EconomicDamage + ProductionDenial + TechnologyDenial
+			StrategicValue + EconomicDamage + ProductionDenial + TechnologyDenial + InformationValue
 			+ PositionalValue + FollowOnOpportunity
 			- FriendlyLossRisk - TravelCost - ReinforcementRisk - CounterattackRisk - IntelligenceUncertainty;
 	}
@@ -143,6 +145,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 		}
 
+		/// <summary>Information value: targets that reveal the map or deny the enemy vision.</summary>
+		public static float InformationValue(string actorType)
+		{
+			switch (actorType)
+			{
+				case "rdr":
+				case "dome":
+				case "spen":
+					return 6f;
+				default:
+					return 0f;
+			}
+		}
+
 		/// <summary>Positional value: chokepoint-adjacent or near-water targets control the map.</summary>
 		public static float PositionalValue(int regionIndex, CoalitionMapAnalysis map, MovementClass movementClass)
 		{
@@ -193,6 +209,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				EconomicDamage = weights.EconomicDamage * (isEconomy ? EconomicValue(actorType) : 0f),
 				ProductionDenial = weights.ProductionDenial * (isProduction ? ProductionValue(actorType) : 0f),
 				TechnologyDenial = weights.TechnologyDenial * (isTechnology ? TechnologyValue(actorType) : 0f),
+				InformationValue = weights.InformationWeight * InformationValue(actorType),
 				PositionalValue = weights.PositionalValue * positional,
 				FollowOnOpportunity = weights.FollowOnOpportunity * followOn,
 				FriendlyLossRisk = weights.FriendlyLossRisk * friendlyLossRisk,
