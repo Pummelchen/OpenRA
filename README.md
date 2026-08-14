@@ -22,11 +22,11 @@ The AI respects fog of war — it only sees territory the team has explored — 
 
 - **Coalition command** — one strategic brain, up to four allied bots, one shared deterministic world model.
 - **Hybrid intelligence** — a local vision-capable LLM sets strategy every ~15 s; deterministic engine controllers execute it at tick speed. The AI plays fully without the LLM.
-- **Fair fog of war** — the AI only ever sees explored territory; no omniscience, no hidden income.
-- **Independent difficulty axes** — command quality, reaction speed, micro precision, coordination strength, and economic bonus (0% = strictly fair) are configurable separately.
+- **Fair fog of war** — the AI only ever sees explored territory by default; omniscience is an opt-in intelligence axis, never the default, and there is no hidden income.
+- **Independent difficulty axes** — command quality, reaction speed, micro precision, coordination strength, economic bonus (0% = strictly fair), and intelligence/fog advantage (fair fog → reveal structures → omniscient) are configurable separately.
 - **Deception with measurement** — feints and baits are launched, their effect on enemy behavior is measured, and the results feed back into planning.
 - **Engine-validated LLM tool API** — the commander queries combat estimates, routes, and target scores through read-only engine endpoints; it cannot fabricate mechanics or bypass game rules.
-- **Headless harness & self-play** — `--simulate` runs full skirmishes without a renderer; `ai/selfplay.py` batches seeds and parameter sweeps for tuning.
+- **Headless harness & self-play** — `--simulate` runs full skirmishes without a renderer; `ai/selfplay.py` batches seeds, sweeps parameters, checks cross-map overfitting, and correlates the predicted win ratio with outcomes. Mixed self-play (the coalition versus scripted rush/turtle/naval bots) is supported.
 
 ## Project layout
 
