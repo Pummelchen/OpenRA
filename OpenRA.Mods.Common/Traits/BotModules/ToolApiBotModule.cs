@@ -34,13 +34,14 @@ namespace OpenRA.Mods.Common.Traits
 		public override object Create(ActorInitializer init) { return new ToolApiBotModule(this, init); }
 	}
 
-	public sealed class ToolApiBotModule : ConditionalTrait<ToolApiBotModuleInfo>, IBotTick
+	public sealed class ToolApiBotModule : ConditionalTrait<ToolApiBotModuleInfo>, IBotTick, INotifyActorDisposing
 	{
 		readonly ToolApiBotModuleInfo info;
-		HttpListener listener;
+		volatile HttpListener listener;
 		Thread serverThread;
 		volatile ToolContext cachedContext;
 		volatile bool running;
+		bool startupFailed;
 
 		public ToolApiBotModule(ToolApiBotModuleInfo info, ActorInitializer init)
 			: base(info)
@@ -50,7 +51,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IBotTick.BotTick(IBot bot)
 		{
-			if (IsTraitDisabled)
+			// The tool API is best-effort: if the port is unavailable at startup, give up after one
+			// attempt so a held port is not retried (and logged) every tick.
+			if (IsTraitDisabled || startupFailed)
 				return;
 
 			var commander = bot.Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
@@ -77,21 +80,21 @@ namespace OpenRA.Mods.Common.Traits
 			}
 			catch
 			{
-				// Port in use or listener unavailable: the tool API is best-effort tooling and the
-				// commander keeps planning without it.
+				startupFailed = true;
 				CoalitionTelemetry.Log(bot.Player.World, $"Tool API failed to start on port {info.ToolApiPort}");
-				running = false;
 			}
 		}
 
 		void ServeLoop()
 		{
+			// Capture the listener locally so disposal (which nulls the field) cannot race the loop.
+			var server = listener;
 			while (running)
 			{
 				HttpListenerContext ctx;
 				try
 				{
-					ctx = listener.GetContext();
+					ctx = server.GetContext();
 				}
 				catch
 				{
@@ -121,6 +124,24 @@ namespace OpenRA.Mods.Common.Traits
 					}
 				});
 			}
+		}
+
+		void INotifyActorDisposing.Disposing(Actor self)
+		{
+			// Release the HTTP listener so a later game (e.g. another headless run in the same
+			// process) can rebind the port. The serve loop exits once running is cleared and the
+			// listener is closed.
+			running = false;
+			try
+			{
+				listener?.Close();
+			}
+			catch
+			{
+				// The listener may already be stopped; disposal is best-effort.
+			}
+
+			listener = null;
 		}
 
 		void Handle(HttpListenerContext ctx)

@@ -237,6 +237,42 @@ namespace OpenRA.Test
 			}
 		}
 
+		[Test(Description = "The tool API listener is released when the game ends, so a fresh game rebinds the port instead of retrying every tick.")]
+		public void ToolApiReleasesPortBetweenGames()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+
+				var firstOffset = TelemetryLength(telemetryPath);
+				HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 600, 42);
+				var firstLines = TelemetryLines(telemetryPath, firstOffset);
+
+				var secondOffset = TelemetryLength(telemetryPath);
+				HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 600, 43);
+				var secondLines = TelemetryLines(telemetryPath, secondOffset);
+
+				// Two bots share one fixed port: exactly one binds, and the loser gives up after one
+				// attempt rather than retrying (and logging) every tick.
+				Assert.That(firstLines.Count(l => l.Contains("Tool API listening")), Is.EqualTo(1),
+					"Exactly one bot should bind the tool API port.");
+				Assert.That(firstLines.Count(l => l.Contains("Tool API failed to start")), Is.EqualTo(1),
+					"The losing bot should give up after one attempt, not retry every tick.");
+
+				// The critical regression: the first game releases the port on dispose, so the second
+				// game can bind it again instead of finding it still held.
+				Assert.That(secondLines.Count(l => l.Contains("Tool API listening")), Is.EqualTo(1),
+					"A fresh game should rebind the tool API port after the previous game released it.");
+				Assert.That(secondLines.Count(l => l.Contains("Tool API failed to start")), Is.EqualTo(1),
+					"The losing bot in the second game should also give up after one attempt.");
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
 		static List<string> TelemetryLines(string path, long offset)
 		{
 			var lines = new List<string>();
