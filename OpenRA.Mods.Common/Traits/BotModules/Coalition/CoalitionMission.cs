@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -27,7 +28,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Transport,
 		Counterattack,
 		SpecialOps,
-		Bait
+		Bait,
+		Breakthrough,
+		Siege,
+		Harassment,
+		EconomyRaid,
+		ProductionRaid,
+		ExpansionDenial,
+		ChokepointSeizure,
+		Flank,
+		AirStrike,
+		NavalStrike,
+		SupportPowerStrike
 	}
 
 	public enum MissionStatus
@@ -91,6 +103,30 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Human-readable reason for the terminal state, set when the mission aborts or fails.</summary>
 		public string OutcomeReason;
 
+		/// <summary>The strategic effects this mission aims to achieve, derived from its type.</summary>
+		public List<string> DesiredEffects = [];
+
+		/// <summary>The force groups (owner ids) assigned to this mission by the order arbiter.</summary>
+		public List<string> AssignedForces = [];
+
+		/// <summary>The staging region forces assemble in, or -1 when none is chosen.</summary>
+		public int StagingRegion = -1;
+
+		/// <summary>The planned region route to the target, or empty when unplanned.</summary>
+		public int[] PlannedRegions = [];
+
+		/// <summary>Explicit launch conditions (documented and enforced by the phase machine).</summary>
+		public List<string> LaunchConditions = [];
+
+		/// <summary>Fallback plans if the mission's assumptions fail.</summary>
+		public List<string> Contingencies = [];
+
+		/// <summary>0..1 readiness: coalition strength versus the required minimum force.</summary>
+		public float Readiness;
+
+		/// <summary>0..1 progress through the mission phase machine.</summary>
+		public float Progress;
+
 		// Telemetry.
 		public int FriendlyValueCommitted;
 		public int EnemyValueEngaged;
@@ -107,6 +143,61 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Target = target;
 			Objective = objective;
 			Phase = InitialPhase(type);
+			DesiredEffects = DesiredEffectsFor(type);
+			LaunchConditions = LaunchConditionsFor(type);
+			Contingencies = ContingenciesFor(type);
+		}
+
+		static List<string> DesiredEffectsFor(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Attack or MissionType.Counterattack or MissionType.Breakthrough => ["destroy_enemy_forces", "seize_objective"],
+				MissionType.Siege => ["reduce_static_defense", "open_breach"],
+				MissionType.Raid or MissionType.Harassment => ["damage_economy", "disrupt_production"],
+				MissionType.EconomyRaid => ["damage_economy", "starve_enemy"],
+				MissionType.ProductionRaid => ["destroy_production", "deny_reinforcements"],
+				MissionType.ExpansionDenial => ["deny_expansion", "contain_enemy"],
+				MissionType.ChokepointSeizure => ["control_chokepoint", "split_enemy"],
+				MissionType.Flank => ["attack_enemy_flank", "divide_defense"],
+				MissionType.AirStrike or MissionType.NavalStrike => ["destroy_high_value_target", "soften_defense"],
+				MissionType.SupportPowerStrike => ["strike_high_value_target"],
+				MissionType.Recon => ["locate_enemy", "reveal_terrain"],
+				MissionType.Feint or MissionType.Bait => ["draw_enemy_response", "expose_enemy_position"],
+				MissionType.Transport or MissionType.SpecialOps => ["insert_asset", "destroy_rear_target"],
+				MissionType.Defend => ["protect_base", "repel_attack"],
+				MissionType.Retreat => ["preserve_forces"],
+				_ => ["achieve_objective"]
+			};
+		}
+
+		static List<string> LaunchConditionsFor(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
+					or MissionType.Siege or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
+					or MissionType.ExpansionDenial or MissionType.ChokepointSeizure or MissionType.Flank
+					=> ["force >= MinForce", "route exists"],
+				MissionType.AirStrike or MissionType.NavalStrike => ["air_or_naval_available", "target_identified"],
+				MissionType.SupportPowerStrike => ["power_ready", "high_value_target"],
+				MissionType.Transport or MissionType.SpecialOps => ["transport available", "timing window"],
+				_ => []
+			};
+		}
+
+		static List<string> ContingenciesFor(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Attack or MissionType.Breakthrough => ["convert to feint", "withdraw"],
+				MissionType.Raid or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
+					or MissionType.ExpansionDenial or MissionType.Flank => ["withdraw"],
+				MissionType.AirStrike or MissionType.NavalStrike => ["return to base"],
+				MissionType.SupportPowerStrike => ["withhold power"],
+				MissionType.Transport or MissionType.SpecialOps => ["abort and hold"],
+				_ => []
+			};
 		}
 
 		/// <summary>The phase a mission starts in; reconnaissance and deception are pre-staged.</summary>
@@ -121,6 +212,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionPhase.Deception;
 				case MissionType.Retreat:
 					return MissionPhase.Withdrawal;
+				case MissionType.AirStrike:
+				case MissionType.NavalStrike:
+					return MissionPhase.Shaping; // no ground staging for strike missions
+				case MissionType.SupportPowerStrike:
+					return MissionPhase.Breach;  // fire immediately when ready
 				default:
 					return MissionPhase.Recon;
 			}
@@ -178,6 +274,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return (drew, drew ? nearbyEnemyCount - baselineEnemyCount : 0);
 		}
 
+		/// <summary>True for mission types that push into enemy territory and complete when the target clears.</summary>
+		public static bool IsOffensive(MissionType type)
+		{
+			return type is MissionType.Attack or MissionType.Raid or MissionType.Counterattack
+				or MissionType.Breakthrough or MissionType.Siege or MissionType.Harassment
+				or MissionType.EconomyRaid or MissionType.ProductionRaid or MissionType.ExpansionDenial
+				or MissionType.ChokepointSeizure or MissionType.Flank
+				or MissionType.AirStrike or MissionType.NavalStrike or MissionType.SupportPowerStrike;
+		}
+
 		/// <summary>
 		/// Advances mission lifecycle against the blackboard: phases transition when their conditions
 		/// are met, offensive missions complete when their target region no longer holds the objective,
@@ -188,6 +294,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			foreach (var mission in missions.ToArray())
 			{
+				mission.Readiness = mission.MinForce <= 0 ? 1f : Math.Clamp(coalitionStrength / mission.MinForce, 0f, 1f);
+				mission.Progress = (int)mission.Phase * 1f / (Enum.GetValues<MissionPhase>().Length - 1);
+
 				switch (mission.Status)
 				{
 					case MissionStatus.Ready:
@@ -199,7 +308,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						if (!AdvancePhase(blackboard, mission))
 							continue;
 
-						if (mission.Type == MissionType.Attack || mission.Type == MissionType.Raid || mission.Type == MissionType.Counterattack)
+						if (IsOffensive(mission.Type))
 						{
 							// Completed when nothing of the target remains known in the target region.
 							var targetRegion = mission.Target != null ? blackboard.RegionOf(mission.Target.Value) : null;
@@ -370,12 +479,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				.OrderByDescending(m => m.Priority)
 				.ToArray();
 
-			var attack = active.FirstOrDefault(m => m.Type == MissionType.Attack || m.Type == MissionType.Counterattack || m.Type == MissionType.Raid);
+			var attack = active.FirstOrDefault(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
+				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
 			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint);
 			var defend = active.FirstOrDefault(m => m.Type == MissionType.Defend);
 			var recon = active.FirstOrDefault(m => m.Type == MissionType.Recon);
 			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
 			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps);
+			var airStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike || m.Type == MissionType.NavalStrike);
+			var supportPower = active.FirstOrDefault(m => m.Type == MissionType.SupportPowerStrike);
 			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat);
 
 			var sb = new StringBuilder();
@@ -383,6 +495,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			sb.Append("{\"strategy\":\"").Append(strategy).Append('"');
 			if (attack != null && attack.Target != null)
 				AppendTarget(sb, "attack", attack.Target.Value);
+			if (airStrike != null && airStrike.Target != null)
+				AppendTarget(sb, "strike", airStrike.Target.Value);
+			if (supportPower != null && supportPower.Target != null)
+				AppendTarget(sb, "supportPower", supportPower.Target.Value);
 			if (feint != null && feint.Target != null)
 				AppendTarget(sb, "feint", feint.Target.Value);
 			if (recon != null && recon.Target != null)

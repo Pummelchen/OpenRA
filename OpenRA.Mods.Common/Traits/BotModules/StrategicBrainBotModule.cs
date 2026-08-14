@@ -257,6 +257,8 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? baitTarget;
 		CPos? counterTarget;
 		CPos? transportTarget;
+		CPos? strikeTarget;
+		CPos? supportPowerTarget;
 		string transportKind;
 		string[] produceBoost;
 		bool teamRetreat;
@@ -446,6 +448,8 @@ namespace OpenRA.Mods.Common.Traits
 			public TeamTarget Bait { get; set; }
 			public TeamTarget Counter { get; set; }
 			public TeamTarget Transport { get; set; }
+			public TeamTarget Strike { get; set; }
+			public TeamTarget SupportPower { get; set; }
 			public string TransportKind { get; set; }
 			public Dictionary<string, string> Roles { get; set; }
 			public string[] Produce { get; set; }
@@ -500,6 +504,8 @@ namespace OpenRA.Mods.Common.Traits
 			counterTarget = ClampCell(ToCell(plan.Counter));
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
+			strikeTarget = ClampCell(ToCell(plan.Strike));
+			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
 			if (plan.Force != null)
@@ -800,6 +806,25 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
+			// Air/naval strike: send only that domain at a high-value target, exempt from the ground gate.
+			if (strikeTarget != null)
+			{
+				var strikeUnits = Claim(activeArmy.Where(a =>
+					info.AirUnitTypes.Contains(a.Info.Name) || info.NavalPriority.Contains(a.Info.Name))).ToArray();
+				if (strikeUnits.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, strikeTarget.Value), false, groupedActors: strikeUnits));
+					CoalitionTelemetry.Log(world, $"Strike of {strikeUnits.Length} units to {strikeTarget.Value}");
+				}
+			}
+
+			// Support-power strike: fire the first ready superweapon at the designated target.
+			if (supportPowerTarget != null)
+			{
+				FireSupportPower(supportPowerTarget.Value);
+				supportPowerTarget = null;
+			}
+
 			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed
 			// force (air + naval + land). Stealth, diversion, and deception missions run regardless.
 			// When no big water body has been explored yet the naval arm is not required at all:
@@ -1089,6 +1114,27 @@ namespace OpenRA.Mods.Common.Traits
 
 			var bounds = blackboard.Regions[best].Bounds;
 			return new CPos((bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
+		}
+
+		/// <summary>
+		/// Fires the first ready support power at the target. The power has its own cooldown, so an
+		/// unready power is simply skipped; the commander re-requests the strike each review.
+		/// </summary>
+		void FireSupportPower(CPos target)
+		{
+			var manager = player.PlayerActor.TraitOrDefault<SupportPowerManager>();
+			if (manager == null)
+				return;
+
+			foreach (var kv in manager.Powers)
+			{
+				if (!kv.Value.Ready)
+					continue;
+
+				bot.QueueOrder(new Order(kv.Key, manager.Self, Target.FromCell(world, target), false));
+				CoalitionTelemetry.Log(world, $"Support power {kv.Key} fired at {target}");
+				return;
+			}
 		}
 
 		/// <summary>

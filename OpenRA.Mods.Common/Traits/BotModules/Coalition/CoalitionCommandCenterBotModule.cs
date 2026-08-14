@@ -323,10 +323,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				}
 
 				var target = scored ?? RegionCenter(blackboard.EnemyRegion);
-				EnsureMission(MissionType.Attack, 90, target, "Destroy enemy concentration");
+
+				// A decisive edge turns the main effort into a breakthrough; a fair fight stays a
+				// conventional attack. A heavily fortified enemy is besieged instead.
+				var attackType = ratio < 0.5f ? MissionType.Breakthrough : MissionType.Attack;
+				if (blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
+					attackType = MissionType.Siege;
+				EnsureMission(attackType, 90, target, "Destroy enemy concentration");
 			}
 			else
 				mainEffort = null;
+
+			// Additional offensive missions driven by intel: raids on economy/production, air and
+			// support-power strikes, chokepoint seizure, and a flank to divide the defense.
+			CreateOffensiveMissions(ratio);
 
 			if (wantDefend)
 				EnsureMission(MissionType.Defend, 80, RegionCenter(blackboard.HomeRegion), "Hold the base");
@@ -456,6 +466,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				cohesion = 1f;
 
 			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
+			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
 
 			if (lastMetricsSummaryTick == int.MinValue || world.WorldTick - lastMetricsSummaryTick >= 6000)
 			{
@@ -723,6 +734,35 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionType.SpecialOps;
 				case "bait":
 					return MissionType.Bait;
+				case "breakthrough":
+					return MissionType.Breakthrough;
+				case "siege":
+					return MissionType.Siege;
+				case "harassment":
+					return MissionType.Harassment;
+				case "economyraid":
+				case "economy_raid":
+					return MissionType.EconomyRaid;
+				case "productionraid":
+				case "production_raid":
+					return MissionType.ProductionRaid;
+				case "expansiondenial":
+				case "expansion_denial":
+					return MissionType.ExpansionDenial;
+				case "chokepointseizure":
+				case "chokepoint":
+					return MissionType.ChokepointSeizure;
+				case "flank":
+					return MissionType.Flank;
+				case "airstrike":
+				case "air_strike":
+					return MissionType.AirStrike;
+				case "navalstrike":
+				case "naval_strike":
+					return MissionType.NavalStrike;
+				case "supportpowerstrike":
+				case "support_power":
+					return MissionType.SupportPowerStrike;
 				default:
 					return null;
 			}
@@ -847,8 +887,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				var force = mission.Type switch
 				{
-					MissionType.Attack or MissionType.Raid or MissionType.Counterattack => main,
-					MissionType.Feint or MissionType.Bait => secondary ?? main,
+					MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
+						or MissionType.Siege or MissionType.ChokepointSeizure => main,
+					MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
+						or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Feint or MissionType.Bait => secondary ?? main,
 					MissionType.Transport or MissionType.SpecialOps => blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
 					_ => null
 				};
@@ -858,6 +900,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 				foreach (var rejection in arbiter.Assign(mission.Id, RoleOf(mission.Type), PriorityOf(mission.Type), force.Owner))
 					CoalitionTelemetry.Log(world, $"Order arbiter: {rejection}");
+
+				mission.AssignedForces = arbiter.ForcesOf(mission.Id).ToList();
+				EnrichMission(mission);
 			}
 
 			// Copy ownership back onto the fresh force groups.
@@ -868,13 +913,44 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 		}
 
+		/// <summary>Fills the mission's staging region and planned route from the blackboard's map analysis.</summary>
+		void EnrichMission(CoalitionMission mission)
+		{
+			if (mission.Target != null && blackboard.HomeRegion >= 0)
+			{
+				var targetRegion = blackboard.RegionOf(mission.Target.Value).Index;
+				var route = CoalitionRoutePlanner.FindRoute(blackboard.MapAnalysis, blackboard.ThreatField(),
+					blackboard.HomeRegion, targetRegion, MovementClass.Ground, RouteWeights.Assault());
+				mission.PlannedRegions = route.Found ? route.Regions : [];
+			}
+
+			var best = blackboard.HomeRegion;
+			var bestRally = float.MinValue;
+			foreach (var region in blackboard.Regions)
+			{
+				if (!ReachableFromHome(region.Index))
+					continue;
+				if (blackboard.MapAnalysis.RallyValue[region.Index] > bestRally)
+				{
+					bestRally = blackboard.MapAnalysis.RallyValue[region.Index];
+					best = region.Index;
+				}
+			}
+
+			mission.StagingRegion = best;
+		}
+
 		static ArbiterPriority PriorityOf(MissionType type)
 		{
 			return type switch
 			{
 				MissionType.Retreat => ArbiterPriority.Survival,
 				MissionType.Transport or MissionType.SpecialOps => ArbiterPriority.SpecialMission,
-				MissionType.Attack or MissionType.Raid or MissionType.Counterattack => ArbiterPriority.ActiveCombat,
+				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
+					or MissionType.Siege or MissionType.ChokepointSeizure => ArbiterPriority.ActiveCombat,
+				MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
+					or MissionType.ExpansionDenial or MissionType.Flank => ArbiterPriority.ActiveCombat,
+				MissionType.AirStrike or MissionType.NavalStrike or MissionType.SupportPowerStrike => ArbiterPriority.SpecialMission,
 				MissionType.Defend => ArbiterPriority.Defense,
 				MissionType.Recon or MissionType.Feint or MissionType.Bait => ArbiterPriority.Recon,
 				_ => ArbiterPriority.Staging
@@ -885,7 +961,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			return type switch
 			{
-				MissionType.Attack or MissionType.Raid or MissionType.Counterattack => "main",
+				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
+					or MissionType.Siege or MissionType.ChokepointSeizure => "main",
+				MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
+					or MissionType.ExpansionDenial or MissionType.Flank => "flank",
+				MissionType.AirStrike => "air",
+				MissionType.NavalStrike => "naval",
+				MissionType.SupportPowerStrike => "support",
 				MissionType.Feint => "feint",
 				MissionType.Bait => "bait",
 				MissionType.Transport or MissionType.SpecialOps => "special",
@@ -1018,6 +1100,92 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		bool DeceptionSaturated()
 		{
 			return missions.DeceptionAttempts >= 3 && missions.DeceptionSuccesses == 0;
+		}
+
+		/// <summary>
+		/// Creates intel-driven offensive missions: economy/production raids, air and support-power
+		/// strikes, chokepoint seizure, and a flank to divide the enemy defense.
+		/// </summary>
+		void CreateOffensiveMissions(float ratio)
+		{
+			if (blackboard.EnemyRegion < 0)
+				return;
+
+			var structures = blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
+			if (structures.Length == 0)
+				return;
+
+			var economy = structures.Where(i => TargetEvaluator.EconomicValue(i.Type) > 0).ToArray();
+			if (economy.Length > 0 && ratio < 1.2f && !missions.Missions.Any(m => m.Type == MissionType.EconomyRaid))
+				EnsureMission(MissionType.EconomyRaid, 65, HighestScored(economy, i => TargetEvaluator.EconomicValue(i.Type)), "Raid enemy economy");
+
+			var production = structures.Where(i => TargetEvaluator.ProductionValue(i.Type) > 0).ToArray();
+			if (production.Length > 0 && ratio < 1.0f && !missions.Missions.Any(m => m.Type == MissionType.ProductionRaid))
+				EnsureMission(MissionType.ProductionRaid, 65, HighestScored(production, i => TargetEvaluator.ProductionValue(i.Type)), "Raid enemy production");
+
+			var enemyAA = blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.AntiAir];
+			var hasAir = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
+			var highValue = BestScoredTarget();
+			if (hasAir && enemyAA < 0.5f && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.AirStrike))
+				EnsureMission(MissionType.AirStrike, 70, highValue, "Air strike on high-value target");
+
+			if (blackboard.HasReadySuperweapon && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.SupportPowerStrike))
+				EnsureMission(MissionType.SupportPowerStrike, 95, highValue, "Support-power strike");
+
+			var choke = ChokepointRegionNearEnemy();
+			if (choke != null && !missions.Missions.Any(m => m.Type == MissionType.ChokepointSeizure))
+				EnsureMission(MissionType.ChokepointSeizure, 60, choke, "Seize chokepoint");
+
+			var attack = missions.Missions.FirstOrDefault(m => MissionManager.IsOffensive(m.Type) && m.Target != null && m.Status == MissionStatus.Executing);
+			if (attack != null && !missions.Missions.Any(m => m.Type == MissionType.Flank))
+			{
+				var flankTarget = FlankRegionTarget(attack);
+				if (flankTarget != null)
+					EnsureMission(MissionType.Flank, 55, flankTarget, "Flank the enemy");
+			}
+		}
+
+		static CPos? HighestScored(EnemyIntel[] intel, Func<EnemyIntel, float> value)
+		{
+			EnemyIntel best = null;
+			var bestValue = float.MinValue;
+			foreach (var i in intel)
+			{
+				var v = value(i);
+				if (v > bestValue)
+				{
+					bestValue = v;
+					best = i;
+				}
+			}
+
+			return best?.LastSeenCell;
+		}
+
+		CPos? ChokepointRegionNearEnemy()
+		{
+			if (blackboard.EnemyRegion < 0)
+				return null;
+
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+				if (blackboard.MapAnalysis.IsChokepoint(MovementClass.Ground, blackboard.EnemyRegion, i))
+					return RegionCenter(i);
+
+			return null;
+		}
+
+		CPos? FlankRegionTarget(CoalitionMission attack)
+		{
+			var attackRegion = attack.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+			{
+				if (blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion)
+					continue;
+				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i))
+					return RegionCenter(i);
+			}
+
+			return null;
 		}
 
 		/// <summary>True when the region is in the same ground-connected component as the home region.</summary>

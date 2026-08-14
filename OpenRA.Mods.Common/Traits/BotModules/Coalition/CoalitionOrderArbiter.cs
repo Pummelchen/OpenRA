@@ -122,5 +122,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				? commitment.Role
 				: null;
 		}
+
+		/// <summary>The forces currently committed to a mission.</summary>
+		public IReadOnlyList<string> ForcesOf(string missionId)
+		{
+			return commitments.Where(c => c.MissionId == missionId && !c.Released).Select(c => c.Force).ToArray();
+		}
 	}
 }

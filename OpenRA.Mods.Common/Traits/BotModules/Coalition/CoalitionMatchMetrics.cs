@@ -30,6 +30,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		float cohesionSum;
 		float cashSum;
 
+		/// <summary>The most recent combat win-ratio estimate, for comparing predictions against actual outcomes.</summary>
+		public float LastWinRatioEstimate;
+
+		/// <summary>Records the commander's current win-ratio estimate (predicted-vs-actual telemetry).</summary>
+		public void RecordEstimate(float winRatio)
+		{
+			LastWinRatioEstimate = winRatio;
+		}
+
 		/// <summary>Records one sample of the coalition's state.</summary>
 		public void Sample(float friendlyValue, float enemyValue, float idleFraction, float cohesion, float cash)
 		{
@@ -72,7 +81,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return samples == 0
 				? "Match metrics: no samples"
 				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {enemyValueDestroyed:0} / friendly {friendlyValueLost:0} lost), " +
-					$"avg idle {AverageIdleFraction * 100:0}%, cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, samples {samples}";
+					$"avg idle {AverageIdleFraction * 100:0}%, cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, " +
+					$"predicted win ratio {LastWinRatioEstimate:0.00}, samples {samples}";
 		}
 	}
 }

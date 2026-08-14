@@ -352,6 +352,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var (_, enemyLoss) = CombatEstimator.Estimate(
 				powerB, powerA, airB, airA, artilleryB, artilleryA, antiAirB, antiAirA, staticDefense, exposure);
 
+			var enemyArmor = b.Counts[(int)UnitClass.Armor] > 0 ? 1f : 0f;
+			var risks = CombatEstimator.MajorRisks(antiAirB, airA, artilleryB, artilleryA, airB, antiAirA).ToArray();
+			var gaps = CombatEstimator.CapabilityGaps(airB, antiAirA, enemyArmor, artilleryA, antiAirB, airA).ToArray();
+			var enemyReinforcement = region >= 0 && region < context.Regions.Length
+				? context.Regions[region].Threats[(int)CoalitionCapability.Reinforcement]
+				: 0f;
+
 			return Ok(new JsonObject
 			{
 				["force_a"] = a.Owner,
@@ -361,6 +368,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["win_ratio"] = Round(winRatio),
 				["expected_friendly_loss_fraction"] = Round(friendlyLoss),
 				["expected_enemy_loss_fraction"] = Round(enemyLoss),
+				["major_risks"] = new JsonArray(risks.Select(r => (JsonNode)r).ToArray()),
+				["capability_gaps"] = new JsonArray(gaps.Select(g => (JsonNode)g).ToArray()),
+				["reinforcement_advantage"] = CombatEstimator.ReinforcementAdvantage(0f, enemyReinforcement),
 				["model_version"] = "v2"
 			});
 		}

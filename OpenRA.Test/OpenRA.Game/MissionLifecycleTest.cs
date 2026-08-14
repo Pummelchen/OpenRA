@@ -114,5 +114,52 @@ namespace OpenRA.Test
 				MissionStatus.Failed
 			}));
 		}
+
+		[TestCase(TestName = "Offensive mission types are recognized across the expanded set.")]
+		public void OffensiveMissionTypes()
+		{
+			Assert.That(MissionManager.IsOffensive(MissionType.Breakthrough), Is.True);
+			Assert.That(MissionManager.IsOffensive(MissionType.AirStrike), Is.True);
+			Assert.That(MissionManager.IsOffensive(MissionType.EconomyRaid), Is.True);
+			Assert.That(MissionManager.IsOffensive(MissionType.SupportPowerStrike), Is.True);
+			Assert.That(MissionManager.IsOffensive(MissionType.Flank), Is.True);
+			Assert.That(MissionManager.IsOffensive(MissionType.Defend), Is.False);
+			Assert.That(MissionManager.IsOffensive(MissionType.Recon), Is.False);
+			Assert.That(MissionManager.IsOffensive(MissionType.Feint), Is.False);
+		}
+
+		[TestCase(TestName = "Missions carry desired effects, launch conditions, and contingencies.")]
+		public void MissionFrameworkFields()
+		{
+			var manager = new MissionManager();
+			var raid = manager.CreateMission(MissionType.EconomyRaid, 65, new CPos(1, 1), "Test");
+
+			Assert.That(raid.DesiredEffects, Does.Contain("starve_enemy"));
+			Assert.That(raid.LaunchConditions, Does.Contain("force >= MinForce"));
+			Assert.That(raid.Contingencies, Does.Contain("withdraw"));
+
+			var strike = manager.CreateMission(MissionType.SupportPowerStrike, 95, new CPos(2, 2), "Test");
+			Assert.That(strike.LaunchConditions, Does.Contain("power_ready"));
+			Assert.That(strike.Phase, Is.EqualTo(MissionPhase.Breach), "Support-power strikes fire immediately.");
+
+			var air = manager.CreateMission(MissionType.AirStrike, 70, new CPos(3, 3), "Test");
+			Assert.That(air.Phase, Is.EqualTo(MissionPhase.Shaping), "Air strikes skip ground staging.");
+		}
+
+		[TestCase(TestName = "The directive JSON carries strike and support-power targets.")]
+		public void DirectiveStrikeTargets()
+		{
+			var manager = new MissionManager();
+			var strike = manager.CreateMission(MissionType.AirStrike, 70, new CPos(12, 34), "Test");
+			strike.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			Assert.That(directive, Does.Contain("\"strike\":{\"x\":12,\"y\":34}"));
+			Assert.That(directive, Does.Not.Contain("\"attack\""));
+
+			var power = manager.CreateMission(MissionType.SupportPowerStrike, 95, new CPos(5, 6), "Test");
+			power.Status = MissionStatus.Executing;
+			Assert.That(manager.BuildDirectiveJson(null, null, false), Does.Contain("\"supportPower\":{\"x\":5,\"y\":6}"));
+		}
 	}
 }

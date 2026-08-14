@@ -150,6 +150,43 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return Estimate(adjustedFriendly, adjustedEnemy);
 		}
 
+		/// <summary>Major matchup weaknesses the engagement exposes, in human-readable form.</summary>
+		public static IEnumerable<string> MajorRisks(float enemyAntiAir, float friendlyAir, float enemyArtillery,
+			float friendlyArtillery, float enemyAir, float friendlyAntiAir)
+		{
+			if (enemyAntiAir > 0 && friendlyAir > 0)
+				yield return "enemy_anti_air";
+			if (enemyArtillery > 0 && friendlyArtillery <= 0)
+				yield return "enemy_artillery";
+			if (enemyAir > 0 && friendlyAntiAir <= 0)
+				yield return "insufficient_anti_air";
+			if (friendlyAir > 0 && friendlyAntiAir <= 0)
+				yield return "no_air_cover";
+		}
+
+		/// <summary>Capability gaps the coalition should close before committing, derived from the matchup.</summary>
+		public static IEnumerable<string> CapabilityGaps(float enemyAir, float friendlyAntiAir, float enemyArmor,
+			float friendlyArtillery, float enemyAntiAir, float friendlyAir)
+		{
+			if (enemyAir > 0 && friendlyAntiAir <= 0)
+				yield return "anti_air";
+			if (enemyArmor > 0 && friendlyArtillery <= 0)
+				yield return "anti_armor";
+			if (enemyAntiAir > 0 && friendlyAir > 0)
+				yield return "more_air";
+		}
+
+		/// <summary>Whose reinforcements are expected to shift the engagement, from the two sides' reinforcement potential.</summary>
+		public static string ReinforcementAdvantage(float friendlyReinforcement, float enemyReinforcement)
+		{
+			var delta = friendlyReinforcement - enemyReinforcement;
+			if (delta > 0.25f)
+				return "friendly";
+			if (delta < -0.25f)
+				return "enemy";
+			return "even";
+		}
+
 		/// <summary>Strategic value of an enemy target: economy and tech first, military by class weight.</summary>
 		public static float TargetValue(Actor target, Func<Actor, UnitClass> classify)
 		{

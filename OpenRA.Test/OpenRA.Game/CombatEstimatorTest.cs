@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System.Linq;
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
@@ -121,6 +122,65 @@ namespace OpenRA.Test
 
 			// Friendly = (10 - 5 air + 5 air + 0.5 artillery) = 10.5 vs enemy 10 -> slight edge.
 			Assert.That(winRatio, Is.EqualTo(10.5f / 10f).Within(0.001f));
+		}
+
+		[TestCase(TestName = "Major risks flag enemy AA, enemy artillery, and missing air cover.")]
+		public void MajorRisks()
+		{
+			var risks = CombatEstimator.MajorRisks(
+				enemyAntiAir: 1f, friendlyAir: 1f, enemyArtillery: 1f, friendlyArtillery: 0f, enemyAir: 0f, friendlyAntiAir: 0f).ToArray();
+
+			Assert.That(risks, Is.EquivalentTo(new[] { "enemy_anti_air", "enemy_artillery", "no_air_cover" }));
+		}
+
+		[TestCase(TestName = "Capability gaps request anti-air when the enemy fields planes we cannot answer.")]
+		public void CapabilityGaps()
+		{
+			var gaps = CombatEstimator.CapabilityGaps(
+				enemyAir: 1f, friendlyAntiAir: 0f, enemyArmor: 1f, friendlyArtillery: 0f, enemyAntiAir: 0f, friendlyAir: 0f).ToArray();
+
+			Assert.That(gaps, Is.EquivalentTo(new[] { "anti_air", "anti_armor" }));
+		}
+
+		[TestCase(TestName = "Reinforcement advantage names the side expected to receive help.")]
+		public void ReinforcementAdvantage()
+		{
+			Assert.That(CombatEstimator.ReinforcementAdvantage(0.8f, 0.2f), Is.EqualTo("friendly"));
+			Assert.That(CombatEstimator.ReinforcementAdvantage(0.2f, 0.8f), Is.EqualTo("enemy"));
+			Assert.That(CombatEstimator.ReinforcementAdvantage(0.4f, 0.4f), Is.EqualTo("even"));
+		}
+
+		[TestCase(TestName = "Representative RA compositions produce sensible relative outcomes.")]
+		public void RepresentativeEngagements()
+		{
+			var armor = new int[6];
+			armor[(int)UnitClass.Armor] = 10;
+			var rifles = new int[6];
+			rifles[(int)UnitClass.Infantry] = 10;
+
+			// Armor dominates rifles.
+			var armorVsRifles = CombatEstimator.Estimate(
+				CombatEstimator.MatchupPower(armor, rifles, 1f), CombatEstimator.MatchupPower(rifles, armor, 1f),
+				0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
+			Assert.That(armorVsRifles.WinRatio, Is.GreaterThan(2f));
+
+			// Even rifles against rifles are an even fight.
+			var riflesVsRifles = CombatEstimator.Estimate(
+				CombatEstimator.MatchupPower(rifles, rifles, 1f), CombatEstimator.MatchupPower(rifles, rifles, 1f),
+				0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
+			Assert.That(riflesVsRifles.WinRatio, Is.EqualTo(1f).Within(0.001f));
+
+			// Air against no anti-air is strong; air against full anti-air is halved.
+			var air = new int[6];
+			air[(int)UnitClass.Air] = 5;
+			var airVsRifles = CombatEstimator.Estimate(
+				CombatEstimator.MatchupPower(air, rifles, 1f), CombatEstimator.MatchupPower(rifles, air, 1f),
+				5f * CombatEstimator.ClassWeight(UnitClass.Air), 0f, 0f, 0f, 0f, 0f, 0f, 0f);
+			var airVsCoveredRifles = CombatEstimator.Estimate(
+				CombatEstimator.MatchupPower(air, rifles, 1f), CombatEstimator.MatchupPower(rifles, air, 1f),
+				5f * CombatEstimator.ClassWeight(UnitClass.Air), 0f, 0f, 0f, 0f, 1f, 0f, 0f);
+
+			Assert.That(airVsCoveredRifles.WinRatio, Is.LessThan(airVsRifles.WinRatio));
 		}
 	}
 }
