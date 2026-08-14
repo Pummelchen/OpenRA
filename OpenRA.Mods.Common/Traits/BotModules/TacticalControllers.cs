@@ -133,6 +133,8 @@ namespace OpenRA.Mods.Common.Traits
 	{
 		// Extraction is enabled so a special asset inserted by transport can be recovered and reused.
 		readonly TransportStateMachine machine = new(extractOnCompletion: true);
+		readonly List<CPos> routeWaypoints = [];
+		CPos? plannedFor;
 		int windowElapsed;
 
 		public TransportController(StrategicBrainBotModule brain)
@@ -167,6 +169,15 @@ namespace OpenRA.Mods.Common.Traits
 			var targetCell = target.Value;
 			var cargo = transport.TraitOrDefault<Cargo>();
 
+			// Plan the threat-weighted stealth route once per target; the transit state follows the
+			// intermediate waypoints so the transport avoids AA, detection, and exposed ground.
+			if (plannedFor != targetCell)
+			{
+				plannedFor = targetCell;
+				routeWaypoints.Clear();
+				routeWaypoints.AddRange(Brain.PlanTransportRoute(targetCell));
+			}
+
 			switch (machine.State)
 			{
 				case TransportState.Assemble:
@@ -198,10 +209,11 @@ namespace OpenRA.Mods.Common.Traits
 
 				case TransportState.Transit:
 				{
-					// Move toward the insertion point; abort (hold) if the transit becomes unsafe:
-					// the transport takes heavy damage.
-					var distance = (transport.CenterPosition - World.Map.CenterOfCell(targetCell)).LengthSquared;
-					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
+					// Follow the planned stealth route: move to the next waypoint, then the insertion
+					// point; abort (hold) if the transit becomes unsafe.
+					var destination = routeWaypoints.Count > 0 ? routeWaypoints[0] : targetCell;
+					var distance = (transport.CenterPosition - World.Map.CenterOfCell(destination)).LengthSquared;
+					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, destination), false));
 
 					var health = transport.TraitOrDefault<IHealth>();
 					var fraction = health == null ? 100 : health.HP * 100 / health.MaxHP;
@@ -213,7 +225,13 @@ namespace OpenRA.Mods.Common.Traits
 					}
 
 					if (distance <= BaseRadiusSquared(10))
-						return AdvanceAndContinue();
+					{
+						if (routeWaypoints.Count > 0)
+							routeWaypoints.RemoveAt(0);
+						else
+							return AdvanceAndContinue();
+					}
+
 					return true;
 				}
 

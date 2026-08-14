@@ -1124,6 +1124,34 @@ namespace OpenRA.Mods.Common.Traits
 			return structures.Length == 0 ? null : structures.Select(a => a.CenterPosition).Average();
 		}
 
+		/// <summary>
+		/// Plans the threat-weighted route a transport should follow to its target: the intermediate
+		/// region centers along the stealth route, so the transport avoids AA, detection, and exposed
+		/// ground instead of flying/driving straight through. Empty when no route or blackboard exists.
+		/// </summary>
+		public CPos[] PlanTransportRoute(CPos target)
+		{
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			var blackboard = commander?.Blackboard;
+			var baseCenter = BaseCenter();
+			if (blackboard == null || baseCenter == null)
+				return [];
+
+			var from = blackboard.RegionOf(world.Map.CellContaining(baseCenter.Value)).Index;
+			var to = blackboard.RegionOf(target).Index;
+			var route = CoalitionRoutePlanner.FindRoute(blackboard.MapAnalysis, blackboard.ThreatField(),
+				from, to, MovementClass.Ground, RouteWeights.Stealth());
+			if (!route.Found || route.Regions.Length <= 1)
+				return [];
+
+			return route.Regions.Skip(1).Select(r =>
+			{
+				var bounds = blackboard.Regions[r].Bounds;
+				return new CPos((bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
+			}).ToArray();
+		}
+
 		IEnumerable<Actor> OwnStructures()
 		{
 			return world.Actors.Where(a =>
@@ -1222,6 +1250,17 @@ namespace OpenRA.Mods.Common.Traits
 			var manager = player.PlayerActor.TraitOrDefault<SupportPowerManager>();
 			if (manager == null)
 				return;
+
+			// Friendly-fire avoidance: superweapons have a blast radius, so a target crowded with
+			// friendly units is withheld rather than risking them.
+			var targetPos = world.Map.CenterOfCell(target);
+			var friendlyNear = world.Actors.Count(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null
+				&& (a.CenterPosition - targetPos).LengthSquared <= BaseRadiusSquared(15));
+			if (friendlyNear >= 3)
+			{
+				CoalitionTelemetry.Log(world, $"Support power withheld: {friendlyNear} friendly units near target {target}");
+				return;
+			}
 
 			foreach (var kv in manager.Powers)
 			{
