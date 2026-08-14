@@ -257,6 +257,8 @@ The commander is offered tools; it must use them instead of estimating mechanics
 | `score_targets` | region?, weights | ranked targets | target evaluator |
 | `estimate_enemy_response` | action | likely reactions | opponent model |
 | `find_special_ops_routes` | asset, target | insertion/extraction corridors | exposure map |
+| `find_attack_windows` | — | enemy regions ranked by lowest threat | combat evaluator |
+| `get_route_status` | from_region, to_region | route found + cost | route evaluator |
 | `get_economy_state` / `get_production_state` | — | cash, queues, idle time | economy extractor |
 | `set_production_directive` | owner, capabilities | accepted | production director |
 | `set_expansion_priority` | region, priority | accepted | production director |
@@ -266,6 +268,14 @@ The commander is offered tools; it must use them instead of estimating mechanics
 | `request_recon` | region, priority | recon mission created | mission manager |
 | `set_strategic_posture` | posture | accepted | strategic state |
 | `get_mission_status` / `get_force_readiness` / `get_transport_status` | id | status | mission/force/transport |
+
+The **read-only** tools (`estimate_engagement`, `plan_routes`, `score_targets`, `compare_force_packages`,
+`estimate_enemy_response`, `find_attack_windows`, `find_special_ops_routes`, `get_*`, `inspect_*`) are
+implemented and served by `ToolApiBotModule` on `http://127.0.0.1:8766/tools`. The **mutation** tools
+(`set_production_directive`, `set_expansion_priority`, `create_mission`, `assign_force`, `set_reserve`,
+`request_recon`, `set_strategic_posture`) are carried by the `command.intent.v1` reply surface (posture,
+missions, production, roles, reserve, retreat) instead of the side-effect-free tool endpoint, so tool calls
+can never issue orders or desync a game.
 
 **Rule:** the commander may *not* move/attack individual units except through a
 tightly-scoped `emergency_unit_order` tool (survival only).

@@ -151,6 +151,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// Durable peak unit count per owner, for casualty tracking across blackboard rebuilds.
 		readonly Dictionary<string, int> peakForceUnits = [];
 
+		// Durable event-transition state, so a signal wakes the commander only once per change.
+		bool lastSuperweaponReady;
+		int lastSpecialAssetCount;
+
 		// Match-quality telemetry, sampled once per command.
 		readonly CoalitionMatchMetrics matchMetrics = new();
 		int lastMetricsSummaryTick = int.MinValue;
@@ -267,8 +271,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var highValueSeen = blackboard.EnemyIntel.Any(i =>
 				TargetEvaluator.TechnologyValue(i.Type) > 0 || TargetEvaluator.EconomicValue(i.Type) > 0);
 
-			return eventDetector.Detect(blackboard.EnemyRegion, enemyStructures, ownStructures,
+			var detected = eventDetector.Detect(blackboard.EnemyRegion, enemyStructures, ownStructures,
 				blackboard.EnemyIntel.Count, highValueSeen);
+			if (detected != null)
+				return detected;
+
+			// A ready strategic superweapon wakes the commander to plan a support-power strike.
+			if (blackboard.HasReadySuperweapon && !lastSuperweaponReady)
+			{
+				lastSuperweaponReady = true;
+				return "support power ready";
+			}
+			lastSuperweaponReady = blackboard.HasReadySuperweapon;
+
+			// A newly available special asset (Tanya, spy, engineer) wakes special-operations planning.
+			var specialCount = blackboard.SpecialAssets.Count;
+			if (specialCount > lastSpecialAssetCount)
+			{
+				lastSpecialAssetCount = specialCount;
+				return "special unit available";
+			}
+			lastSpecialAssetCount = specialCount;
+
+			return null;
 		}
 
 		/// <summary>All allied players with an enabled bot, including this one.</summary>
@@ -525,10 +550,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lastMetricsSummaryTick = world.WorldTick;
 				CoalitionTelemetry.Log(world, matchMetrics.Summary());
+				CoalitionTelemetry.Log(world, missions.MissionSummary());
 			}
 
 			if (world.IsGameOver)
+			{
 				CoalitionTelemetry.Log(world, matchMetrics.Summary());
+				CoalitionTelemetry.Log(world, missions.MissionSummary());
+			}
 		}
 
 		/// <summary>

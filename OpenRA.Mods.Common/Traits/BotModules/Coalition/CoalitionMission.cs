@@ -287,6 +287,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Total enemy units pulled out of position by successful deceptions.</summary>
 		public int DeceptionEnemiesDrawn;
 
+		/// <summary>Number of missions that reached a successful terminal state.</summary>
+		public int MissionSuccesses;
+
+		/// <summary>Number of missions that aborted or failed.</summary>
+		public int MissionAborts;
+
+		/// <summary>One-line mission-outcome summary for the telemetry log.</summary>
+		public string MissionSummary()
+		{
+			var total = MissionSuccesses + MissionAborts;
+			return $"Missions: {total} concluded ({MissionSuccesses} succeeded, {MissionAborts} aborted/failed)";
+		}
+
 		public IReadOnlyList<CoalitionMission> Missions => missions;
 
 		public CoalitionMission CreateMission(MissionType type, int priority, CPos? target, string objective, int minForce = 0, int createdTick = 0)
@@ -467,7 +480,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						break;
 
 					default:
-						// Terminal missions are dropped after they are reported.
+						// Terminal missions are dropped after they are reported; count the outcome for telemetry.
+						if (mission.Status == MissionStatus.Succeeded)
+							MissionSuccesses++;
+						else if (mission.Status == MissionStatus.Aborted || mission.Status == MissionStatus.Failed)
+							MissionAborts++;
 						missions.Remove(mission);
 						break;
 				}
