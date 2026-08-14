@@ -117,5 +117,21 @@ namespace OpenRA.Test
 
 			Assert.That(CommandValidator.ValidateProduce(produce).Any(r => r.Reason.Contains("REJECTED_INVALID_PRODUCE")), Is.True);
 		}
+
+		[TestCase(TestName = "Production boosts merge into the list, deduplicated case-insensitively.")]
+		public void MergeProduce()
+		{
+			// A null boost leaves the existing list unchanged.
+			Assert.That(CommandValidator.MergeProduce(new[] { "2tnk", "mig" }, null),
+				Is.EqualTo(new[] { "2tnk", "mig" }));
+
+			// A null existing list just becomes the boost.
+			Assert.That(CommandValidator.MergeProduce(null, new[] { "arty", "jeep" }),
+				Is.EqualTo(new[] { "arty", "jeep" }));
+
+			// Boosts append and deduplicate case-insensitively; blank entries are ignored.
+			var merged = CommandValidator.MergeProduce(new[] { "2tnk", "mig" }, new[] { "MIG", "", "arty" }).ToArray();
+			Assert.That(merged, Is.EqualTo(new[] { "2tnk", "mig", "arty" }));
+		}
 	}
 }

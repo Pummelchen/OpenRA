@@ -44,6 +44,10 @@ def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int) -> dict:
     if w:
         result["winners"] = [x.strip() for x in w.group(1).split(",")]
 
+    # The commander's own predicted win ratio, from the last match-metrics sample.
+    ratios = re.findall(r"predicted win ratio (\d+\.\d+)", out)
+    result["predicted_win_ratio"] = float(ratios[-1]) if ratios else None
+
     in_events = False
     for line in out.splitlines():
         if "Match telemetry:" in line:
@@ -118,6 +122,33 @@ def run_cross_map(maps: list, args) -> None:
         print(f"WARNING: overfit risk — best result is map-specific ({os.path.basename(best)}).")
 
 
+def run_combat_accuracy(args) -> None:
+    """Correlates the commander's predicted win ratio with the actual match outcome.
+
+    A useful combat estimator predicts higher win ratios for games it wins. This reports the
+    mean predicted ratio for won vs lost games as a coarse accuracy signal (a real accuracy
+    benchmark needs recorded per-engagement outcomes, which the replay harness can add later).
+    """
+    results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
+               for i in range(args.runs)]
+
+    def mean_ratio(rs):
+        vals = [r["predicted_win_ratio"] for r in rs if r["predicted_win_ratio"] is not None]
+        return statistics.mean(vals) if vals else float("nan")
+
+    won = [r for r in results if r["winners"]]
+    lost = [r for r in results if not r["winners"]]
+
+    print(f"\n=== combat-estimator accuracy: {len(results)} runs ===")
+    print(f"wins: {len(won)}, losses: {len(lost)}")
+    print(f"mean predicted win ratio when WON: {mean_ratio(won):.2f}")
+    print(f"mean predicted win ratio when LOST: {mean_ratio(lost):.2f}")
+    if mean_ratio(won) > mean_ratio(lost):
+        print("estimator discriminates wins from losses (higher prediction when winning)")
+    else:
+        print("WARNING: estimator does not discriminate wins from losses")
+
+
 def summarize(label: str, results: list) -> None:
     wins = sum(1 for r in results if r["winners"])
     over = sum(1 for r in results if r["game_over"])
@@ -136,6 +167,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Headless self-play evaluation")
     parser.add_argument("--map", default="mods/ra/maps/shattered-mountain")
     parser.add_argument("--maps", help="comma-separated map paths for cross-map (overfitting) evaluation")
+    parser.add_argument("--combat-accuracy", action="store_true",
+                        help="correlate predicted win ratio with actual outcomes across runs")
     parser.add_argument("--bots", type=int, default=4)
     parser.add_argument("--teams", type=int, default=2)
     parser.add_argument("--ticks", type=int, default=6000)
@@ -158,6 +191,10 @@ def main() -> None:
 
     if args.maps:
         run_cross_map([m.strip() for m in args.maps.split(",") if m.strip()], args)
+        return
+
+    if args.combat_accuracy:
+        run_combat_accuracy(args)
         return
 
     results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)

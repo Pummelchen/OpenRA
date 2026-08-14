@@ -1255,8 +1255,8 @@ namespace OpenRA.Mods.Common.Traits
 			// friendly units is withheld rather than risking them.
 			var targetPos = world.Map.CenterOfCell(target);
 			var friendlyNear = world.Actors.Count(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null
-				&& (a.CenterPosition - targetPos).LengthSquared <= BaseRadiusSquared(15));
-			if (friendlyNear >= 3)
+				&& (a.CenterPosition - targetPos).LengthSquared <= BaseRadiusSquared(SupportPowerFriendlyFireRadius));
+			if (ShouldWithholdSupportPower(friendlyNear))
 			{
 				CoalitionTelemetry.Log(world, $"Support power withheld: {friendlyNear} friendly units near target {target}");
 				return;
@@ -1299,6 +1299,18 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			var length = WDist.FromCells(cells).Length;
 			return (long)length * length;
+		}
+
+		/// <summary>Blast radius (cells) used to judge whether a support-power target risks friendly units.</summary>
+		public const int SupportPowerFriendlyFireRadius = 15;
+
+		/// <summary>Friendly units within the blast radius at or above this count withhold the power.</summary>
+		public const int SupportPowerFriendlyFireThreshold = 3;
+
+		/// <summary>True when a support power should be withheld to avoid friendly fire.</summary>
+		public static bool ShouldWithholdSupportPower(int friendlyUnitsNearTarget)
+		{
+			return friendlyUnitsNearTarget >= SupportPowerFriendlyFireThreshold;
 		}
 	}
 }

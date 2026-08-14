@@ -474,5 +474,33 @@ namespace OpenRA.Test
 			Assert.That(uncertainties.Any(u => u.GetProperty("question").GetString().StartsWith("suspected_enemy_in_region_")),
 				Is.True, "Suspected presence is reported as a recon question, not a target.");
 		}
+
+		[TestCase(TestName = "Every tool returns a top-level ok flag and a result or machine-readable error.")]
+		public void ToolResponseSchema()
+		{
+			var context = Context();
+			var tools = new[]
+			{
+				"get_global_summary", "inspect_region", "inspect_force", "inspect_enemy_intelligence",
+				"get_recent_events", "get_opponent_model", "get_uncertainties", "estimate_engagement",
+				"score_targets", "plan_routes", "get_economy_state", "get_production_state",
+				"compare_force_packages", "estimate_enemy_response", "find_attack_windows",
+				"find_special_ops_routes", "get_mission_status", "get_force_readiness",
+				"get_transport_status", "get_route_status"
+			};
+
+			foreach (var tool in tools)
+			{
+				var root = Result(Call(context, tool));
+				Assert.That(root.TryGetProperty("ok", out _), Is.True, $"{tool} must report an ok flag.");
+
+				var ok = root.GetProperty("ok").GetBoolean();
+				if (ok)
+					Assert.That(root.TryGetProperty("result", out _), Is.True, $"{tool} success must carry a result.");
+				else
+					Assert.That(root.TryGetProperty("error", out var err) && err.ValueKind == System.Text.Json.JsonValueKind.String,
+						Is.True, $"{tool} failure must carry a machine-readable error string.");
+			}
+		}
 	}
 }

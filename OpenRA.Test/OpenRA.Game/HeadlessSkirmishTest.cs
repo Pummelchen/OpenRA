@@ -164,6 +164,8 @@ namespace OpenRA.Test
 				Assert.That(summaries, Is.GreaterThanOrEqualTo(1), "No match metrics summary was logged.");
 				Assert.That(lines.Any(l => l.Contains("Match metrics:") && l.Contains("exchange") && l.Contains("cohesion")),
 					Is.True, "The metrics summary must report the exchange ratio and cohesion.");
+				Assert.That(lines.Any(l => l.Contains("Match metrics:") && l.Contains("predicted win ratio")),
+					Is.True, "The combat estimator must report a predicted win ratio during a real match.");
 			}
 			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
 			{
@@ -273,6 +275,35 @@ namespace OpenRA.Test
 			}
 		}
 
+		[Test(Description = "Stress 705: repeated matches release the tool-API port and do not crash (resource smoke test).")]
+		public void RepeatedMatchesReleaseResources()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+
+				// Three back-to-back matches exercise world teardown, listener disposal, and the
+				// held-open telemetry writer. A leaked listener would fail the rebind on match 2+.
+				for (var i = 0; i < 3; i++)
+				{
+					var offset = TelemetryLength(telemetryPath);
+					var result = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 600, 42 + i);
+					var lines = TelemetryLines(telemetryPath, offset);
+
+					Assert.That(result.ActorCount, Is.GreaterThan(0), $"Match {i + 1} must leave actors on the map.");
+					Assert.That(lines.Count(l => l.Contains("Tool API listening")), Is.EqualTo(1),
+						$"Match {i + 1} must rebind the tool-API port released by the previous match.");
+					Assert.That(lines.Count(l => l.Contains("Tool API failed to start")), Is.EqualTo(1),
+						$"Match {i + 1} has exactly one losing bot, not a per-tick retry storm.");
+				}
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
 		[Test(Description = "Acceptance 789/790: allied bots act as one coordinated command with combined arms.")]
 		public void UnifiedCoalitionCommand()
 		{
@@ -342,6 +373,48 @@ namespace OpenRA.Test
 			var offset = TelemetryLength(telemetryPath);
 			var result = HeadlessSkirmish.Run(modData, map, "ai", bots, teams, ticks, seed);
 			return (result, TelemetryLines(telemetryPath, offset));
+		}
+
+		[Test(Description = "Mixed self-play: a coalition bot and a scripted rush bot fight head-to-head.")]
+		public void MixedBotHeadToHead()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var result = HeadlessSkirmish.Run(modData, map, new[] { "ai", "rush" }, 2, 1200, 42);
+
+				Assert.That(result.Clients.Count(c => c.IsBot && c.BotEnabled), Is.EqualTo(2),
+					"Both the coalition bot and the scripted opponent must be enabled.");
+				Assert.That(result.ActorCount, Is.GreaterThan(0), "The mixed match must leave actors on the map.");
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
+		[Test(Description = "Acceptance 432: the coalition commander runs against a scripted turtle opponent (mixed self-play).")]
+		public void OpponentModelClassifiesScriptedOpponent()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var offset = TelemetryLength(telemetryPath);
+				HeadlessSkirmish.Run(modData, map, new[] { "ai", "turtle", "ai", "turtle" }, 2, 3000, 700);
+				var lines = TelemetryLines(telemetryPath, offset);
+
+				// The opponent-model classification itself (rush/turtle/balanced) is unit-tested via
+				// OpponentModel.DerivePlaystyle/DerivePredictedBuild; here we verify the commander runs
+				// against a scripted opponent. Enemy observation is fog/timing dependent, so the
+				// "Opponent model:" telemetry only appears once contact is made.
+				Assert.That(lines.Any(l => l.Contains("Posture ")), Is.True,
+					"The coalition commander must run against the scripted opponent.");
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
 		}
 
 		static List<string> TelemetryLines(string path, long offset)

@@ -138,6 +138,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastBlackboardTick;
 		int lastCommandTick;
 		string lastPosture;
+		string lastOpponentProfile;
 		StrategicPosture strategicPosture;
 
 		/// <summary>The coalition's main effort: the single highest-value objective, re-selected
@@ -466,8 +467,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// completed or cancelled missions release their forces back to the pool.
 			SyncForceAssignments();
 
-			// Capability-driven production from observed enemy composition.
-			var produceJson = BuildProduceJson();
+			// Capability-driven production from observed enemy composition, plus any LLM production
+			// boost (already validated and cleaned by ApplyLlmIntent).
+			var produceJson = MergeProduce(BuildProduceJson(), llmIntent?.Produce);
 
 			// Corps role assignment: specialize this bot within the coalition (naval/main/escort).
 			var rolesJson = AssignRole();
@@ -715,6 +717,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			opponent.RespondsStronglyToRaids = raidContactTicks > 0;
+
+			// Report the derived profile when it changes, so scripted-opponent validation and replays
+			// can observe what the coalition believes about the enemy.
+			var profile = $"{opponent.Playstyle}/{opponent.PredictedBuild}";
+			if (profile != lastOpponentProfile)
+			{
+				lastOpponentProfile = profile;
+				CoalitionTelemetry.Log(world,
+					$"Opponent model: {opponent.Playstyle}, build={opponent.PredictedBuild}, confidence={opponent.Confidence:0.00}");
+			}
 		}
 
 		/// <summary>
@@ -973,6 +985,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return null;
 
 			return "[\"" + string.Join("\",\"", units) + "\"]";
+		}
+
+		/// <summary>
+		/// Merges the deterministic production list with the LLM's requested production boosts. The
+		/// LLM units are appended (deduplicated, case-insensitive) so they enter the brain's pick
+		/// order ahead of the deterministic contract; invalid unit names are filtered by the brain
+		/// when it matches them against buildable items.
+		/// </summary>
+		string MergeProduce(string produceJson, string[] llmProduce)
+		{
+			if (llmProduce == null || llmProduce.Length == 0)
+				return produceJson;
+
+			string[] existing = null;
+			if (!string.IsNullOrEmpty(produceJson))
+				existing = JsonSerializer.Deserialize<string[]>(produceJson, IntentOptions);
+
+			var merged = CommandValidator.MergeProduce(existing, llmProduce);
+			return merged.Count == 0 ? null : "[\"" + string.Join("\",\"", merged) + "\"]";
 		}
 
 		/// <summary>

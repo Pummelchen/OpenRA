@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -127,6 +128,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					rejections.Add((i, "REJECTED_INVALID_PRODUCE: blank production entry"));
 
 			return rejections;
+		}
+
+		/// <summary>
+		/// Merges the LLM's production boosts into an existing production list, deduplicated
+		/// case-insensitively. A null boost list leaves the existing list unchanged; blank boost
+		/// entries are ignored.
+		/// </summary>
+		public static IReadOnlyList<string> MergeProduce(IReadOnlyList<string> existing, IReadOnlyList<string> llmProduce)
+		{
+			var units = new List<string>(existing ?? []);
+			if (llmProduce == null)
+				return units;
+
+			foreach (var unit in llmProduce)
+				if (!string.IsNullOrWhiteSpace(unit) && !units.Contains(unit, StringComparer.OrdinalIgnoreCase))
+					units.Add(unit);
+
+			return units;
 		}
 	}
 }

@@ -60,11 +60,26 @@ namespace OpenRA
 		}
 
 		/// <summary>
-		/// Runs a full skirmish simulation. The caller must have initialized settings
-		/// (<see cref="Game.InitializeSettings"/>) and loaded the mod data beforehand.
+		/// Runs a full skirmish simulation with every bot using the same bot type. The caller must
+		/// have initialized settings (<see cref="Game.InitializeSettings"/>) and loaded the mod data
+		/// beforehand.
 		/// </summary>
 		public static Result Run(ModData modData, Map map, string botType, int bots, int teams, int maxTicks, int seed)
 		{
+			var botTypes = new string[bots];
+			Array.Fill(botTypes, botType);
+			return Run(modData, map, botTypes, teams, maxTicks, seed);
+		}
+
+		/// <summary>
+		/// Runs a full skirmish simulation where each bot may use a different bot type (mixed
+		/// self-play, e.g. coalition "ai" versus a scripted "rush"/"turtle" opponent). The caller
+		/// must have initialized settings (<see cref="Game.InitializeSettings"/>) and loaded the mod
+		/// data beforehand.
+		/// </summary>
+		public static Result Run(ModData modData, Map map, IReadOnlyList<string> botTypes, int teams, int maxTicks, int seed)
+		{
+			var bots = botTypes.Count;
 			if (bots < 2)
 				throw new ArgumentException("At least two bots are required for a match.");
 			if (teams < 1 || teams > 2)
@@ -144,7 +159,7 @@ namespace OpenRA
 					Index = i + 2,
 					Name = $"Bot {i + 1}",
 					Slot = slotKeys[i],
-					Bot = botType,
+					Bot = botTypes[i],
 					BotControllerClientIndex = 1,
 					Faction = factions[i % factions.Length].InternalName,
 					Team = 1 + i % teams,
