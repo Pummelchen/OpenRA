@@ -39,7 +39,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Flank,
 		AirStrike,
 		NavalStrike,
-		SupportPowerStrike
+		SupportPowerStrike,
+		MobileDefense,
+		AntiAirUmbrella,
+		NavalScreen,
+		DelayingAction,
+		Evacuation,
+		Escort,
+		DeepRecon,
+		AirRecon,
+		NavalRecon,
+		RouteRecon,
+		ExpansionSearch,
+		DefenseProbe
 	}
 
 	public enum MissionStatus
@@ -163,9 +175,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.AirStrike or MissionType.NavalStrike => ["destroy_high_value_target", "soften_defense"],
 				MissionType.SupportPowerStrike => ["strike_high_value_target"],
 				MissionType.Recon => ["locate_enemy", "reveal_terrain"],
+				MissionType.DeepRecon => ["locate_enemy_main_force", "reveal_rear"],
+				MissionType.AirRecon => ["reveal_terrain", "find_enemy_air"],
+				MissionType.NavalRecon => ["reveal_water", "find_enemy_navy"],
+				MissionType.RouteRecon => ["scout_route", "find_chokepoints"],
+				MissionType.ExpansionSearch => ["find_expansion_site", "reveal_resources"],
+				MissionType.DefenseProbe => ["probe_defenses", "reveal_garrison"],
 				MissionType.Feint or MissionType.Bait => ["draw_enemy_response", "expose_enemy_position"],
 				MissionType.Transport or MissionType.SpecialOps => ["insert_asset", "destroy_rear_target"],
 				MissionType.Defend => ["protect_base", "repel_attack"],
+				MissionType.MobileDefense => ["intercept_enemy", "shield_advance"],
+				MissionType.AntiAirUmbrella => ["protect_from_air", "deny_airspace"],
+				MissionType.NavalScreen => ["shield_coast", "deny_landings"],
+				MissionType.DelayingAction => ["slow_enemy", "buy_time"],
+				MissionType.Evacuation => ["save_assets", "withdraw"],
+				MissionType.Escort => ["protect_harvesters", "shield_economy"],
 				MissionType.Retreat => ["preserve_forces"],
 				_ => ["achieve_objective"]
 			};
@@ -285,6 +309,35 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// True for directive-style missions that do not walk the offensive phase pipeline: recon,
+		/// deception, withdrawal, and the defensive types. Their lifecycle is decided by the commander.
+		/// </summary>
+		public static bool IsStaticDirective(MissionType type)
+		{
+			return type is MissionType.Recon or MissionType.Feint or MissionType.Bait or MissionType.Retreat
+				or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
+				or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort
+				or MissionType.DeepRecon or MissionType.AirRecon or MissionType.NavalRecon
+				or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe;
+		}
+
+		/// <summary>True for the reconnaissance family.</summary>
+		public static bool IsRecon(MissionType type)
+		{
+			return type is MissionType.Recon or MissionType.DeepRecon or MissionType.AirRecon
+				or MissionType.NavalRecon or MissionType.RouteRecon or MissionType.ExpansionSearch
+				or MissionType.DefenseProbe;
+		}
+
+		/// <summary>True for the defensive family (base defense plus the specialized screens).</summary>
+		public static bool IsDefensive(MissionType type)
+		{
+			return type is MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella
+				or MissionType.NavalScreen or MissionType.DelayingAction or MissionType.Evacuation
+				or MissionType.Escort;
+		}
+
+		/// <summary>
 		/// Advances mission lifecycle against the blackboard: phases transition when their conditions
 		/// are met, offensive missions complete when their target region no longer holds the objective,
 		/// and missions abort (with a reason) when the coalition force is decisively weaker or the
@@ -323,12 +376,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							}
 						}
 
-						// Reconnaissance completes once the enemy position is established.
-						if (mission.Type == MissionType.Recon && blackboard.EnemyRegion >= 0)
+						// Reconnaissance completes when the target region is explored or the enemy is located.
+						if (IsRecon(mission.Type))
 						{
-							mission.Status = MissionStatus.Succeeded;
-							mission.OutcomeReason = "enemy located";
-							continue;
+							var targetRegion = mission.Target != null ? blackboard.RegionOf(mission.Target.Value).Index : -1;
+							var complete = targetRegion >= 0
+								? blackboard.Regions[targetRegion].FriendlyControl > 0.1f
+								: blackboard.EnemyRegion >= 0;
+							if (complete)
+							{
+								mission.Status = MissionStatus.Succeeded;
+								mission.OutcomeReason = "recon complete";
+								continue;
+							}
 						}
 
 						// A feint or bait succeeds when it changes enemy behavior: enemy units redeploy
@@ -393,10 +453,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		static bool AdvancePhase(CoalitionBlackboard blackboard, CoalitionMission mission)
 		{
-			// Recon, deception, and withdrawal missions stay in their own phase; only offensive
-			// missions (attack, raid, counterattack, transport, special ops) walk the pipeline.
-			if (mission.Type == MissionType.Recon || mission.Type == MissionType.Feint
-				|| mission.Type == MissionType.Bait || mission.Type == MissionType.Retreat)
+			// Recon, deception, withdrawal, and defensive missions stay in their own phase; only
+			// offensive missions walk the pipeline.
+			if (IsStaticDirective(mission.Type))
 				return true;
 
 			var phaseAge = blackboard.Tick - mission.PhaseTick;
@@ -482,8 +541,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var attack = active.FirstOrDefault(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
 				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
 			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint);
-			var defend = active.FirstOrDefault(m => m.Type == MissionType.Defend);
-			var recon = active.FirstOrDefault(m => m.Type == MissionType.Recon);
+			var defend = active.FirstOrDefault(m => IsDefensive(m.Type));
+			var recon = active.FirstOrDefault(m => IsRecon(m.Type));
 			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
 			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps);
 			var airStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike || m.Type == MissionType.NavalStrike);
@@ -506,7 +565,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (bait != null && bait.Target != null)
 				AppendTarget(sb, "bait", bait.Target.Value);
 			if (defend != null && defend.Target != null)
+			{
 				AppendTarget(sb, "counter", defend.Target.Value);
+				sb.Append(",\"defenseKind\":\"").Append(DefenseKind(defend.Type)).Append('"');
+			}
 			if (transport != null && transport.Target != null)
 			{
 				AppendTarget(sb, "transport", transport.Target.Value);
@@ -527,6 +589,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				sb.Append(",\"retreat\":true");
 			sb.Append('}');
 			return sb.ToString();
+		}
+
+		static string DefenseKind(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.MobileDefense => "mobile",
+				MissionType.AntiAirUmbrella => "aa",
+				MissionType.NavalScreen => "naval",
+				MissionType.DelayingAction => "delay",
+				MissionType.Evacuation => "evacuate",
+				MissionType.Escort => "escort",
+				_ => "defend"
+			};
 		}
 
 		static void AppendTarget(StringBuilder sb, string key, CPos cell)

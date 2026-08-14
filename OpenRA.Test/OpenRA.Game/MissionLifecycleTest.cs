@@ -161,5 +161,44 @@ namespace OpenRA.Test
 			power.Status = MissionStatus.Executing;
 			Assert.That(manager.BuildDirectiveJson(null, null, false), Does.Contain("\"supportPower\":{\"x\":5,\"y\":6}"));
 		}
+
+		[TestCase(TestName = "Defensive and reconnaissance mission families are recognized.")]
+		public void DefensiveAndReconFamilies()
+		{
+			Assert.That(MissionManager.IsDefensive(MissionType.MobileDefense), Is.True);
+			Assert.That(MissionManager.IsDefensive(MissionType.AntiAirUmbrella), Is.True);
+			Assert.That(MissionManager.IsDefensive(MissionType.Escort), Is.True);
+			Assert.That(MissionManager.IsDefensive(MissionType.Attack), Is.False);
+
+			Assert.That(MissionManager.IsRecon(MissionType.DeepRecon), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.ExpansionSearch), Is.True);
+			Assert.That(MissionManager.IsRecon(MissionType.Raid), Is.False);
+
+			Assert.That(MissionManager.IsStaticDirective(MissionType.NavalScreen), Is.True);
+			Assert.That(MissionManager.IsStaticDirective(MissionType.AirRecon), Is.True);
+			Assert.That(MissionManager.IsStaticDirective(MissionType.Breakthrough), Is.False);
+		}
+
+		[TestCase(TestName = "A defensive mission directive names its defense kind.")]
+		public void DefensiveDirectiveKind()
+		{
+			var manager = new MissionManager();
+			var mobile = manager.CreateMission(MissionType.MobileDefense, 50, new CPos(7, 7), "Test");
+			mobile.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			Assert.That(directive, Does.Contain("\"strategy\":\"defend\""));
+			Assert.That(directive, Does.Contain("\"counter\":{\"x\":7,\"y\":7}"));
+			Assert.That(directive, Does.Contain("\"defenseKind\":\"mobile\""));
+		}
+
+		[TestCase(TestName = "Recon missions carry their information objective.")]
+		public void ReconObjectives()
+		{
+			var manager = new MissionManager();
+			var deep = manager.CreateMission(MissionType.DeepRecon, 40, new CPos(9, 9), "Test");
+
+			Assert.That(deep.DesiredEffects, Does.Contain("locate_enemy_main_force"));
+		}
 	}
 }

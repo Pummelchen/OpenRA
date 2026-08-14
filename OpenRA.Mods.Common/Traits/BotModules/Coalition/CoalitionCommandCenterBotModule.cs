@@ -341,13 +341,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (wantDefend)
 				EnsureMission(MissionType.Defend, 80, RegionCenter(blackboard.HomeRegion), "Hold the base");
 
-			// Reconnaissance: if the enemy position is unknown, probe the least-explored nearby region.
+			// Reconnaissance: if the enemy position is unknown, probe the least-explored nearby region;
+			// once it is known, run value-of-information-driven recon (deep, expansion search, defense probe).
 			if (blackboard.EnemyRegion < 0)
 			{
 				var reconTarget = LeastExploredRegionNear();
 				if (reconTarget != null)
 					EnsureMission(MissionType.Recon, 40, reconTarget, "Locate the enemy");
 			}
+			else
+				CreateReconMissions();
+
+			// Specialized defense: mobile interception, anti-air umbrella, naval screen, and economy escort.
+			CreateDefensiveMissions();
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
 			// Enemy models that over-respond to raids make feints more valuable, and the measured deception
@@ -763,6 +769,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				case "supportpowerstrike":
 				case "support_power":
 					return MissionType.SupportPowerStrike;
+				case "mobiledefense":
+				case "mobile_defense":
+					return MissionType.MobileDefense;
+				case "antiairumbrella":
+				case "aa_umbrella":
+					return MissionType.AntiAirUmbrella;
+				case "navalscreen":
+				case "naval_screen":
+					return MissionType.NavalScreen;
+				case "delayingaction":
+				case "delay":
+					return MissionType.DelayingAction;
+				case "evacuation":
+				case "evacuate":
+					return MissionType.Evacuation;
+				case "escort":
+					return MissionType.Escort;
+				case "deeprecon":
+				case "deep_recon":
+					return MissionType.DeepRecon;
+				case "airrecon":
+				case "air_recon":
+					return MissionType.AirRecon;
+				case "navalrecon":
+				case "naval_recon":
+					return MissionType.NavalRecon;
+				case "routerecon":
+				case "route_recon":
+					return MissionType.RouteRecon;
+				case "expansionsearch":
+				case "expansion_search":
+					return MissionType.ExpansionSearch;
+				case "defenseprobe":
+				case "defense_probe":
+					return MissionType.DefenseProbe;
 				default:
 					return null;
 			}
@@ -892,6 +933,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
 						or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Feint or MissionType.Bait => secondary ?? main,
 					MissionType.Transport or MissionType.SpecialOps => blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
+					MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
+						or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => main,
 					_ => null
 				};
 
@@ -951,8 +994,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
 					or MissionType.ExpansionDenial or MissionType.Flank => ArbiterPriority.ActiveCombat,
 				MissionType.AirStrike or MissionType.NavalStrike or MissionType.SupportPowerStrike => ArbiterPriority.SpecialMission,
-				MissionType.Defend => ArbiterPriority.Defense,
-				MissionType.Recon or MissionType.Feint or MissionType.Bait => ArbiterPriority.Recon,
+				MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
+					or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => ArbiterPriority.Defense,
+				MissionType.Recon or MissionType.Feint or MissionType.Bait or MissionType.DeepRecon or MissionType.AirRecon
+					or MissionType.NavalRecon or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe => ArbiterPriority.Recon,
 				_ => ArbiterPriority.Staging
 			};
 		}
@@ -971,8 +1016,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Feint => "feint",
 				MissionType.Bait => "bait",
 				MissionType.Transport or MissionType.SpecialOps => "special",
-				MissionType.Defend => "defend",
-				MissionType.Recon => "recon",
+				MissionType.Defend or MissionType.MobileDefense or MissionType.DelayingAction
+					or MissionType.Evacuation or MissionType.Escort => "defend",
+				MissionType.AntiAirUmbrella => "aa",
+				MissionType.NavalScreen => "naval",
+				MissionType.Recon or MissionType.DeepRecon or MissionType.AirRecon or MissionType.NavalRecon
+					or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe => "recon",
 				MissionType.Retreat => "retreat",
 				_ => "support"
 			};
@@ -1186,6 +1235,90 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			return null;
+		}
+
+		/// <summary>
+		/// Creates specialized defensive missions: mobile interception of enemies away from the base,
+		/// an anti-air umbrella when enemy air is spotted, a naval screen when enemy ships are known,
+		/// and an economy escort when the enemy raids harvesters.
+		/// </summary>
+		void CreateDefensiveMissions()
+		{
+			// Mobile defense: enemies sighted away from the base region are intercepted in the field.
+			if (blackboard.HomeRegion >= 0 && !missions.Missions.Any(m => m.Type == MissionType.MobileDefense))
+			{
+				var away = blackboard.EnemyIntel.FirstOrDefault(i => i.Class != UnitClass.Structure
+					&& blackboard.RegionOf(i.LastSeenCell).Index != blackboard.HomeRegion);
+				if (away != null)
+					EnsureMission(MissionType.MobileDefense, 50, away.LastSeenCell, "Intercept enemy away from base");
+			}
+
+			// Anti-air umbrella: enemy air presence demands AA concentration over the base.
+			if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air) && !missions.Missions.Any(m => m.Type == MissionType.AntiAirUmbrella))
+				EnsureMission(MissionType.AntiAirUmbrella, 55, RegionCenter(blackboard.HomeRegion), "Anti-air umbrella over the base");
+
+			// Naval screen: enemy ships demand a coastal screen.
+			if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Naval) && blackboard.HasBigWater
+				&& !missions.Missions.Any(m => m.Type == MissionType.NavalScreen))
+				EnsureMission(MissionType.NavalScreen, 55, RegionCenter(blackboard.HomeRegion), "Naval screen");
+
+			// Economy escort: a raid-sensitive enemy threatens harvesters.
+			if (blackboard.Opponent.AttacksHarvesters && !missions.Missions.Any(m => m.Type == MissionType.Escort))
+				EnsureMission(MissionType.Escort, 45, RegionCenter(blackboard.HomeRegion), "Escort harvesters");
+		}
+
+		/// <summary>
+		/// Creates value-of-information-driven reconnaissance once the enemy is located: deep recon of
+		/// the enemy rear, expansion search toward resource-rich unexplored ground, and defense probing
+		/// of the enemy's perimeter.
+		/// </summary>
+		void CreateReconMissions()
+		{
+			var existing = missions.Missions.Any(m => MissionManager.IsRecon(m.Type));
+			if (existing || blackboard.EnemyRegion < 0)
+				return;
+
+			// Deep recon: the least-explored region adjacent to the enemy base (their rear).
+			var deep = BestReconRegion(r => blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, r, blackboard.EnemyRegion) ? 1f : 0f);
+			if (deep != null)
+				EnsureMission(MissionType.DeepRecon, 40, RegionCenter(deep.Value), "Deep reconnaissance of the enemy rear");
+
+			// Expansion search: the least-explored region with the highest expansion value.
+			if (!missions.Missions.Any(m => m.Type == MissionType.ExpansionSearch))
+			{
+				var expansion = BestReconRegion(r => -blackboard.MapAnalysis.ExpansionValue[r]);
+				if (expansion != null)
+					EnsureMission(MissionType.ExpansionSearch, 35, RegionCenter(expansion.Value), "Search for an expansion site");
+			}
+
+			// Defense probe: a lightly-observed enemy region with high static-defense threat.
+			if (!missions.Missions.Any(m => m.Type == MissionType.DefenseProbe))
+			{
+				var probe = BestReconRegion(r => -blackboard.Regions[r].Threats[(int)CoalitionCapability.StaticDefense]);
+				if (probe != null)
+					EnsureMission(MissionType.DefenseProbe, 35, RegionCenter(probe.Value), "Probe enemy defenses");
+			}
+		}
+
+		/// <summary>Returns the best unexplored, ground-reachable region by a value selector.</summary>
+		int? BestReconRegion(Func<int, float> value)
+		{
+			int? best = null;
+			var bestValue = float.MinValue;
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+			{
+				if (blackboard.Regions[i].FriendlyControl > 0.1f || !ReachableFromHome(i))
+					continue;
+
+				var v = value(i);
+				if (v > bestValue)
+				{
+					bestValue = v;
+					best = i;
+				}
+			}
+
+			return best;
 		}
 
 		/// <summary>True when the region is in the same ground-connected component as the home region.</summary>

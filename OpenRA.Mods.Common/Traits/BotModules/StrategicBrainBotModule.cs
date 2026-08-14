@@ -260,6 +260,7 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? strikeTarget;
 		CPos? supportPowerTarget;
 		string transportKind;
+		string defenseKind;
 		string[] produceBoost;
 		bool teamRetreat;
 		int feintTick;
@@ -456,6 +457,7 @@ namespace OpenRA.Mods.Common.Traits
 			public bool Retreat { get; set; }
 			public TeamForce Force { get; set; }
 			public int AttackTick { get; set; }
+			public string DefenseKind { get; set; }
 		}
 
 		sealed class TeamForce
@@ -506,6 +508,7 @@ namespace OpenRA.Mods.Common.Traits
 			transportKind = plan.TransportKind;
 			strikeTarget = ClampCell(ToCell(plan.Strike));
 			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
+			defenseKind = plan.DefenseKind;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
 			if (plan.Force != null)
@@ -698,17 +701,53 @@ namespace OpenRA.Mods.Common.Traits
 			var availableArmy = AvailableArmy(activeArmy);
 			var reserveCount = activeArmy.Length - availableArmy.Length;
 
-			// Base defense: the whole army (reserve included) intercepts enemies approaching our structures.
-			var baseThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(info.BaseDefenseScanRadius));
+			// Base defense: intercept enemies approaching our structures. Defense is proportional to the
+			// nearby threat (so a minor raid does not strip the whole army from its missions), and the
+			// most valuable structure's vicinity is defended first.
+			var defendedPos = MostValuableStructurePosition() ?? baseCenter.Value;
+			var baseThreat = ClosestEnemyTo(defendedPos, BaseRadiusSquared(info.BaseDefenseScanRadius));
 			if (baseThreat != null)
 			{
 				SetPosture(Posture.Defend);
 				lastDefendTick = world.WorldTick;
 				counterPos = world.Map.CellContaining(baseThreat.CenterPosition);
-				var defenders = Claim(activeArmy).ToArray();
+
+				var nearby = sightings.Count(kv => kv.Key.IsInWorld && !kv.Key.IsDead
+					&& (kv.Key.CenterPosition - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
+				var commitment = Math.Clamp(nearby * 2, info.MinWaveSize / 2, activeArmy.Length);
+				var defenders = Claim(activeArmy).Take(commitment).ToArray();
 				if (defenders.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
 				return;
+			}
+
+			// Anti-air umbrella: hold AA units over the base against enemy air.
+			if (defenseKind == "aa" && enemyAirSpotted)
+			{
+				var aa = Claim(activeArmy.Where(a => info.AntiAirUnits.Contains(a.Info.Name))).ToArray();
+				if (aa.Length > 0)
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: aa));
+			}
+
+			// Naval screen: hold ships near the coast against an enemy navy.
+			if (defenseKind == "naval")
+			{
+				var ships = Claim(activeArmy.Where(a => info.NavalPriority.Contains(a.Info.Name))).ToArray();
+				if (ships.Length > 0)
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: ships));
+			}
+
+			// Economy escort: keep a small guard on the harvesters and other economy units.
+			if (defenseKind == "escort")
+			{
+				var harvester = world.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == player
+					&& !a.Info.HasTraitInfo<BuildingInfo>() && info.ExcludeFromArmyTypes.Contains(a.Info.Name));
+				if (harvester != null)
+				{
+					var guard = Claim(activeArmy).Take(3).ToArray();
+					if (guard.Length > 0)
+						bot.QueueOrder(new Order("AttackMove", null, Target.FromActor(harvester), false, groupedActors: guard));
+				}
 			}
 
 			// Reserve edge behavior: the uncommitted reserve intercepts raids on non-base assets
@@ -896,9 +935,12 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				var waveAir = wave.Count(a => info.AirUnitTypes.Contains(a.Info.Name));
 				var waveNaval = wave.Count(a => info.NavalPriority.Contains(a.Info.Name));
+				var waveAA = wave.Count(a => info.AntiAirUnits.Contains(a.Info.Name));
+				var waveArtillery = wave.Count(a => a.Info.Name is "v2rl" or "arty");
 				var waveLand = wave.Length - waveAir - waveNaval;
 				CoalitionTelemetry.Log(world,
-					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} [{waveLand} land, {waveAir} air, {waveNaval} naval]");
+					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} " +
+					$"[{waveLand} land ({waveArtillery} artillery, {waveAA} aa), {waveAir} air, {waveNaval} naval]");
 			}
 		}
 
@@ -1051,6 +1093,26 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			return world.Actors.Where(a =>
 				a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.HasTraitInfo<BuildingInfo>());
+		}
+
+		/// <summary>The position of the most strategically valuable own structure, defended first.</summary>
+		WPos? MostValuableStructurePosition()
+		{
+			Actor best = null;
+			var bestValue = float.MinValue;
+			foreach (var a in OwnStructures())
+			{
+				var value = TargetEvaluator.EconomicValue(a.Info.Name)
+					+ TargetEvaluator.ProductionValue(a.Info.Name)
+					+ TargetEvaluator.TechnologyValue(a.Info.Name);
+				if (value > bestValue)
+				{
+					bestValue = value;
+					best = a;
+				}
+			}
+
+			return best?.CenterPosition;
 		}
 
 		IEnumerable<Actor> OwnCombatUnits()
