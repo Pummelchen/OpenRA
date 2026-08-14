@@ -688,32 +688,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var structures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
 			opponent.ExpansionCount = structures;
 			var army = total - structures;
-			opponent.Playstyle = army >= 8 && structures <= 2 ? "rush"
-				: structures >= 5 && army <= structures ? "turtle" : "balanced";
+			opponent.Playstyle = OpponentModel.DerivePlaystyle(army, structures);
 
 			// Predicted build from the most advanced scouted structure.
 			var build = "unknown";
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
-				switch (intel.Type)
-				{
-					case "afld":
-					case "hpad":
-						build = "air";
-						break;
-					case "spen":
-					case "syrd":
-						build = "naval";
-						break;
-					case "dome":
-					case "atek":
-					case "stek":
-						build = "tech";
-						break;
-					case "weap":
-						build = "armor";
-						break;
-				}
+				var direction = OpponentModel.DerivePredictedBuild(intel.Type);
+				if (direction != null)
+					build = direction;
 			}
 
 			opponent.PredictedBuild = build;

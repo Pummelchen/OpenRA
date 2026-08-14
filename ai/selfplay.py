@@ -9,6 +9,7 @@ Usage (run from the repo root):
   ai/selfplay.py --map mods/ra/maps/shattered-mountain --bots 4 --teams 2 --ticks 6000 --runs 4
   ai/selfplay.py --map <uid> --runs 6 --seed-base 100   # seeds 100..105
   ai/selfplay.py --sweep-reserve 4,6,8 --runs 3          # reserve fraction grid
+  ai/selfplay.py --maps a,b,c --runs 4                   # cross-map overfitting check
 """
 
 from __future__ import annotations
@@ -91,6 +92,32 @@ def run_sweep(label: str, setter, values: list, args) -> None:
         print("\n(ai.yaml restored)")
 
 
+def run_cross_map(maps: list, args) -> None:
+    """Runs one configuration across several maps and flags map-specific overfitting.
+
+    A configuration that wins on one map but loses everywhere else is overfit to that
+    map, so the cross-map win-rate spread is reported as an overfitting signal.
+    """
+    per_map = {}
+    for map_path in maps:
+        results = [run_sim(map_path, args.bots, args.teams, args.ticks, args.seed_base + i)
+                   for i in range(args.runs)]
+        per_map[map_path] = results
+        summarize(f"map {os.path.basename(map_path)}", results)
+
+    win_rates = {m: (sum(1 for r in rs if r["winners"]) / len(rs)) for m, rs in per_map.items()}
+    print("\n=== cross-map win rates ===")
+    for m, rate in sorted(win_rates.items(), key=lambda kv: -kv[1]):
+        print(f"  {os.path.basename(m)}: {rate:.0%}")
+
+    rates = list(win_rates.values())
+    spread = max(rates) - min(rates) if rates else 0
+    print(f"cross-map spread: {spread:.0%} (lower = less overfit to any one map)")
+    if len(rates) >= 2 and spread >= 0.5:
+        best = max(win_rates, key=win_rates.get)
+        print(f"WARNING: overfit risk — best result is map-specific ({os.path.basename(best)}).")
+
+
 def summarize(label: str, results: list) -> None:
     wins = sum(1 for r in results if r["winners"])
     over = sum(1 for r in results if r["game_over"])
@@ -108,6 +135,7 @@ def summarize(label: str, results: list) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Headless self-play evaluation")
     parser.add_argument("--map", default="mods/ra/maps/shattered-mountain")
+    parser.add_argument("--maps", help="comma-separated map paths for cross-map (overfitting) evaluation")
     parser.add_argument("--bots", type=int, default=4)
     parser.add_argument("--teams", type=int, default=2)
     parser.add_argument("--ticks", type=int, default=6000)
@@ -127,6 +155,10 @@ def main() -> None:
         if raw:
             run_sweep(label, setter, [cast(x) for x in raw.split(",")], args)
             return
+
+    if args.maps:
+        run_cross_map([m.strip() for m in args.maps.split(",") if m.strip()], args)
+        return
 
     results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
                for i in range(args.runs)]

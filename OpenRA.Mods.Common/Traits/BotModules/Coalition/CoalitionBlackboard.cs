@@ -176,6 +176,33 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			AverageResponseTime = (AverageResponseTime * ResponseSamples + seconds) / (ResponseSamples + 1);
 			ResponseSamples++;
 		}
+
+		/// <summary>
+		/// Derives a playstyle label from the scouted army and structure counts: a large army with few
+		/// structures is pressing (rush), heavy structures without a matching army are turtling.
+		/// </summary>
+		public static string DerivePlaystyle(int army, int structures)
+		{
+			return army >= 8 && structures <= 2 ? "rush"
+				: structures >= 5 && army <= structures ? "turtle"
+				: "balanced";
+		}
+
+		/// <summary>
+		/// Maps a scouted structure type to the enemy tech direction it reveals, or null when the
+		/// structure does not indicate a direction (e.g. a barracks).
+		/// </summary>
+		public static string DerivePredictedBuild(string structureType)
+		{
+			return structureType switch
+			{
+				"afld" or "hpad" => "air",
+				"spen" or "syrd" => "naval",
+				"dome" or "atek" or "stek" => "tech",
+				"weap" => "armor",
+				_ => null
+			};
+		}
 	}
 
 	/// <summary>A notable event that wakes strategic reasoning.</summary>

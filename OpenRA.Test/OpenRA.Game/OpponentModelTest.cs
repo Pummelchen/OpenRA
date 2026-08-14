@@ -65,5 +65,28 @@ namespace OpenRA.Test
 			Assert.That(model.ResponseSamples, Is.EqualTo(0));
 			Assert.That(model.Confidence, Is.EqualTo(0f));
 		}
+
+		[TestCase(TestName = "A large army with few structures is a rush; heavy structures are a turtle.")]
+		public void DerivePlaystyle()
+		{
+			Assert.That(OpponentModel.DerivePlaystyle(army: 10, structures: 1), Is.EqualTo("rush"));
+			Assert.That(OpponentModel.DerivePlaystyle(army: 8, structures: 2), Is.EqualTo("rush"), "Boundary: 8 army, 2 structures.");
+			Assert.That(OpponentModel.DerivePlaystyle(army: 2, structures: 6), Is.EqualTo("turtle"));
+			Assert.That(OpponentModel.DerivePlaystyle(army: 5, structures: 5), Is.EqualTo("turtle"), "Boundary: army equals structures.");
+			Assert.That(OpponentModel.DerivePlaystyle(army: 4, structures: 3), Is.EqualTo("balanced"));
+		}
+
+		[TestCase(TestName = "Scouted structures reveal the enemy tech direction.")]
+		public void DerivePredictedBuild()
+		{
+			Assert.That(OpponentModel.DerivePredictedBuild("afld"), Is.EqualTo("air"));
+			Assert.That(OpponentModel.DerivePredictedBuild("hpad"), Is.EqualTo("air"));
+			Assert.That(OpponentModel.DerivePredictedBuild("spen"), Is.EqualTo("naval"));
+			Assert.That(OpponentModel.DerivePredictedBuild("syrd"), Is.EqualTo("naval"));
+			Assert.That(OpponentModel.DerivePredictedBuild("dome"), Is.EqualTo("tech"));
+			Assert.That(OpponentModel.DerivePredictedBuild("atek"), Is.EqualTo("tech"));
+			Assert.That(OpponentModel.DerivePredictedBuild("weap"), Is.EqualTo("armor"));
+			Assert.That(OpponentModel.DerivePredictedBuild("barr"), Is.Null, "A barracks reveals no tech direction.");
+		}
 	}
 }

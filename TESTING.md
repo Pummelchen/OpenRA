@@ -53,6 +53,9 @@ ai/selfplay.py --map mods/ra/maps/shattered-mountain --runs 4
 ai/selfplay.py --sweep-reserve 4,6,8
 ai/selfplay.py --sweep-retreat 25,35,45
 ai/selfplay.py --sweep-coordinated 30,50,70
+
+# cross-map evaluation: reports per-map win rates and flags map-specific overfitting
+ai/selfplay.py --maps mods/ra/maps/a,mods/ra/maps/b,mods/ra/maps/c --runs 4
 ```
 
 The telemetry log is written to `~/Library/Application Support/OpenRA/ai-telemetry.log` (and printed
