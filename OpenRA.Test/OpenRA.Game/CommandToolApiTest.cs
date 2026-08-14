@@ -341,5 +341,83 @@ namespace OpenRA.Test
 			Assert.That(result.GetProperty("coalition_cash").GetInt32(), Is.EqualTo(5000));
 			Assert.That(result.GetProperty("members").GetProperty("Multi1").GetInt32(), Is.EqualTo(2000));
 		}
+
+		[TestCase(TestName = "get_economy_state reports the coalition power balance.")]
+		public void EconomyPower()
+		{
+			var context = Context();
+			context.PowerProvided = 1200;
+			context.PowerDrained = 800;
+
+			var result = Result(Call(context, "get_economy_state")).GetProperty("result");
+
+			Assert.That(result.GetProperty("power_provided").GetInt32(), Is.EqualTo(1200));
+			Assert.That(result.GetProperty("power_drained").GetInt32(), Is.EqualTo(800));
+			Assert.That(result.GetProperty("power_excess").GetInt32(), Is.EqualTo(400));
+		}
+
+		[TestCase(TestName = "inspect_force reports capabilities, status, and assignment.")]
+		public void InspectForceCapabilities()
+		{
+			var context = Context();
+			var force = context.Forces[0];
+			force.ByType["mig"] = 4;
+			force.Capabilities[(int)FriendlyCapability.Air] = 1f;
+			force.Capabilities[(int)FriendlyCapability.AntiAir] = 1f;
+			force.Status = ForceStatus.Moving;
+			force.MissionId = "OP-9";
+			force.Role = "main";
+			force.CasualtyFraction = 0.25f;
+
+			var result = Result(Call(context, "inspect_force", "{\"force\":\"Multi0\"}")).GetProperty("result");
+
+			Assert.That(result.GetProperty("by_type").GetProperty("mig").GetInt32(), Is.EqualTo(4));
+			Assert.That(result.GetProperty("capabilities").GetProperty("air").GetInt32(), Is.EqualTo(1));
+			Assert.That(result.GetProperty("capabilities").GetProperty("anti_air").GetInt32(), Is.EqualTo(1));
+			Assert.That(result.GetProperty("status").GetString(), Is.EqualTo("moving"));
+			Assert.That(result.GetProperty("mission").GetString(), Is.EqualTo("OP-9"));
+			Assert.That(result.GetProperty("role").GetString(), Is.EqualTo("main"));
+			Assert.That(result.GetProperty("casualty_fraction").GetDouble(), Is.EqualTo(0.25).Within(0.001));
+		}
+
+		[TestCase(TestName = "get_production_state reports every facility's queue and progress.")]
+		public void ProductionState()
+		{
+			var context = Context();
+			context.Facilities = new[]
+			{
+				new ProductionFacility("Multi0", "Vehicle", "weap", new CPos(4, 4))
+				{
+					Current = "2tnk",
+					Queued = new[] { "3tnk" },
+					Buildable = new[] { "2tnk", "3tnk" },
+					ProgressPercent = 50
+				}
+			};
+
+			var result = Result(Call(context, "get_production_state")).GetProperty("result");
+			var facilities = result.EnumerateArray().ToArray();
+
+			Assert.That(facilities.Length, Is.EqualTo(1));
+			Assert.That(facilities[0].GetProperty("owner").GetString(), Is.EqualTo("Multi0"));
+			Assert.That(facilities[0].GetProperty("queue").GetString(), Is.EqualTo("Vehicle"));
+			Assert.That(facilities[0].GetProperty("current").GetString(), Is.EqualTo("2tnk"));
+			Assert.That(facilities[0].GetProperty("queued").GetArrayLength(), Is.EqualTo(1));
+			Assert.That(facilities[0].GetProperty("progress_percent").GetInt32(), Is.EqualTo(50));
+		}
+
+		[TestCase(TestName = "inspect_region reports buildable cells and expansion value.")]
+		public void InspectRegionExpansion()
+		{
+			var context = Context();
+			var map = context.MapAnalysis;
+			map.BuildableCells[3] = 20;
+			map.ExpansionValue[3] = 1.5f;
+
+			var result = Result(Call(context, "inspect_region", "{\"region\":3}")).GetProperty("result");
+
+			Assert.That(result.GetProperty("buildable_cells").GetInt32(), Is.EqualTo(20));
+			Assert.That(result.GetProperty("expansion_value").GetDouble(), Is.EqualTo(1.5).Within(0.001));
+		}
 	}
 }

@@ -1,0 +1,92 @@
+#region Copyright & License Information
+/*
+ * Copyright (c) The OpenRA Developers and Contributors
+ * This file is part of OpenRA, which is free software. It is made
+ * available to you under the terms of the GNU General Public License
+ * as published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version. For more
+ * information, see COPYING.
+ */
+#endregion
+
+using System.Linq;
+using NUnit.Framework;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
+
+namespace OpenRA.Test
+{
+	[TestFixture]
+	sealed class OrderArbiterTest
+	{
+		[TestCase(TestName = "An assignment records mission and role ownership.")]
+		public void AssignOwnsForce()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+
+			Assert.That(arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0"), Is.Empty);
+
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("OP-1"));
+			Assert.That(arbiter.RoleOf("Multi0"), Is.EqualTo("main"));
+			Assert.That(arbiter.Commitments.Count, Is.EqualTo(1));
+		}
+
+		[TestCase(TestName = "Re-assigning the same mission and force is a no-op.")]
+		public void AssignIsIdempotent()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+
+			Assert.That(arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0"), Is.Empty);
+			Assert.That(arbiter.Commitments.Count, Is.EqualTo(1));
+		}
+
+		[TestCase(TestName = "A conflicting assignment of equal or lower priority is rejected with a reason.")]
+		public void ConflictRejected()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+
+			var rejections = arbiter.Assign("OP-2", "feint", ArbiterPriority.ActiveCombat, "Multi0").ToArray();
+			Assert.That(rejections, Has.Length.EqualTo(1));
+			Assert.That(rejections[0], Does.Contain("REJECTED_CONFLICT"));
+			Assert.That(rejections[0], Does.Contain("\"Multi0\""));
+
+			// The original commitment survives.
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("OP-1"));
+		}
+
+		[TestCase(TestName = "A higher-priority assignment supersedes a lower-priority one.")]
+		public void SupersedeLowerPriority()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "feint", ArbiterPriority.Recon, "Multi0");
+
+			Assert.That(arbiter.Assign("OP-2", "special", ArbiterPriority.SpecialMission, "Multi0"), Is.Empty);
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("OP-2"));
+		}
+
+		[TestCase(TestName = "Releasing a mission frees every force it still holds.")]
+		public void ReleaseMission()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+			arbiter.Assign("OP-1", "escort", ArbiterPriority.ActiveCombat, "Multi1");
+
+			arbiter.ReleaseMission("OP-1");
+
+			Assert.That(arbiter.MissionOf("Multi0"), Is.Null);
+			Assert.That(arbiter.MissionOf("Multi1"), Is.Null);
+		}
+
+		[TestCase(TestName = "Releasing a specific force frees it for reassignment.")]
+		public void ReleaseForce()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+			arbiter.ReleaseForce("Multi0");
+
+			Assert.That(arbiter.MissionOf("Multi0"), Is.Null);
+			Assert.That(arbiter.Assign("OP-2", "main", ArbiterPriority.ActiveCombat, "Multi0"), Is.Empty);
+		}
+	}
+}

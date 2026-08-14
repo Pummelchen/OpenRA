@@ -112,5 +112,21 @@ namespace OpenRA.Test
 				foreach (var j in adjacency[i])
 					Assert.That(adjacency[j], Does.Contain(i));
 		}
+
+		[TestCase(TestName = "Expansion value weighs buildable land by resource richness.")]
+		public void ExpansionValue()
+		{
+			var regions = TwoByTwoRegions();
+			var buildable = new[] { 25, 25, 0, 25 };       // region 2 is impassable (sea)
+			var richness = new[] { 1f, 0f, 1f, 0.5f };
+
+			var value = CoalitionMapAnalysis.ComputeExpansionValue(regions, buildable, richness);
+
+			// Each region is 5x5 = 25 cells.
+			Assert.That(value[0], Is.EqualTo(2f).Within(0.001f), "Fully buildable, rich.");
+			Assert.That(value[1], Is.EqualTo(1f).Within(0.001f), "Fully buildable, no resources.");
+			Assert.That(value[2], Is.EqualTo(0f).Within(0.001f), "Not buildable at all.");
+			Assert.That(value[3], Is.EqualTo(1.5f).Within(0.001f), "Fully buildable, half rich.");
+		}
 	}
 }

@@ -53,7 +53,10 @@ Health check: `curl http://127.0.0.1:8765/health`
 
 The game also serves an **engine-validated tool API** for the commander
 (`ToolApiBotModule`, `http://127.0.0.1:8766/tools`): `estimate_engagement`, `plan_routes`,
-`score_targets`, `inspect_region/force/enemy_intelligence`, `get_opponent_model`, ... Every
+`score_targets`, `inspect_region` (control, threats, buildable/expansion data), `inspect_force`
+(composition, capabilities, status, assignment, casualties), `inspect_enemy_intelligence`,
+`get_opponent_model`, `get_uncertainties`, `get_recent_events`, `get_global_summary`,
+`get_economy_state` (cash + power), `get_production_state` (queues + progress). Every
 call is validated against the live blackboard and answered from deterministic engine
 computations — the LLM never receives fabricated mechanics. The model server forwards the
 commander's function calls here and relays results back into the conversation:

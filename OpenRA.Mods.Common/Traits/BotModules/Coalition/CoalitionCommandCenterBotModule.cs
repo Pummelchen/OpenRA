@@ -116,6 +116,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		readonly CoalitionCommandCenterBotModuleInfo info;
 		readonly MissionManager missions = new();
+		readonly CoalitionOrderArbiter arbiter = new();
 
 		Player player;
 		World world;
@@ -136,6 +137,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int responseTimeSamples;
 		int lastWaveTick = int.MinValue;
 		int raidContactTicks;
+
+		// Durable peak unit count per owner, for casualty tracking across blackboard rebuilds.
+		readonly Dictionary<string, int> peakForceUnits = [];
 
 		// Match-quality telemetry, sampled once per command.
 		readonly CoalitionMatchMetrics matchMetrics = new();
@@ -194,13 +198,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
 					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes,
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
-					info.SupportPowerStructures, info.ProductionStructures);
+					info.SupportPowerStructures, info.ProductionStructures,
+					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes, info.AntiAirUnits, info.SpecialTypes);
 
 				// The deception record is durable across blackboard rebuilds: it lives on the mission
 				// manager and is copied into every fresh model for the planner and the LLM snapshot.
 				blackboard.DeceptionAttempts = missions.DeceptionAttempts;
 				blackboard.DeceptionSuccesses = missions.DeceptionSuccesses;
 				blackboard.DeceptionEnemiesDrawn = missions.DeceptionEnemiesDrawn;
+				UpdateForceCasualties();
 				UpdateOpponentModel();
 
 				// Event-driven review: material developments trigger an immediate command instead of
@@ -364,6 +370,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (llmIntent?.Retreat == true)
 				EnsureMission(MissionType.Retreat, 100, null, "Withdraw");
 
+			// Assign forces to missions through the order arbiter: every active mission owns a force
+			// at a priority, conflicting assignments are rejected with a machine-readable reason, and
+			// completed or cancelled missions release their forces back to the pool.
+			SyncForceAssignments();
+
 			// Capability-driven production from observed enemy composition.
 			var produceJson = BuildProduceJson();
 
@@ -437,6 +448,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			if (world.IsGameOver)
 				CoalitionTelemetry.Log(world, matchMetrics.Summary());
+		}
+
+		/// <summary>
+		/// Tracks per-owner casualties as the fraction of the peak unit count lost. The peak lives in
+		/// the command center so it survives blackboard rebuilds; production growth only raises it.
+		/// </summary>
+		void UpdateForceCasualties()
+		{
+			foreach (var force in blackboard.Forces)
+			{
+				var peak = peakForceUnits.GetValueOrDefault(force.Owner);
+				if (force.TotalUnits > peak)
+					peakForceUnits[force.Owner] = force.TotalUnits;
+				else if (peak > 0)
+					force.CasualtyFraction = 1f - force.TotalUnits * 1f / peak;
+			}
 		}
 
 		/// <summary>Updates the opponent model from observed enemy composition and deployment patterns.</summary>
@@ -748,6 +775,77 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return "{\"" + player.InternalName + "\":\"" + role + "\"}";
 		}
 
+		/// <summary>
+		/// Keeps force assignments in sync with the active mission set: releases forces whose mission
+		/// became terminal, assigns each active mission a force at its priority through the arbiter,
+		/// and copies the resulting ownership back onto the blackboard's force groups.
+		/// </summary>
+		void SyncForceAssignments()
+		{
+			// Release forces held by missions that are no longer active.
+			foreach (var mission in missions.Missions)
+				if (mission.Status != MissionStatus.Executing && mission.Status != MissionStatus.Ready)
+					arbiter.ReleaseMission(mission.Id);
+
+			var ordered = blackboard.Forces.OrderByDescending(f => f.TotalUnits).ToArray();
+			var main = ordered.FirstOrDefault();
+			var secondary = ordered.Skip(1).FirstOrDefault();
+			var transportOwner = blackboard.Transports.FirstOrDefault()?.Owner
+				?? blackboard.SpecialAssets.FirstOrDefault()?.Owner;
+
+			foreach (var mission in missions.Missions.Where(m => m.Status == MissionStatus.Executing || m.Status == MissionStatus.Ready))
+			{
+				var force = mission.Type switch
+				{
+					MissionType.Attack or MissionType.Raid or MissionType.Counterattack => main,
+					MissionType.Feint or MissionType.Bait => secondary ?? main,
+					MissionType.Transport or MissionType.SpecialOps => blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
+					_ => null
+				};
+
+				if (force == null)
+					continue;
+
+				foreach (var rejection in arbiter.Assign(mission.Id, RoleOf(mission.Type), PriorityOf(mission.Type), force.Owner))
+					CoalitionTelemetry.Log(world, $"Order arbiter: {rejection}");
+			}
+
+			// Copy ownership back onto the fresh force groups.
+			foreach (var force in blackboard.Forces)
+			{
+				force.MissionId = arbiter.MissionOf(force.Owner);
+				force.Role = arbiter.RoleOf(force.Owner);
+			}
+		}
+
+		static ArbiterPriority PriorityOf(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Retreat => ArbiterPriority.Survival,
+				MissionType.Transport or MissionType.SpecialOps => ArbiterPriority.SpecialMission,
+				MissionType.Attack or MissionType.Raid or MissionType.Counterattack => ArbiterPriority.ActiveCombat,
+				MissionType.Defend => ArbiterPriority.Defense,
+				MissionType.Recon or MissionType.Feint or MissionType.Bait => ArbiterPriority.Recon,
+				_ => ArbiterPriority.Staging
+			};
+		}
+
+		static string RoleOf(MissionType type)
+		{
+			return type switch
+			{
+				MissionType.Attack or MissionType.Raid or MissionType.Counterattack => "main",
+				MissionType.Feint => "feint",
+				MissionType.Bait => "bait",
+				MissionType.Transport or MissionType.SpecialOps => "special",
+				MissionType.Defend => "defend",
+				MissionType.Recon => "recon",
+				MissionType.Retreat => "retreat",
+				_ => "support"
+			};
+		}
+
 		/// <summary>Summarizes the coalition army for the brain's coordinated-attack gate.</summary>
 		string BuildForceJson()
 		{
@@ -782,6 +880,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				Timestep = (int)world.Timestep,
 				Regions = blackboard.Regions,
 				Forces = blackboard.Forces.ToArray(),
+				SpecialAssets = blackboard.SpecialAssets.ToArray(),
+				Transports = blackboard.Transports.ToArray(),
+				Facilities = blackboard.Facilities.ToArray(),
 				EnemyIntel = blackboard.EnemyIntel.ToArray(),
 				Events = blackboard.Events.ToArray(),
 				Opponent = blackboard.Opponent,
@@ -795,6 +896,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				EnemyArmyCount = (int)blackboard.EnemyArmyCount,
 				DeceptionEffectiveness = blackboard.DeceptionEffectiveness,
 				DeceptionEnemiesDrawn = blackboard.DeceptionEnemiesDrawn,
+				PowerProvided = blackboard.PowerProvided,
+				PowerDrained = blackboard.PowerDrained,
 				MapAnalysis = blackboard.MapAnalysis,
 				ThreatField = blackboard.ThreatField()
 			};

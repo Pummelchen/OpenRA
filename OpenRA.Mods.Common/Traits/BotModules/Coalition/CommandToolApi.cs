@@ -28,6 +28,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int Timestep = 40;
 		public CoalitionRegion[] Regions = [];
 		public ForceGroup[] Forces = [];
+		public SpecialAsset[] SpecialAssets = [];
+		public SpecialAsset[] Transports = [];
+		public ProductionFacility[] Facilities = [];
 		public EnemyIntel[] EnemyIntel = [];
 		public CoalitionEvent[] Events = [];
 		public OpponentModel Opponent = new();
@@ -40,6 +43,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int EnemyArmyCount;
 		public float DeceptionEffectiveness;
 		public int DeceptionEnemiesDrawn;
+		public int PowerProvided;
+		public int PowerDrained;
+		public int PowerExcess => PowerProvided - PowerDrained;
 		public CoalitionMapAnalysis MapAnalysis;
 		public float[][] ThreatField;
 
@@ -67,6 +73,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"ground_anti_armor", "ground_anti_infantry", "artillery", "anti_air", "air_to_air",
 			"naval", "submarine", "vision_exposure", "detection", "static_defense",
 			"reinforcement", "support_power_risk"
+		};
+
+		/// <summary>Snake_case keys for the friendly functional capability profile.</summary>
+		public static readonly string[] FriendlyCapabilityKeys =
+		{
+			"anti_air", "anti_armor", "anti_infantry", "artillery", "recon", "transport",
+			"naval", "air", "detection", "anti_structure"
 		};
 
 		/// <summary>
@@ -121,6 +134,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							return PlanRoutes(context, args);
 						case "get_economy_state":
 							return GetEconomyState(context);
+						case "get_production_state":
+							return GetProductionState(context);
 						default:
 							return Error("UNKNOWN_TOOL", $"Unknown tool \"{tool}\".");
 					}
@@ -186,6 +201,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				},
 				["friendly_control"] = Round(region.FriendlyControl),
 				["enemy_pressure"] = Round(region.EnemyPressure),
+				["buildable_cells"] = context.MapAnalysis?.BuildableCells?[index] ?? 0,
+				["expansion_value"] = Round(context.MapAnalysis?.ExpansionValue?[index] ?? 0f),
 				["threats"] = ThreatObject(region.Threats)
 			});
 		}
@@ -193,6 +210,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		static string InspectForce(ToolContext context, JsonElement args)
 		{
 			var force = ResolveForce(context, Require(args, "force"), "force");
+
+			var byType = new JsonObject();
+			foreach (var kv in force.ByType)
+				byType[kv.Key] = kv.Value;
 
 			return Ok(new JsonObject
 			{
@@ -206,11 +227,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					["support"] = force.Counts[(int)UnitClass.Support],
 					["structure"] = force.Counts[(int)UnitClass.Structure]
 				},
+				["by_type"] = byType,
+				["capabilities"] = FriendlyCapabilityObject(force.Capabilities),
 				["total_units"] = force.TotalUnits,
 				["strength"] = Round(force.Strength),
 				["readiness"] = Round(force.Readiness),
+				["status"] = force.Status.ToString().ToLowerInvariant(),
+				["mission"] = force.MissionId,
+				["role"] = force.Role,
+				["casualty_fraction"] = Round(force.CasualtyFraction),
 				["center"] = new JsonObject { ["x"] = force.Center.X, ["y"] = force.Center.Y }
 			});
+		}
+
+		static JsonObject FriendlyCapabilityObject(float[] capabilities)
+		{
+			var obj = new JsonObject();
+			for (var c = 0; c < capabilities.Length && c < FriendlyCapabilityKeys.Length; c++)
+				obj[FriendlyCapabilityKeys[c]] = capabilities[c] > 0 ? 1 : 0;
+			return obj;
 		}
 
 		static string InspectEnemyIntelligence(ToolContext context, JsonElement args)
@@ -422,8 +457,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return Ok(new JsonObject
 			{
 				["coalition_cash"] = context.CoalitionCash,
+				["power_provided"] = context.PowerProvided,
+				["power_drained"] = context.PowerDrained,
+				["power_excess"] = context.PowerExcess,
 				["members"] = members
 			});
+		}
+
+		static string GetProductionState(ToolContext context)
+		{
+			var facilities = context.Facilities
+				.Select(f => new JsonObject
+				{
+					["owner"] = f.Owner,
+					["queue"] = f.QueueType,
+					["structure"] = f.Structure,
+					["x"] = f.Cell.X,
+					["y"] = f.Cell.Y,
+					["current"] = f.Current,
+					["queued"] = new JsonArray(f.Queued.Select(q => (JsonNode)q).ToArray()),
+					["buildable"] = new JsonArray(f.Buildable.Select(b => (JsonNode)b).ToArray()),
+					["progress_percent"] = f.ProgressPercent
+				})
+				.ToArray();
+
+			return Ok(new JsonArray(facilities));
 		}
 
 		// ------------------------------------------------------------------------------------

@@ -72,15 +72,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 	}
 
-	/// <summary>An aggregated force: per-owner counts by class plus strength/readiness.</summary>
+	/// <summary>An aggregated force: per-owner counts by class, per-type composition, capability profile, and activity.</summary>
 	public sealed class ForceGroup
 	{
 		public readonly string Owner;
 		public readonly int[] Counts = new int[Enum.GetValues<UnitClass>().Length];
+		public readonly Dictionary<string, int> ByType = [];
+		public readonly float[] Capabilities = new float[Enum.GetValues<FriendlyCapability>().Length];
 		public int TotalUnits;
 		public float Strength;
 		public float Readiness;
 		public CPos Center;
+
+		/// <summary>Coarse movement state: idle when every member is idle, moving otherwise.</summary>
+		public ForceStatus Status = ForceStatus.Idle;
+
+		/// <summary>The mission this force is assigned to, set by the order arbiter.</summary>
+		public string MissionId;
+
+		/// <summary>The operational role the commander assigned to this force (main/escort/naval/defend).</summary>
+		public string Role;
+
+		/// <summary>0..1 fraction of the peak unit count lost, tracked across blackboard rebuilds.</summary>
+		public float CasualtyFraction;
 
 		public ForceGroup(string owner)
 		{
@@ -185,6 +199,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public readonly CoalitionRegion[] Regions;
 		public readonly List<ForceGroup> Forces = [];
+		public readonly List<SpecialAsset> SpecialAssets = [];
+		public readonly List<SpecialAsset> Transports = [];
+		public readonly List<ProductionFacility> Facilities = [];
 		public readonly List<EnemyIntel> EnemyIntel = [];
 		public readonly List<CoalitionEvent> Events = [];
 		public readonly OpponentModel Opponent = new();
@@ -196,6 +213,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float CoalitionArmyStrength;
 		public float EnemyArmyStrength;
 		public float EnemyArmyCount;
+
+		/// <summary>Coalition power production, in engine power units.</summary>
+		public int PowerProvided;
+
+		/// <summary>Coalition power consumption, in engine power units.</summary>
+		public int PowerDrained;
+
+		/// <summary>Power surplus (negative = deficit), in engine power units.</summary>
+		public int PowerExcess => PowerProvided - PowerDrained;
 
 		/// <summary>The region index of the coalition's average base position, or -1.</summary>
 		public int HomeRegion = -1;
@@ -225,6 +251,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly FrozenSet<string> artilleryTypes;
 		readonly FrozenSet<string> submarineTypes;
 		readonly FrozenSet<string> detectionTypes;
+		readonly FrozenSet<string> transportTypes;
+		readonly FrozenSet<string> scoutTypes;
+		readonly FrozenSet<string> antiAirTypes;
+		readonly FrozenSet<string> specialTypes;
 		readonly FrozenSet<string> supportPowerStructures;
 		readonly FrozenSet<string> productionStructures;
 
@@ -232,7 +262,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			FrozenSet<string> waterTerrainTypes = null, int bigWaterMinimumCells = 0,
 			FrozenSet<string> valuableResourceTypes = null, FrozenSet<string> artilleryTypes = null,
 			FrozenSet<string> submarineTypes = null, FrozenSet<string> detectionTypes = null,
-			FrozenSet<string> supportPowerStructures = null, FrozenSet<string> productionStructures = null)
+			FrozenSet<string> supportPowerStructures = null, FrozenSet<string> productionStructures = null,
+			FrozenSet<string> transportTypes = null, FrozenSet<string> scoutTypes = null,
+			FrozenSet<string> antiAirTypes = null, FrozenSet<string> specialTypes = null)
 		{
 			World = world;
 			Player = player;
@@ -242,6 +274,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			this.artilleryTypes = artilleryTypes ?? new HashSet<string> { "arty", "v2rl" }.ToFrozenSet();
 			this.submarineTypes = submarineTypes ?? new HashSet<string> { "ss", "msub" }.ToFrozenSet();
 			this.detectionTypes = detectionTypes ?? new HashSet<string> { "dog", "rdr" }.ToFrozenSet();
+			this.transportTypes = transportTypes ?? [];
+			this.scoutTypes = scoutTypes ?? [];
+			this.antiAirTypes = antiAirTypes ?? [];
+			this.specialTypes = specialTypes ?? [];
 			this.supportPowerStructures = supportPowerStructures ?? new HashSet<string> { "iron", "pdox" }.ToFrozenSet();
 			this.productionStructures = productionStructures ?? new HashSet<string>
 			{
@@ -254,6 +290,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			Regions = MapAnalysis.Regions;
 			ExtractForces();
+			ExtractSpecialAssets();
+			ExtractProduction();
 			ExtractEnemyIntel();
 			ExtractEconomy();
 			ComputeRegions();
@@ -302,6 +340,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 				group.Counts[(int)unitClass]++;
 				group.TotalUnits++;
+				group.ByType[a.Info.Name] = group.ByType.GetValueOrDefault(a.Info.Name) + 1;
+				foreach (var capability in CoalitionForceRegistry.FriendlyCapabilitiesFor(unitClass, a.Info.Name,
+					artilleryTypes, submarineTypes, detectionTypes, transportTypes, scoutTypes, antiAirTypes))
+					CoalitionForceRegistry.Record(capability, group.Capabilities);
+
+				if (group.Status != ForceStatus.Moving && !a.IsIdle)
+					group.Status = ForceStatus.Moving;
+
 				var health = a.TraitOrDefault<IHealth>();
 				if (health != null)
 					group.Strength += health.HP * 1f / health.MaxHP;
@@ -314,6 +360,79 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				group.Center = CenterOf(Team.First(t => t.InternalName == group.Owner));
 				Forces.Add(group);
 			}
+		}
+
+		/// <summary>
+		/// Registers scarce special assets (Tanya, spies, engineers) and transports individually, with
+		/// position and cargo, so the commander can track and assign them without scanning the world.
+		/// </summary>
+		void ExtractSpecialAssets()
+		{
+			var teamIds = Team.Select(p => p.InternalName).ToHashSet();
+			foreach (var a in World.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || !teamIds.Contains(a.Owner.InternalName))
+					continue;
+				if (a.OccupiesSpace == null)
+					continue;
+
+				var isTransport = transportTypes.Contains(a.Info.Name);
+				var isSpecial = specialTypes.Contains(a.Info.Name);
+				if (!isTransport && !isSpecial)
+					continue;
+
+				var cargo = a.TraitOrDefault<Cargo>()?.PassengerCount ?? 0;
+				var asset = new SpecialAsset(a.Owner.InternalName, a.Info.Name, a.Location, cargo);
+				if (isTransport)
+					Transports.Add(asset);
+				if (isSpecial)
+					SpecialAssets.Add(asset);
+			}
+		}
+
+		/// <summary>
+		/// Extracts the coalition's live production state: every facility's current item, queued items,
+		/// what it can build right now (prerequisites satisfied), and progress; plus the coalition power
+		/// balance from each player's power manager.
+		/// </summary>
+		void ExtractProduction()
+		{
+			foreach (var p in Team)
+			{
+				var power = p.PlayerActor.TraitOrDefault<PowerManager>();
+				if (power != null)
+				{
+					PowerProvided += power.PowerProvided;
+					PowerDrained += power.PowerDrained;
+				}
+
+				foreach (var queue in p.PlayerActor.TraitsImplementing<ProductionQueue>())
+				{
+					if (!queue.Enabled)
+						continue;
+
+					var current = queue.CurrentItem();
+					var facilityActor = queue.Actor;
+					var cell = facilityActor.OccupiesSpace != null && facilityActor.IsInWorld
+						? facilityActor.Location
+						: p.HomeLocation;
+
+					Facilities.Add(new ProductionFacility(p.InternalName, queue.Info.Type, facilityActor.Info.Name, cell)
+					{
+						Current = current?.Item,
+						Queued = queue.AllQueued().Select(i => i.Item).Where(i => i != current?.Item).ToArray(),
+						Buildable = queue.BuildableItems().Select(i => i.Name).ToArray(),
+						ProgressPercent = ProgressOf(current)
+					});
+				}
+			}
+		}
+
+		static int ProgressOf(ProductionItem item)
+		{
+			if (item == null || item.TotalTime <= 0)
+				return 0;
+			return (int)(100L * (item.TotalTime - item.RemainingTime) / item.TotalTime);
 		}
 
 		CPos CenterOf(Player p)

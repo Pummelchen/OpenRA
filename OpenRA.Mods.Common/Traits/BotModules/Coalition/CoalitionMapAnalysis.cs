@@ -66,6 +66,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Defensibility per region, 0..1 (land fraction weighted against border crossings).</summary>
 		public readonly float[] Defensibility;
 
+		/// <summary>Passable land cells per region — where buildings and bases can be placed.</summary>
+		public readonly int[] BuildableCells;
+
+		/// <summary>Static expansion value per region: buildable land fraction weighted by resource richness.</summary>
+		public readonly float[] ExpansionValue;
+
 		/// <summary>
 		/// Builds an analysis from precomputed graph data. Production code should use
 		/// <see cref="ForMap"/>; this constructor is also used by unit tests to exercise the
@@ -73,7 +79,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		public CoalitionMapAnalysis(CoalitionRegion[] regions, List<int>[][] adjacency, FrozenSet<int>[][] chokepoints,
 			int[][] components, int[] componentCount, HashSet<CPos> bridgeCells, int width, int height,
-			int[] resourceCells, float[] resourceRichness, float[] defensibility)
+			int[] resourceCells, float[] resourceRichness, float[] defensibility,
+			int[] buildableCells = null, float[] expansionValue = null)
 		{
 			Regions = regions;
 			Adjacency = adjacency;
@@ -86,6 +93,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			ResourceCells = resourceCells;
 			ResourceRichness = resourceRichness;
 			Defensibility = defensibility;
+			BuildableCells = buildableCells ?? new int[regions.Length];
+			ExpansionValue = expansionValue ?? new float[regions.Length];
 		}
 
 		/// <summary>True when a region pair is reachable by the given movement class.</summary>
@@ -326,6 +335,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var maxResources = resourceCells.DefaultIfEmpty(0).Max();
 			var resourceRichness = resourceCells.Select(c => maxResources == 0 ? 0f : c * 1f / maxResources).ToArray();
+			var expansionValue = ComputeExpansionValue(regionArray, groundCells, resourceRichness);
 
 			// Defensibility: land fraction of the region, discounted by how many other regions it
 			// borders on the ground (more entries = harder to hold).
@@ -341,9 +351,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			var analysis = new CoalitionMapAnalysis(regionArray, adjacency, chokepoints, components,
-				componentCount, bridgeCells, width, height, resourceCells, resourceRichness, defensibility);
+				componentCount, bridgeCells, width, height, resourceCells, resourceRichness, defensibility,
+				groundCells, expansionValue);
 			Cache[key] = analysis;
 			return analysis;
+		}
+
+		/// <summary>
+		/// Scores each region's value as an expansion site: how much of it is buildable land, weighted
+		/// by how rich in resources it is. Pure so it can be unit-tested without a World.
+		/// </summary>
+		public static float[] ComputeExpansionValue(CoalitionRegion[] regions, int[] buildableCells, float[] resourceRichness)
+		{
+			var value = new float[regions.Length];
+			for (var i = 0; i < regions.Length; i++)
+			{
+				var area = regions[i].Bounds.Width * regions[i].Bounds.Height;
+				var buildableFraction = area == 0 ? 0f : buildableCells[i] * 1f / area;
+				value[i] = buildableFraction * (1f + resourceRichness[i]);
+			}
+
+			return value;
 		}
 
 		static Locomotor FindLocomotor(World world, string name)
