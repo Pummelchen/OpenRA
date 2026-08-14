@@ -28,6 +28,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float ReinforcementRisk = 1f;
 		public float SupportPowerRisk = 1f;
 
+		/// <summary>Extra cost for a crossing that is a bridge (a fixed, easily contested connector).</summary>
+		public float BridgeRisk = 0.5f;
+
 		/// <summary>Stealth-biased profile for transports and special forces.</summary>
 		public static RouteWeights Stealth()
 		{
@@ -152,6 +155,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 					if (chokepoints[current].Contains(next))
 						cost += weights.ChokepointRisk * 4f;
+
+					if (map.BridgeConnections[current].Contains(next))
+						cost += weights.BridgeRisk * 2f;
 
 					var nextCost = currentCost + cost;
 					if (nextCost >= dist[next])

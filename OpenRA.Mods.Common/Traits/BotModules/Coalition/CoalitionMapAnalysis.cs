@@ -72,6 +72,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Static expansion value per region: buildable land fraction weighted by resource richness.</summary>
 		public readonly float[] ExpansionValue;
 
+		/// <summary>BridgeConnections[region] = regions reached from it by a bridge crossing.</summary>
+		public readonly FrozenSet<int>[] BridgeConnections;
+
+		/// <summary>Rally/staging value per region: defensible open ground to mass forces safely.</summary>
+		public readonly float[] RallyValue;
+
+		/// <summary>Artillery value per region: defensible ground overlooking chokepoint approach corridors.</summary>
+		public readonly float[] ArtilleryValue;
+
 		/// <summary>
 		/// Builds an analysis from precomputed graph data. Production code should use
 		/// <see cref="ForMap"/>; this constructor is also used by unit tests to exercise the
@@ -80,7 +89,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public CoalitionMapAnalysis(CoalitionRegion[] regions, List<int>[][] adjacency, FrozenSet<int>[][] chokepoints,
 			int[][] components, int[] componentCount, HashSet<CPos> bridgeCells, int width, int height,
 			int[] resourceCells, float[] resourceRichness, float[] defensibility,
-			int[] buildableCells = null, float[] expansionValue = null)
+			int[] buildableCells = null, float[] expansionValue = null,
+			FrozenSet<int>[] bridgeConnections = null, float[] rallyValue = null, float[] artilleryValue = null)
 		{
 			Regions = regions;
 			Adjacency = adjacency;
@@ -95,6 +105,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Defensibility = defensibility;
 			BuildableCells = buildableCells ?? new int[regions.Length];
 			ExpansionValue = expansionValue ?? new float[regions.Length];
+			BridgeConnections = bridgeConnections ?? regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			RallyValue = rallyValue ?? new float[regions.Length];
+			ArtilleryValue = artilleryValue ?? new float[regions.Length];
 		}
 
 		/// <summary>True when a region pair is reachable by the given movement class.</summary>
@@ -352,7 +365,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var analysis = new CoalitionMapAnalysis(regionArray, adjacency, chokepoints, components,
 				componentCount, bridgeCells, width, height, resourceCells, resourceRichness, defensibility,
-				groundCells, expansionValue);
+				groundCells, expansionValue,
+				ComputeBridgeConnections(regionArray, bridgeCells, groundPassable, width, height),
+				ComputeRallyValue(regionArray, defensibility, groundCells),
+				ComputeArtilleryValue(regionArray, defensibility, groundGraph.Chokepoints));
 			Cache[key] = analysis;
 			return analysis;
 		}
@@ -372,6 +388,104 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			return value;
+		}
+
+		/// <summary>Region pairs whose shared border is crossed by a bridge cell, for route weighting.</summary>
+		public static FrozenSet<int>[] ComputeBridgeConnections(CoalitionRegion[] regions, HashSet<CPos> bridgeCells,
+			bool[] passable, int width, int height)
+		{
+			var connections = regions.Select(_ => new HashSet<int>()).ToArray();
+			foreach (var cell in bridgeCells)
+			{
+				var region = RegionOf(regions, cell);
+				foreach (var neighbor in new[] { new CPos(cell.X + 1, cell.Y), new CPos(cell.X - 1, cell.Y),
+					new CPos(cell.X, cell.Y + 1), new CPos(cell.X, cell.Y - 1) })
+				{
+					if (neighbor.X < 0 || neighbor.Y < 0 || neighbor.X >= width || neighbor.Y >= height)
+						continue;
+					if (!passable[neighbor.Y * width + neighbor.X])
+						continue;
+
+					var other = RegionOf(regions, neighbor);
+					if (other != region)
+					{
+						connections[region].Add(other);
+						connections[other].Add(region);
+					}
+				}
+			}
+
+			return connections.Select(h => h.ToFrozenSet()).ToArray();
+		}
+
+		/// <summary>Rally/staging value: defensible open ground to mass forces safely.</summary>
+		public static float[] ComputeRallyValue(CoalitionRegion[] regions, float[] defensibility, int[] buildableCells)
+		{
+			var value = new float[regions.Length];
+			for (var i = 0; i < regions.Length; i++)
+			{
+				var area = regions[i].Bounds.Width * regions[i].Bounds.Height;
+				var buildableFraction = area == 0 ? 0f : buildableCells[i] * 1f / area;
+				value[i] = defensibility[i] * buildableFraction;
+			}
+
+			return value;
+		}
+
+		/// <summary>Artillery value: defensible ground that overlooks chokepoint approach corridors.</summary>
+		public static float[] ComputeArtilleryValue(CoalitionRegion[] regions, float[] defensibility, FrozenSet<int>[] groundChokepoints)
+		{
+			var value = new float[regions.Length];
+			var maxExits = groundChokepoints.Max(c => c.Count);
+			for (var i = 0; i < regions.Length; i++)
+			{
+				var exits = maxExits == 0 ? 0f : groundChokepoints[i].Count * 1f / maxExits;
+				value[i] = defensibility[i] * (0.5f + 0.5f * exits);
+			}
+
+			return value;
+		}
+
+		/// <summary>
+		/// Scores regions as transport insertion zones: buildable rear-area land near the enemy,
+		/// discounted near our own base. Home/enemy regions are dynamic, so this is computed on demand.
+		/// </summary>
+		public float[] InsertionValue(int homeRegion, int enemyRegion)
+		{
+			var value = new float[Regions.Length];
+			for (var i = 0; i < Regions.Length; i++)
+			{
+				var area = Regions[i].Bounds.Width * Regions[i].Bounds.Height;
+				var buildableFraction = area == 0 ? 0f : BuildableCells[i] * 1f / area;
+				var nearEnemy = i == enemyRegion || IsAdjacent(MovementClass.Ground, i, enemyRegion);
+				var nearHome = i == homeRegion || IsAdjacent(MovementClass.Ground, i, homeRegion);
+				value[i] = buildableFraction * (nearEnemy ? 1f : 0.5f) * (nearHome ? 0.25f : 1f);
+			}
+
+			return value;
+		}
+
+		/// <summary>
+		/// Describes a planned region path as a corridor: labels each step open, chokepoint, or bridge,
+		/// so attack and retreat corridors are identifiable as their chokepoint/bridge structure.
+		/// </summary>
+		public static (int[] Regions, string[] Features) DescribeCorridor(CoalitionMapAnalysis map, int[] routeRegions,
+			MovementClass movementClass)
+		{
+			var features = new List<string>();
+			for (var i = 1; i < routeRegions.Length; i++)
+			{
+				var a = routeRegions[i - 1];
+				var b = routeRegions[i];
+				if (map.IsChokepoint(movementClass, a, b))
+					features.Add($"chokepoint:{a}-{b}");
+				else if (map.BridgeConnections[a].Contains(b))
+					features.Add($"bridge:{a}-{b}");
+				else
+					features.Add($"open:{a}-{b}");
+			}
+
+			return (routeRegions, features.ToArray());
 		}
 
 		static Locomotor FindLocomotor(World world, string name)

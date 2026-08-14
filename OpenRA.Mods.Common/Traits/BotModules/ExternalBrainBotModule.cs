@@ -106,6 +106,9 @@ namespace OpenRA.Mods.Common.Traits
 			public int X { get; set; }
 			public int Y { get; set; }
 			public Dictionary<string, int> ByType { get; set; }
+
+			/// <summary>Intelligence honesty-ladder breakdown: observed / last-known / inferred / suspected counts.</summary>
+			public Dictionary<string, int> ByStatus { get; set; }
 		}
 
 		sealed class ForceState
@@ -239,7 +242,8 @@ namespace OpenRA.Mods.Common.Traits
 				Total = enemyActors.Length,
 				X = enemyActors.Length == 0 ? -1 : (int)(sumX / enemyActors.Length),
 				Y = enemyActors.Length == 0 ? -1 : (int)(sumY / enemyActors.Length),
-				ByType = enemyByType
+				ByType = enemyByType,
+				ByStatus = CommanderStatusBreakdown(player)
 			};
 
 			var state = new TeamState
@@ -303,6 +307,23 @@ namespace OpenRA.Mods.Common.Traits
 				DeceptionEffectiveness = blackboard?.DeceptionEffectiveness ?? 0f,
 				DeceptionEnemiesDrawn = blackboard?.DeceptionEnemiesDrawn ?? 0
 			};
+		}
+
+		/// <summary>Counts the commander's retained intel by honesty-ladder status, for the snapshot.</summary>
+		static Dictionary<string, int> CommanderStatusBreakdown(Player player)
+		{
+			var breakdown = new Dictionary<string, int>();
+			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
+			if (commander?.Blackboard == null)
+				return breakdown;
+
+			foreach (var intel in commander.Blackboard.EnemyIntel)
+			{
+				var key = intel.Status.ToString().ToLowerInvariant();
+				breakdown[key] = breakdown.GetValueOrDefault(key) + 1;
+			}
+
+			return breakdown;
 		}
 
 		/// <summary>Compresses an actor list into per-type counts plus average health.</summary>

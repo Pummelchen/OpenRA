@@ -9,6 +9,8 @@
  */
 #endregion
 
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
@@ -127,6 +129,119 @@ namespace OpenRA.Test
 			Assert.That(value[1], Is.EqualTo(1f).Within(0.001f), "Fully buildable, no resources.");
 			Assert.That(value[2], Is.EqualTo(0f).Within(0.001f), "Not buildable at all.");
 			Assert.That(value[3], Is.EqualTo(1.5f).Within(0.001f), "Fully buildable, half rich.");
+		}
+
+		[TestCase(TestName = "Rally value is defensibility weighted by buildable land.")]
+		public void RallyValue()
+		{
+			var regions = TwoByTwoRegions();
+			var buildable = new[] { 25, 20, 0, 15 };
+			var defensibility = new[] { 0.8f, 0.6f, 0.4f, 0.5f };
+
+			var value = CoalitionMapAnalysis.ComputeRallyValue(regions, defensibility, buildable);
+
+			Assert.That(value[0], Is.EqualTo(0.8f).Within(0.001f));
+			Assert.That(value[1], Is.EqualTo(0.48f).Within(0.001f));
+			Assert.That(value[2], Is.EqualTo(0f).Within(0.001f), "No buildable land to mass on.");
+			Assert.That(value[3], Is.EqualTo(0.3f).Within(0.001f));
+		}
+
+		[TestCase(TestName = "Artillery value favors defensible ground overlooking chokepoints.")]
+		public void ArtilleryValue()
+		{
+			var regions = TwoByTwoRegions();
+			var defensibility = new[] { 0.8f, 0.6f, 0.4f, 0.5f };
+			var chokepoints = new[]
+			{
+				new[] { 1 }.ToFrozenSet(),
+				new[] { 0, 2 }.ToFrozenSet(),
+				new int[0].ToFrozenSet(),
+				new int[0].ToFrozenSet()
+			};
+
+			var value = CoalitionMapAnalysis.ComputeArtilleryValue(regions, defensibility, chokepoints);
+
+			// Region 1 overlooks two chokepoint exits: the most valuable artillery position.
+			Assert.That(value[1], Is.EqualTo(0.6f).Within(0.001f));
+			Assert.That(value[2], Is.EqualTo(0.2f).Within(0.001f), "No chokepoints to overlook.");
+		}
+
+		[TestCase(TestName = "A bridge cell on a region border records a bridge connection.")]
+		public void BridgeConnections()
+		{
+			var regions = TwoByTwoRegions();
+			var passable = CoalitionMapAnalysis.ComputePassability(10, 10, (x, y) => true);
+			var bridges = new HashSet<CPos> { new CPos(5, 2) }; // on the region 0-1 border
+
+			var connections = CoalitionMapAnalysis.ComputeBridgeConnections(regions, bridges, passable, 10, 10);
+
+			Assert.That(connections[0], Does.Contain(1));
+			Assert.That(connections[1], Does.Contain(0));
+			Assert.That(connections[2], Is.Empty);
+		}
+
+		static CoalitionMapAnalysis MapWith(List<int>[] adjacency, FrozenSet<int>[] chokepoints = null,
+			int[] buildable = null)
+		{
+			var regions = TwoByTwoRegions();
+			chokepoints ??= regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
+			var allComponents = new[] { components, components, components };
+			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency },
+				new[] { chokepoints, chokepoints, chokepoints },
+				allComponents, new[] { count, count, count }, new HashSet<CPos>(), 10, 10,
+				new int[regions.Length], new float[regions.Length], new float[regions.Length],
+				buildable ?? new int[regions.Length]);
+		}
+
+		[TestCase(TestName = "A corridor is described by its chokepoint and open steps.")]
+		public void DescribeCorridor()
+		{
+			var adjacency = Enumerable.Range(0, 4).Select(_ => new List<int>()).ToArray();
+			void Link(int a, int b)
+			{
+				adjacency[a].Add(b);
+				adjacency[b].Add(a);
+			}
+
+			Link(0, 1);
+			Link(1, 2);
+			Link(1, 3);
+			var chokepoints = new[]
+			{
+				new int[0].ToFrozenSet(),
+				new[] { 2 }.ToFrozenSet(),
+				new int[0].ToFrozenSet(),
+				new int[0].ToFrozenSet()
+			};
+			var map = MapWith(adjacency, chokepoints);
+
+			var (regions, features) = CoalitionMapAnalysis.DescribeCorridor(map, new[] { 0, 1, 2 }, MovementClass.Ground);
+
+			Assert.That(regions, Is.EqualTo(new[] { 0, 1, 2 }));
+			Assert.That(features, Is.EqualTo(new[] { "open:0-1", "chokepoint:1-2" }));
+		}
+
+		[TestCase(TestName = "Insertion value favors buildable rear-area land near the enemy.")]
+		public void InsertionValue()
+		{
+			var adjacency = Enumerable.Range(0, 4).Select(_ => new List<int>()).ToArray();
+			void Link(int a, int b)
+			{
+				adjacency[a].Add(b);
+				adjacency[b].Add(a);
+			}
+
+			Link(0, 1);
+			Link(1, 2);
+			Link(1, 3);
+			var map = MapWith(adjacency, buildable: new[] { 25, 0, 25, 25 });
+
+			var value = map.InsertionValue(homeRegion: 0, enemyRegion: 3);
+
+			// Region 3 is buildable and enemy-facing: the top insertion score; region 0 is our home (discounted).
+			Assert.That(value[3], Is.GreaterThan(value[0]));
+			Assert.That(value[1], Is.EqualTo(0f), "No buildable land to insert onto.");
 		}
 	}
 }

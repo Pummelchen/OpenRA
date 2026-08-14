@@ -93,6 +93,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"corps is assigned and coordinated strikes do not wait for ships.")]
 		public readonly int BigWaterMinimumCells = 100;
 
+		[Desc("How long (in ticks) a mobile enemy sighting is retained as LAST_KNOWN after it leaves " +
+			"explored territory, before it is dropped back to UNKNOWN.")]
+		public readonly int SightingMemoryTicks = 600;
+
+		[Desc("When true, the coalition sees every enemy actor regardless of fog (a separate, non-default " +
+			"difficulty mode). Fair fog is the default.")]
+		public readonly bool Omniscient = false;
+
 		public override object Create(ActorInitializer init) { return new CoalitionCommandCenterBotModule(this, init); }
 	}
 
@@ -117,6 +125,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly CoalitionCommandCenterBotModuleInfo info;
 		readonly MissionManager missions = new();
 		readonly CoalitionOrderArbiter arbiter = new();
+		CoalitionIntelTracker intelTracker;
 
 		Player player;
 		World world;
@@ -195,11 +204,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (tick - lastBlackboardTick >= info.BlackboardInterval)
 			{
 				lastBlackboardTick = tick;
+
+				// Feed the durable intel tracker with everything the coalition can see this tick (or
+				// everything, in omniscient mode) and age it into the honesty ladder. The aged list is
+				// seeded into the fresh blackboard so last-known/inferred intel survives the rebuild.
+				intelTracker ??= new CoalitionIntelTracker(info.SightingMemoryTicks, (int)world.Timestep);
+				var seedIntel = ObserveEnemies(tick);
+
 				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
 					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes,
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
 					info.SupportPowerStructures, info.ProductionStructures,
-					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes, info.AntiAirUnits, info.SpecialTypes);
+					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes, info.AntiAirUnits, info.SpecialTypes,
+					seedIntel, info.Omniscient);
 
 				// The deception record is durable across blackboard rebuilds: it lives on the mission
 				// manager and is copied into every fresh model for the planner and the LLM snapshot.
@@ -451,6 +468,39 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// Observes every enemy actor the coalition can see this tick (or everything, in omniscient
+		/// mode) into the durable intel tracker, and returns the aged, status-tagged intel list.
+		/// </summary>
+		IReadOnlyList<EnemyIntel> ObserveEnemies(int tick)
+		{
+			var map = CoalitionMapAnalysis.ForMap(world, info.WaterTerrainTypes, info.ValuableResourceTypes);
+			var team = TeamPlayers();
+
+			foreach (var a in world.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || a.Owner == player || a.OccupiesSpace == null)
+					continue;
+				if (player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
+					continue;
+				if (!info.Omniscient && !team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+					continue;
+
+				var cell = a.Location;
+				intelTracker.Observe(a.Info.Name, Classify(a), RegionOfCell(map, cell), cell, tick);
+			}
+
+			return intelTracker.Age(tick);
+		}
+
+		static int RegionOfCell(CoalitionMapAnalysis map, CPos cell)
+		{
+			foreach (var region in map.Regions)
+				if (region.Bounds.Contains(cell.X, cell.Y))
+					return region.Index;
+			return 0;
+		}
+
+		/// <summary>
 		/// Tracks per-owner casualties as the fraction of the peak unit count lost. The peak lives in
 		/// the command center so it survives blackboard rebuilds; production growth only raises it.
 		/// </summary>
@@ -517,7 +567,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var build = "unknown";
 			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
-				switch (intel.Actor.Info.Name)
+				switch (intel.Type)
 				{
 					case "afld":
 					case "hpad":
@@ -626,7 +676,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (!route.Found)
 					continue;
 
-				var type = intel.Actor.Info.Name;
+				var type = intel.Type;
 				var (economy, production, technology) = TargetEvaluator.Classify(type);
 				var uncertainty = intel.Confidence < 0.5f ? 1f : 0.3f;
 				var reinforcementRisk = blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.Reinforcement];

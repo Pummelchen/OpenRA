@@ -102,7 +102,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 	}
 
-	/// <summary>One tracked enemy actor sighting with confidence decay.</summary>
+	/// <summary>One tracked enemy actor sighting with confidence decay and honesty status.</summary>
 	public sealed class EnemyIntel
 	{
 		public readonly Actor Actor;
@@ -114,6 +114,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int MinCount;
 		public int ExpectedCount;
 		public int MaxCount;
+
+		/// <summary>The honesty-ladder status of this sighting.</summary>
+		public IntelStatus Status = IntelStatus.Observed;
+
+		/// <summary>Ticks since the enemy was last observed.</summary>
+		public int AgeTicks;
+
+		/// <summary>Estimated position error in cells (0 when observed; grows for last-known mobile intel).</summary>
+		public int PositionErrorCells;
 
 		public EnemyIntel(Actor actor, UnitClass unitClass)
 		{
@@ -264,7 +273,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			FrozenSet<string> submarineTypes = null, FrozenSet<string> detectionTypes = null,
 			FrozenSet<string> supportPowerStructures = null, FrozenSet<string> productionStructures = null,
 			FrozenSet<string> transportTypes = null, FrozenSet<string> scoutTypes = null,
-			FrozenSet<string> antiAirTypes = null, FrozenSet<string> specialTypes = null)
+			FrozenSet<string> antiAirTypes = null, FrozenSet<string> specialTypes = null,
+			IEnumerable<EnemyIntel> seedIntel = null, bool omniscient = false)
 		{
 			World = world;
 			Player = player;
@@ -292,12 +302,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			ExtractForces();
 			ExtractSpecialAssets();
 			ExtractProduction();
-			ExtractEnemyIntel();
-			ExtractEconomy();
+			ExtractEnemyIntel(seedIntel, omniscient);
+			ComputeHomeAndEnemyRegions();
 			ComputeRegions();
+			AddSuspectedIntel();
+			ExtractEconomy();
 			ComputeThreats();
 			ComputeStrengths();
-			ComputeHomeAndEnemyRegions();
 
 			// The shipyard/coordinated-strike gates only make sense when the coalition can actually see
 			// a usable body of water. The shroud is shared across the team, so every bot computes the
@@ -443,18 +454,58 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return World.Map.CellContaining(structures.Select(a => a.CenterPosition).Average());
 		}
 
-		void ExtractEnemyIntel()
+		void ExtractEnemyIntel(IEnumerable<EnemyIntel> seedIntel, bool omniscient)
 		{
-			var enemyActors = World.Actors.Where(a =>
-				a.IsInWorld && !a.IsDead && a.Owner != Player && a.OccupiesSpace != null && Player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy);
-
-			foreach (var a in enemyActors)
+			// Preferred path: the commander's durable tracker supplies retained, status-tagged intel.
+			if (seedIntel != null)
 			{
-				var seen = Team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition));
-				if (!seen)
+				EnemyIntel.AddRange(seedIntel);
+				return;
+			}
+
+			// Fallback (no tracker): fog-gated, observed-only extraction.
+			foreach (var a in World.Actors)
+			{
+				if (a.IsDead || !a.IsInWorld || a.Owner == Player || a.OccupiesSpace == null)
+					continue;
+				if (Player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
+					continue;
+				if (!omniscient && !Team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
 					continue;
 
-				EnemyIntel.Add(new EnemyIntel(a, classify(a)));
+				EnemyIntel.Add(new EnemyIntel(a, classify(a)) { Status = IntelStatus.Observed });
+			}
+		}
+
+		/// <summary>
+		/// Marks unexplored regions adjacent to the known enemy base as SUSPECTED enemy presence —
+		/// low confidence, no specific type, so they seed no combat threat but tell the commander
+		/// where the enemy probably is and where to recon.
+		/// </summary>
+		void AddSuspectedIntel()
+		{
+			if (EnemyRegion < 0)
+				return;
+
+			foreach (var region in Regions)
+			{
+				if (region.FriendlyControl > 0)
+					continue;
+				if (!MapAnalysis.IsAdjacent(MovementClass.Ground, region.Index, EnemyRegion))
+					continue;
+
+				var center = new CPos((region.Bounds.Left + region.Bounds.Right) / 2, (region.Bounds.Top + region.Bounds.Bottom) / 2);
+				EnemyIntel.Add(new EnemyIntel(string.Empty, UnitClass.Support)
+				{
+					LastSeenCell = center,
+					LastSeenTick = Tick,
+					Confidence = 0.2f,
+					MinCount = 0,
+					ExpectedCount = 0,
+					MaxCount = 0,
+					Status = IntelStatus.Suspected,
+					PositionErrorCells = 16
+				});
 			}
 		}
 
@@ -616,30 +667,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		void ComputeStrengths()
 		{
-			foreach (var intel in EnemyIntel)
-			{
-				// Confidence decays over time; the expectation window widens as intel ages.
-				var ageTicks = Tick - intel.LastSeenTick;
-				var ageSeconds = ageTicks * World.Timestep / 1000f;
-				const float HalfLife = 30f;
-				intel.Confidence = MathF.Pow(0.5f, ageSeconds / HalfLife);
-				if (ageSeconds > 60)
-				{
-					intel.MinCount = 0;
-					intel.ExpectedCount = 1;
-					intel.MaxCount = 3;
-				}
-			}
-
-			// Coalition strength = force groups weighted by readiness; enemy strength = sightings.
+			// Coalition strength = force groups weighted by readiness.
 			foreach (var force in Forces)
 			{
 				CoalitionArmyStrength += force.TotalUnits > 0 ? force.Strength * force.TotalUnits : 0;
 				force.Readiness = force.TotalUnits > 0 ? 1f : 0f;
 			}
 
-			EnemyArmyCount = EnemyIntel.Count;
-			EnemyArmyStrength = EnemyIntel.Sum(i => i.Confidence);
+			// Enemy strength = confirmed/retained sightings. Confidence decay and status transitions
+			// are owned by the intel tracker; suspected entries are hypotheses, not sightings.
+			var confirmed = EnemyIntel.Where(i => i.Status != IntelStatus.Suspected).ToArray();
+			EnemyArmyCount = confirmed.Length;
+			EnemyArmyStrength = confirmed.Sum(i => i.Confidence);
 		}
 
 		void ComputeHomeAndEnemyRegions()
@@ -648,7 +687,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var enemyStructures = EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
 			if (enemyStructures.Length > 0)
 			{
-				var cell = World.Map.CellContaining(enemyStructures.Select(i => i.Actor.CenterPosition).Average());
+				var cell = new CPos(
+					(int)enemyStructures.Average(i => i.LastSeenCell.X),
+					(int)enemyStructures.Average(i => i.LastSeenCell.Y));
 				EnemyRegion = RegionOf(cell).Index;
 			}
 		}

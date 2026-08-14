@@ -310,11 +310,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		static string GetUncertainties(ToolContext context)
 		{
 			var questions = context.EnemyIntel
-				.Where(i => i.Confidence < 0.5f || AgeSeconds(context, i) > 60)
+				.Where(i => i.Status == IntelStatus.Suspected || i.Confidence < 0.5f || AgeSeconds(context, i) > 60)
 				.Select(i => new JsonObject
 				{
-					["question"] = $"enemy_{i.Type}_position",
-					["value"] = Round(i.Confidence)
+					["question"] = i.Status == IntelStatus.Suspected
+						? $"suspected_enemy_in_region_{context.RegionOf(i.LastSeenCell)}"
+						: $"enemy_{i.Type}_position",
+					["value"] = Round(i.Confidence),
+					["status"] = i.Status.ToString().ToLowerInvariant()
 				})
 				.ToArray();
 
@@ -510,6 +513,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				["type"] = intel.Type,
 				["class"] = intel.Class.ToString().ToLowerInvariant(),
+				["status"] = intel.Status.ToString().ToLowerInvariant(),
 				["last_seen"] = new JsonObject
 				{
 					["x"] = intel.LastSeenCell.X,
@@ -519,6 +523,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				},
 				["age_seconds"] = Round(AgeSeconds(context, intel)),
 				["confidence"] = Round(intel.Confidence),
+				["position_error_cells"] = intel.PositionErrorCells,
 				["count"] = new JsonObject
 				{
 					["min"] = intel.MinCount,
