@@ -202,6 +202,12 @@ namespace OpenRA
 			world.PostLoadComplete(null);
 
 			var result = new Result();
+
+			// Capture the telemetry offset now so the summary below counts only this run's events,
+			// not every previous run in the process (the log is append-only and shared across runs).
+			var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+			var telemetryOffset = File.Exists(telemetryPath) ? new FileInfo(telemetryPath).Length : 0L;
+
 			while (result.Ticks < maxTicks && !world.IsGameOver)
 			{
 				// The game loop schedules end-of-game and other delayed actions outside the sync scope;
@@ -242,15 +248,15 @@ namespace OpenRA
 				if (p.WinState == WinState.Won)
 					result.Winners.Add(p.ResolvedPlayerName);
 
-			result.Events = SummarizeTelemetry();
+			result.Events = SummarizeTelemetry(telemetryOffset);
 
 			world.Dispose();
 			orderManager.Dispose();
 			return result;
 		}
 
-		/// <summary>Counts the AI's strategic events from the telemetry log for tuning and self-play.</summary>
-		static Dictionary<string, int> SummarizeTelemetry()
+		/// <summary>Counts this run's AI strategic events from the telemetry log, from the given byte offset.</summary>
+		static Dictionary<string, int> SummarizeTelemetry(long offset)
 		{
 			var counts = new Dictionary<string, int>();
 			try
@@ -259,14 +265,19 @@ namespace OpenRA
 				if (!File.Exists(path))
 					return counts;
 
-				foreach (var line in File.ReadLines(path))
+				using (var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
 				{
-					var key = TelemetryEventKey(line);
-					if (key == null)
-						continue;
+					stream.Seek(offset, SeekOrigin.Begin);
+					using var reader = new StreamReader(stream);
+					while (reader.ReadLine() is { } line)
+					{
+						var key = TelemetryEventKey(line);
+						if (key == null)
+							continue;
 
-					counts.TryGetValue(key, out var n);
-					counts[key] = n + 1;
+						counts.TryGetValue(key, out var n);
+						counts[key] = n + 1;
+					}
 				}
 			}
 			catch (IOException)

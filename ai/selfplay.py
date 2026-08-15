@@ -105,12 +105,39 @@ def set_reserve(fraction: int) -> None:
     set_ai_param(r"(ReserveFraction:\s*)\d+", str(fraction))
 
 
-def set_retreat(percent: int) -> None:
-    set_ai_param(r"(RetreatHealthPercent:\s*)\d+", str(percent))
+def set_retreat(precision: int) -> None:
+    """Patches MicroPrecision (0-3), which drives the retreat threshold via difficulty."""
+    set_ai_param(r"(MicroPrecision:\s*)-?\d+", str(precision))
 
 
 def set_coordinated(minimum: int) -> None:
     set_ai_param(r"(CoordinatedAttackMinimum:\s*)\d+", str(minimum))
+
+
+def summarize_head_to_head(label: str, results: list) -> None:
+    """Reports the coalition's decisive result and ground-truth exchange vs a scripted opponent."""
+    coalition_wins = opponent_wins = stalemates = 0
+    ground_truths = []
+    ratios = []
+    for r in results:
+        winner_teams = r.get("winner_teams", [])
+        if 1 in winner_teams:
+            coalition_wins += 1
+        elif 2 in winner_teams:
+            opponent_wins += 1
+        else:
+            stalemates += 1
+        kills = r.get("kill_costs", {}).get(1, 0)
+        deaths = r.get("death_costs", {}).get(1, 0)
+        if deaths > 0:
+            ground_truths.append(kills / deaths)
+        if r.get("predicted_win_ratio") is not None:
+            ratios.append(r["predicted_win_ratio"])
+
+    mean_truth = statistics.mean(ground_truths) if ground_truths else float("nan")
+    mean_ratio = statistics.mean(ratios) if ratios else float("nan")
+    print(f"  {label}: W {coalition_wins}/L {opponent_wins}/D {stalemates}, "
+          f"ground-truth exchange {mean_truth:.2f}, predicted {mean_ratio:.2f}")
 
 
 def run_sweep(label: str, setter, values: list, args) -> None:
@@ -118,9 +145,17 @@ def run_sweep(label: str, setter, values: list, args) -> None:
     try:
         for value in values:
             setter(value)
-            results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
-                       for i in range(args.runs)]
-            summarize(f"{label} {value}", results)
+            if args.vs:
+                # Tune against a scripted opponent so the games resolve; otherwise symmetric
+                # self-play just stalemates and yields no win-rate signal.
+                results = [run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
+                                   bot_types=["ai", args.vs, "ai", args.vs], intelligence=args.intelligence)
+                           for i in range(args.runs)]
+                summarize_head_to_head(f"{label} {value}", results)
+            else:
+                results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
+                           for i in range(args.runs)]
+                summarize(f"{label} {value}", results)
     finally:
         with open(AI_YAML, "w", encoding="utf-8") as f:
             f.write(original)
@@ -252,13 +287,13 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=4)
     parser.add_argument("--seed-base", type=int, default=1000)
     parser.add_argument("--sweep-reserve", help="comma-separated reserve fractions to compare, e.g. 4,6,8")
-    parser.add_argument("--sweep-retreat", help="comma-separated retreat health percents, e.g. 25,35,45")
-    parser.add_argument("--sweep-coordinated", help="comma-separated coordinated-attack minimums, e.g. 30,50,70")
+    parser.add_argument("--sweep-retreat", help="comma-separated micro-precision values (0-3, lower = retreat later), e.g. 0,1,2,3")
+    parser.add_argument("--sweep-coordinated", help="comma-separated coordinated-attack minimums, e.g. 18,24,30")
     args = parser.parse_args()
 
     sweeps = [
         (args.sweep_reserve, "reserve 1/", set_reserve, int),
-        (args.sweep_retreat, "retreat %", set_retreat, int),
+        (args.sweep_retreat, "micro precision", set_retreat, int),
         (args.sweep_coordinated, "coordinated min", set_coordinated, int),
     ]
     for raw, label, setter, cast in sweeps:

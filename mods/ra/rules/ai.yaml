@@ -630,6 +630,7 @@ Player:
 	StrategicBrainBotModule:
 		RequiresCondition: enable-ai
 		Difficulty: 3
+		MicroPrecision: 3
 		ArmyPriority: 2tnk, 3tnk, 4tnk, e1, e3, ttnk, v2rl, heli, mig, jeep, arty
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
