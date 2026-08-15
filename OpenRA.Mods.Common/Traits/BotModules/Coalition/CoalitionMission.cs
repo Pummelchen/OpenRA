@@ -465,12 +465,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							}
 						}
 
-						// Abort when the coalition cannot win the fight, or the target became unreachable.
-						if (enemyStrength > coalitionStrength * 1.8f)
+						// Abort only when the coalition is hopelessly outnumbered. The old 1.8x threshold
+						// fired during ordinary fog-induced strength swings and made the commander drop
+						// every attack, which stalemated symmetric games. A 3x margin means the fight is
+						// genuinely unwinnable; otherwise the attack runs its course and the tactical
+						// brain's retreat logic manages a losing engagement.
+						if (enemyStrength > coalitionStrength * 3.0f)
 						{
 							mission.Status = MissionStatus.Aborted;
 							mission.OutcomeReason = "coalition outmatched";
-							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason}");
+							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason} (coalition {coalitionStrength:0} vs enemy {enemyStrength:0})");
 							continue;
 						}
 

@@ -809,22 +809,30 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		void ComputeStrengths()
 		{
-			// Coalition strength = class-weighted combat power, discounted by each force's average health.
+			// Coalition strength = class-weighted combat power of MOBILE units (structures excluded to
+			// match the enemy side, which never counts buildings). Health is deliberately not applied
+			// here: the enemy side (IntelPower) has no health estimate, so discounting our own strength
+			// while treating the enemy as full-health would make the commander bail on even fights.
 			foreach (var force in Forces)
 			{
 				var power = 0f;
 				for (var c = 0; c < force.Counts.Length; c++)
-					if (force.Counts[c] > 0)
+					if (force.Counts[c] > 0 && (UnitClass)c != UnitClass.Structure)
 						power += CombatEstimator.ClassWeight((UnitClass)c) * force.Counts[c];
 
-				CoalitionArmyStrength += force.TotalUnits > 0 ? power * force.Strength : 0f;
+				CoalitionArmyStrength += force.TotalUnits > 0 ? power : 0f;
 				force.Readiness = force.TotalUnits > 0 ? force.Strength * force.Cohesion : 0f;
 			}
 
-			// Enemy strength = class-weighted power of confirmed mobile-army sightings, discounted by
-			// confidence. Structures are excluded to match ForcePower (which excludes buildings), so a
-			// predicted win ratio compares like-with-like.
-			var confirmed = EnemyIntel.Where(i => i.Status != IntelStatus.Suspected && i.Class != UnitClass.Structure).ToArray();
+			// Enemy strength = class-weighted power of units visible RIGHT NOW, discounted by confidence.
+			// Only Observed entries count toward the aggregate: the intel tracker dedupes by
+			// (type, class, region), so a unit that moves across a region boundary would otherwise be
+			// counted twice (Observed in its new region, LastKnown in the old), and dead units would
+			// linger in the estimate for the memory window. Both inflate the enemy to ~2x the coalition
+			// and make the commander bail on even fights as "outmatched". Hidden enemy strength is
+			// handled by the fog-uncertainty floor below instead. Structures are excluded to match
+			// ForcePower (which excludes buildings), so a predicted win ratio compares like-with-like.
+			var confirmed = EnemyIntel.Where(i => i.Status == IntelStatus.Observed && i.Class != UnitClass.Structure).ToArray();
 			EnemyArmyCount = confirmed.Length;
 			EnemyArmyStrength = confirmed.Sum(CombatEstimator.IntelPower);
 

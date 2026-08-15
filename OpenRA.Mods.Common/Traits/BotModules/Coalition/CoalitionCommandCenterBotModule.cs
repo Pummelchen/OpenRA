@@ -340,9 +340,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Advance the mission lifecycle.
 			missions.Update(blackboard, coalitionArmy, enemyArmy);
 
-			// Mission creation driven by the force balance, intel, and LLM intent.
-			var wantAttack = ratio < 0.8f || llmIntent?.Posture == "attack";
-			var wantDefend = ratio > 1.2f || llmIntent?.Posture == "defend" || llmIntent?.Posture == "turtle";
+			// Mission creation driven by the force balance, intel, and LLM intent. Attack unless the
+			// enemy is clearly stronger (an even or slightly unfavorable fight is still worth taking
+			// with better tactics and reserve commitment); defend only when clearly outnumbered.
+			var wantAttack = ratio < 1.5f || llmIntent?.Posture == "attack";
+			var wantDefend = ratio > 2.0f || llmIntent?.Posture == "defend" || llmIntent?.Posture == "turtle";
 
 			if (wantAttack && blackboard.EnemyRegion >= 0)
 			{
@@ -545,7 +547,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				!a.IsDead && a.IsInWorld && a.OccupiesSpace != null && teamIds.Contains(a.Owner.InternalName)
 				&& !a.Info.HasTraitInfo<BuildingInfo>()).ToArray();
 
-			var friendlyValue = CombatEstimator.ForcePower(combatUnits, Classify);
+			// Use the same strength the commander actually decides on (CoalitionArmyStrength, no health
+			// discount) rather than ForcePower (health-discounted), so the predicted win ratio agrees
+			// with the attack/defend/abort decisions.
+			var friendlyValue = blackboard.CoalitionArmyStrength;
 			var enemyValue = blackboard.EnemyArmyStrength;
 			var idle = combatUnits.Length == 0 ? 1f : combatUnits.Count(a => a.IsIdle) * 1f / combatUnits.Length;
 
@@ -960,6 +965,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				(CoalitionCapability.AntiAir, info.AntiAirUnits.ToArray()),
 				(CoalitionCapability.GroundAntiArmor, info.AntiArmorUnits.ToArray()),
 				(CoalitionCapability.GroundAntiInfantry, info.AntiInfantryUnits.ToArray()),
+				(CoalitionCapability.StaticDefense, info.ArtilleryTypes.ToArray()),
 				(CoalitionCapability.Naval, info.NavalPriority.ToArray()),
 				(CoalitionCapability.Submarine, info.NavalPriority.ToArray())
 			};

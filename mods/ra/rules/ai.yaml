@@ -561,6 +561,8 @@ Player:
 		RefineryTypes: proc
 		PowerTypes: powr,apwr
 		ExpansionTolerate: 1,2
+		InititalMinimumRefineryCount: 0
+		AdditionalMinimumRefineryCount: 2
 		TechTypes: dome, atek, stek, fix, afld, hpad
 		ProductionTypes: barr,tent,weap
 		NavalProductionTypes: spen, syrd
@@ -635,7 +637,7 @@ Player:
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
 		CommitReserveRatio: 0.6
-		CoordinatedAttackMinimum: 24
+		CoordinatedAttackMinimum: 10
 		ScoutUnitTypes: e1
 		ScoutSquadSize: 25
 		ScoutMinDistance: 40
