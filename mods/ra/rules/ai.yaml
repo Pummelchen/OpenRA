@@ -588,7 +588,7 @@ Player:
 			barr: 3
 			kenn: 1
 			dome: 1
-			weap: 4
+			weap: 8
 			hpad: 1
 			spen: 1
 			syrd: 1
@@ -606,6 +606,10 @@ Player:
 			stek: 1
 			mslo: 1
 		BuildingDelays:
+			# Delay the barracks so the war factory (and its tanks) come out first, letting the
+			# coalition hold an early rush with armor instead of being overrun as infantry.
+			barr: 2000
+			tent: 2000
 			dome: 6000
 			fix: 3000
 			pbox: 1500
