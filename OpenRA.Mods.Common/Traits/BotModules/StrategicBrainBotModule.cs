@@ -719,8 +719,8 @@ namespace OpenRA.Mods.Common.Traits
 
 				var nearby = sightings.Count(kv => kv.Key.IsInWorld && !kv.Key.IsDead
 					&& (kv.Key.CenterPosition - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
-				var minCommitment = Math.Min(info.MinWaveSize / 2, activeArmy.Length);
-				var commitment = Math.Clamp(nearby * 2, minCommitment, activeArmy.Length);
+				var minCommitment = Math.Min(info.MinWaveSize, activeArmy.Length);
+				var commitment = Math.Clamp(nearby * 3, minCommitment, activeArmy.Length);
 				var defenders = Claim(activeArmy).Take(commitment).ToArray();
 				if (defenders.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
@@ -891,12 +891,12 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			// Coordinated attack gate: waves only launch once the coalition fields a large, mixed
-			// force (air + naval + land). Stealth, diversion, and deception missions run regardless.
-			// When no big water body has been explored yet the naval arm is not required at all:
-			// demanding ships on a map without usable water would block coordinated strikes forever.
+			// force. Land is the essential arm; air and naval are layered on when available. Requiring
+			// air in particular blocked attacks on maps where air production is not prioritized, which
+			// left the coalition sitting on defense to be worn down.
 			var coordinatedMinimum = (int)info.ScaleDifficulty(info.CoordinatedAttackMinimum);
 			var coordinated = coalitionArmy >= coordinatedMinimum
-				&& (!info.CoordinatedAttackMixedArms || (coalitionAir > 0 && coalitionLand > 0
+				&& (!info.CoordinatedAttackMixedArms || (coalitionLand > 0
 					&& (!coalitionHasWater || coalitionNaval > 0)));
 			if (!coordinated)
 			{

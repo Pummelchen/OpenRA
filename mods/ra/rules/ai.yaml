@@ -630,7 +630,7 @@ Player:
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
 		CommitReserveRatio: 0.6
-		CoordinatedAttackMinimum: 50
+		CoordinatedAttackMinimum: 24
 		ScoutUnitTypes: e1
 		ScoutSquadSize: 25
 		ScoutMinDistance: 40
