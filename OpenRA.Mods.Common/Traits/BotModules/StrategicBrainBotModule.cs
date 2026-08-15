@@ -719,7 +719,8 @@ namespace OpenRA.Mods.Common.Traits
 
 				var nearby = sightings.Count(kv => kv.Key.IsInWorld && !kv.Key.IsDead
 					&& (kv.Key.CenterPosition - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
-				var commitment = Math.Clamp(nearby * 2, info.MinWaveSize / 2, activeArmy.Length);
+				var minCommitment = Math.Min(info.MinWaveSize / 2, activeArmy.Length);
+				var commitment = Math.Clamp(nearby * 2, minCommitment, activeArmy.Length);
 				var defenders = Claim(activeArmy).Take(commitment).ToArray();
 				if (defenders.Length > 0)
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));

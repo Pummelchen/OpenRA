@@ -67,6 +67,18 @@ def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_type
             name_to_team[m.group(2).strip()] = int(m.group(1))
     result["winner_teams"] = sorted({name_to_team[n] for n in result["winners"] if n in name_to_team})
 
+    # Ground-truth kill/death cost per team (fog-independent, from PlayerStatistics).
+    kill_costs = {}
+    death_costs = {}
+    for line in out.splitlines():
+        m = re.search(r"team (\d+).*kills_cost=(\d+)\s+deaths_cost=(\d+)", line)
+        if m:
+            team, kills, deaths = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            kill_costs[team] = kill_costs.get(team, 0) + kills
+            death_costs[team] = death_costs.get(team, 0) + deaths
+    result["kill_costs"] = kill_costs
+    result["death_costs"] = death_costs
+
     in_events = False
     for line in out.splitlines():
         if "Match telemetry:" in line:
@@ -171,31 +183,44 @@ def run_combat_accuracy(args) -> None:
 def run_head_to_head(opponents: list, args) -> None:
     """Coalition "ai" vs each scripted opponent (1v1), reporting the coalition's combat results.
 
-    The coalition bot is always team 1 and the scripted opponent team 2, so a win for the
-    coalition is a result whose winning team set contains 1. On large maps the time limit is
-    often reached before elimination, so the combat exchange ratio (>1 means the coalition
-    destroyed more enemy value than it lost) is reported as the primary "who is ahead" signal.
+    The coalition bot is always team 1 and the scripted opponent team 2. Reports the decisive
+    result distribution (coalition wins / opponent wins / stalemates) and both the fog-limited
+    exchange (from the commander's telemetry) and the ground-truth exchange (from PlayerStatistics,
+    which counts every kill regardless of fog).
     """
     print(f"\n=== head-to-head: coalition 'ai' vs scripted bots ({args.runs} runs each) ===")
     for opponent in opponents:
-        wins = 0
+        coalition_wins = 0
+        opponent_wins = 0
+        stalemates = 0
         exchanges = []
         ratios = []
+        ground_truths = []
         for i in range(args.runs):
             result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
                              bot_types=["ai", opponent], intelligence=args.intelligence)
-            if 1 in result.get("winner_teams", []):
-                wins += 1
+            winner_teams = result.get("winner_teams", [])
+            if 1 in winner_teams:
+                coalition_wins += 1
+            elif 2 in winner_teams:
+                opponent_wins += 1
+            else:
+                stalemates += 1
             if "exchange" in result:
                 exchanges.append(result["exchange"])
             if result.get("predicted_win_ratio") is not None:
                 ratios.append(result["predicted_win_ratio"])
+            kills = result.get("kill_costs", {}).get(1, 0)
+            deaths = result.get("death_costs", {}).get(1, 0)
+            if deaths > 0:
+                ground_truths.append(kills / deaths)
 
         mean_exchange = statistics.mean(exchanges) if exchanges else float("nan")
         mean_ratio = statistics.mean(ratios) if ratios else float("nan")
-        print(f"  ai vs {opponent}: decisive wins {wins}/{args.runs}, "
-              f"mean exchange {mean_exchange:.2f} (>1 = coalition ahead), "
-              f"mean predicted ratio {mean_ratio:.2f}")
+        mean_truth = statistics.mean(ground_truths) if ground_truths else float("nan")
+        print(f"  ai vs {opponent}: W {coalition_wins}/L {opponent_wins}/D {stalemates}, "
+              f"fog exchange {mean_exchange:.2f}, ground-truth exchange {mean_truth:.2f}, "
+              f"predicted ratio {mean_ratio:.2f}")
 
 
 def summarize(label: str, results: list) -> None:

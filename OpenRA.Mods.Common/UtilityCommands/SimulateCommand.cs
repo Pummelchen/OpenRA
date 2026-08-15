@@ -68,6 +68,11 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			}
 
 			HeadlessSkirmish.IsBotEnabled = p => p.PlayerActor.TraitsImplementing<ModularBot>().Any(b => b.IsEnabled);
+			HeadlessSkirmish.CaptureKillCosts = p =>
+			{
+				var stats = p.PlayerActor.TraitOrDefault<PlayerStatistics>();
+				return stats == null ? (0, 0) : (stats.KillsCost, stats.DeathsCost);
+			};
 
 			var botTypes = botTypesArg != null
 				? botTypesArg.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray()
@@ -92,7 +97,7 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			Console.WriteLine($"Finished: {result.Ticks} ticks, {(result.GameOver ? "game over" : "time limit reached")}, {result.ActorCount} actors");
 			foreach (var client in result.Clients.OrderBy(c => c.Index))
 				Console.WriteLine($"  {client.Index,2}  {(client.IsBot ? (client.BotEnabled ? "AI enabled" : "AI disabled") : "observer")}  " +
-					$"team {client.Team}  faction {client.Faction}  {client.Name}");
+					$"team {client.Team}  faction {client.Faction}  {client.Name}  kills_cost={client.KillsCost} deaths_cost={client.DeathsCost}");
 			if (result.Winners.Count > 0)
 				Console.WriteLine($"Winners: {string.Join(", ", result.Winners)}");
 

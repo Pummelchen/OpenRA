@@ -41,6 +41,13 @@ namespace OpenRA
 		/// </summary>
 		public static int? CommanderIntelligence;
 
+		/// <summary>
+		/// Optional hook to capture a player's ground-truth kill/death cost before the world is
+		/// disposed. Set by the mod (which can read <c>PlayerStatistics</c>) for self-play evaluation;
+		/// null disables it. The engine never sees fog-independent state through this.
+		/// </summary>
+		public static Func<Player, (int KillsCost, int DeathsCost)> CaptureKillCosts;
+
 		/// <summary>One lobby client entry as reported by a finished simulation.</summary>
 		public sealed class ClientSummary
 		{
@@ -51,6 +58,8 @@ namespace OpenRA
 			public bool IsBot;
 			public bool BotEnabled;
 			public string Slot;
+			public int KillsCost;
+			public int DeathsCost;
 		}
 
 		/// <summary>Outcome summary of a headless simulation.</summary>
@@ -207,6 +216,7 @@ namespace OpenRA
 			foreach (var c in lobby.Clients)
 			{
 				var player = world.Players.FirstOrDefault(p => p.ClientIndex == c.Index);
+				var killCosts = player != null && CaptureKillCosts != null ? CaptureKillCosts(player) : default;
 				result.Clients.Add(new ClientSummary
 				{
 					Index = c.Index,
@@ -215,7 +225,9 @@ namespace OpenRA
 					Team = c.Team,
 					IsBot = c.IsBot,
 					Slot = c.Slot,
-					BotEnabled = c.IsBot && player != null && (IsBotEnabled?.Invoke(player) ?? true)
+					BotEnabled = c.IsBot && player != null && (IsBotEnabled?.Invoke(player) ?? true),
+					KillsCost = killCosts.KillsCost,
+					DeathsCost = killCosts.DeathsCost
 				});
 			}
 
