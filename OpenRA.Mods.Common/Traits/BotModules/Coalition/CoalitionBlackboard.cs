@@ -298,6 +298,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		public readonly bool HasBigWater;
 
+		/// <summary>True in omniscient mode, where observation is complete and the fog-uncertainty floor is disabled.</summary>
+		public readonly bool Omniscient;
+
 		readonly Func<Actor, UnitClass> classify;
 		readonly FrozenSet<string> artilleryTypes;
 		readonly FrozenSet<string> submarineTypes;
@@ -322,6 +325,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Player = player;
 			Team = team;
 			Tick = world.WorldTick;
+			Omniscient = omniscient;
 			this.classify = classify;
 			this.artilleryTypes = artilleryTypes ?? new HashSet<string> { "arty", "v2rl" }.ToFrozenSet();
 			this.submarineTypes = submarineTypes ?? new HashSet<string> { "ss", "msub" }.ToFrozenSet();
@@ -823,6 +827,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var confirmed = EnemyIntel.Where(i => i.Status != IntelStatus.Suspected && i.Class != UnitClass.Structure).ToArray();
 			EnemyArmyCount = confirmed.Length;
 			EnemyArmyStrength = confirmed.Sum(CombatEstimator.IntelPower);
+
+			// Fog uncertainty: under fair fog the observed enemy strength is a lower bound, because the
+			// coalition only sees the part of the map it has explored. Assume the unexplored part could
+			// hold an army at least as strong as the coalition's own, scaled by the unexplored fraction.
+			// This keeps the commander honest (no 8x "advantage" over an enemy it has barely scouted) so
+			// it builds a balanced force and commits properly instead of over-reaching. Skipped in
+			// omniscient mode, where observation is already complete.
+			if (!Omniscient)
+			{
+				var mapCells = World.Map.MapSize.Width * World.Map.MapSize.Height;
+				var exploredFraction = mapCells > 0
+					? Math.Clamp(Team.Max(ally => ally.Shroud.RevealedCells) * 1f / mapCells, 0f, 1f)
+					: 0f;
+				EnemyArmyStrength = Math.Max(EnemyArmyStrength, CoalitionArmyStrength * (1f - exploredFraction));
+			}
 		}
 
 		void ComputeHomeAndEnemyRegions()
