@@ -182,5 +182,16 @@ namespace OpenRA.Test
 
 			Assert.That(airVsCoveredRifles.WinRatio, Is.LessThan(airVsRifles.WinRatio));
 		}
+
+		[TestCase(TestName = "Intel power scales class weight by expected count and confidence.")]
+		public void IntelPower()
+		{
+			var tank = new EnemyIntel("3tnk", UnitClass.Armor) { ExpectedCount = 4, Confidence = 1f };
+			var uncertain = new EnemyIntel("3tnk", UnitClass.Armor) { ExpectedCount = 4, Confidence = 0.5f };
+
+			// 3 (armor weight) * 4 (count) * 1 (confidence) = 12; halved confidence halves the power.
+			Assert.That(CombatEstimator.IntelPower(tank), Is.EqualTo(12f).Within(0.001f));
+			Assert.That(CombatEstimator.IntelPower(uncertain), Is.EqualTo(6f).Within(0.001f));
+		}
 	}
 }

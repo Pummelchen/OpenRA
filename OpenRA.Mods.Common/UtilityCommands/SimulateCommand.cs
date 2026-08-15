@@ -27,9 +27,10 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			return args.Length >= 2;
 		}
 
-		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...]",
+		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n]",
 			  "Run a headless skirmish simulation and report the outcome. BOT_TYPES lists one bot type " +
-			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all.")]
+			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all. " +
+			  "INTELLIGENCE overrides the coalition commander's fog advantage (0 = fair fog, 3 = omniscient).")]
 		void IUtilityCommand.Run(Utility utility, string[] args)
 		{
 			// The engine assumes Game.ModData is set; do so before touching any map data.
@@ -48,6 +49,9 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			var seed = ParseInt(args, "SEED", 12345);
 			var botType = ParseArg(args, "BOT", "ai");
 			var botTypesArg = ParseArg(args, "BOT_TYPES", null);
+			var intelligenceArg = ParseArg(args, "INTELLIGENCE", null);
+			if (intelligenceArg != null && int.TryParse(intelligenceArg, out var intel))
+				HeadlessSkirmish.CommanderIntelligence = intel;
 
 			Map map;
 			try

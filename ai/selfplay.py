@@ -26,13 +26,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AI_YAML = os.path.join(REPO, "mods", "ra", "rules", "ai.yaml")
 
 
-def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_types=None) -> dict:
+def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_types=None, intelligence=None) -> dict:
     map_arg = os.path.abspath(map_arg)
     bot_spec = f'BOT_TYPES={",".join(bot_types)}' if bot_types else f'BOTS={bots}'
+    intel_spec = f'INTELLIGENCE={intelligence}' if intelligence is not None else ''
     cmd = [
         "bash", "-lc",
         f'cd "{REPO}/mods/ra" && PATH="$HOME/.dotnet:$PATH" '
-        f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed}',
+        f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed} {intel_spec}'.rstrip(),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=1200).stdout
 
@@ -181,7 +182,8 @@ def run_head_to_head(opponents: list, args) -> None:
         exchanges = []
         ratios = []
         for i in range(args.runs):
-            result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i, bot_types=["ai", opponent])
+            result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
+                             bot_types=["ai", opponent], intelligence=args.intelligence)
             if 1 in result.get("winner_teams", []):
                 wins += 1
             if "exchange" in result:
@@ -217,6 +219,8 @@ def main() -> None:
     parser.add_argument("--combat-accuracy", action="store_true",
                         help="correlate predicted win ratio with actual outcomes across runs")
     parser.add_argument("--vs", help="comma-separated scripted bot types to fight head-to-head, e.g. rush,turtle,naval")
+    parser.add_argument("--intelligence", type=int, default=None,
+                        help="override the coalition commander's fog advantage (0 = fair fog, 3 = omniscient)")
     parser.add_argument("--bots", type=int, default=4)
     parser.add_argument("--teams", type=int, default=2)
     parser.add_argument("--ticks", type=int, default=6000)

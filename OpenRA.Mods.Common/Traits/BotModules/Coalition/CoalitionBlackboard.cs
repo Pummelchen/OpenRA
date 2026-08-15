@@ -805,18 +805,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		void ComputeStrengths()
 		{
-			// Coalition strength = force groups weighted by readiness.
+			// Coalition strength = class-weighted combat power, discounted by each force's average health.
 			foreach (var force in Forces)
 			{
-				CoalitionArmyStrength += force.TotalUnits > 0 ? force.Strength * force.TotalUnits : 0;
+				var power = 0f;
+				for (var c = 0; c < force.Counts.Length; c++)
+					if (force.Counts[c] > 0)
+						power += CombatEstimator.ClassWeight((UnitClass)c) * force.Counts[c];
+
+				CoalitionArmyStrength += force.TotalUnits > 0 ? power * force.Strength : 0f;
 				force.Readiness = force.TotalUnits > 0 ? force.Strength * force.Cohesion : 0f;
 			}
 
-			// Enemy strength = confirmed/retained sightings. Confidence decay and status transitions
-			// are owned by the intel tracker; suspected entries are hypotheses, not sightings.
-			var confirmed = EnemyIntel.Where(i => i.Status != IntelStatus.Suspected).ToArray();
+			// Enemy strength = class-weighted power of confirmed mobile-army sightings, discounted by
+			// confidence. Structures are excluded to match ForcePower (which excludes buildings), so a
+			// predicted win ratio compares like-with-like.
+			var confirmed = EnemyIntel.Where(i => i.Status != IntelStatus.Suspected && i.Class != UnitClass.Structure).ToArray();
 			EnemyArmyCount = confirmed.Length;
-			EnemyArmyStrength = confirmed.Sum(i => i.Confidence);
+			EnemyArmyStrength = confirmed.Sum(CombatEstimator.IntelPower);
 		}
 
 		void ComputeHomeAndEnemyRegions()

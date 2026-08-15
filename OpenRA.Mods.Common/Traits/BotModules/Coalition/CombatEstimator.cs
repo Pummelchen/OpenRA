@@ -50,6 +50,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return actors.Sum(a => Power(a, classify));
 		}
 
+		/// <summary>
+		/// Combat power of an intelligence record: class weight scaled by the expected unit count and
+		/// discounted by confidence. This is the enemy-side counterpart of <see cref="ForcePower"/> so
+		/// a predicted win ratio compares like-with-like.
+		/// </summary>
+		public static float IntelPower(EnemyIntel intel)
+		{
+			return ClassWeight(intel.Class) * intel.ExpectedCount * intel.Confidence;
+		}
+
 		/// <summary>Lanchester-style outcome estimate: win ratio and expected friendly power loss.</summary>
 		public static (float WinRatio, float LossFraction) Estimate(float friendlyPower, float enemyPower)
 		{
