@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A simple GTK3 graphical dialog helper that can be used as a fallback if zenity is not available
-   Compatible with python 2 or 3 with the gi bindings.
+   Requires Python 3.14 or newer with the gi bindings.
 
    Three modes are available:
        test: accepts no arguments, returns 0 if the python dependencies are available, or 1 if not
@@ -12,6 +12,9 @@
 """
 
 import sys
+
+if sys.version_info < (3, 14):
+    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
 
 try:
     import argparse

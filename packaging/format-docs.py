@@ -11,6 +11,9 @@ import sys
 import json
 from collections import OrderedDict
 
+if sys.version_info < (3, 14):
+    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
+
 def format_type_name(typeName, isKnownType):
     name = typeName
     if name.endswith("Info"):

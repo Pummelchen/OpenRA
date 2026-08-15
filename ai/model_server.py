@@ -31,10 +31,14 @@ import base64
 import json
 import os
 import statistics
+import sys
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+if sys.version_info < (3, 14):
+    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
 
 DEFAULT_PORT = 8765
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")

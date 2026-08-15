@@ -16,6 +16,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+if sys.version_info < (3, 14):
+    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
+
 OWNER = os.getenv("OPENRA_OWNER", "Pummelchen")
 REPO = os.getenv("OPENRA_REPO", "OpenRA")
 FULL_REPO = f"{OWNER}/{REPO}"

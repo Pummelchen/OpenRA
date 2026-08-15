@@ -8,6 +8,9 @@
 import struct
 import sys
 
+if sys.version_info < (3, 14):
+    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
+
 if __name__ == "__main__":
     print('Patching ' + sys.argv[1] + ':')
     with open(sys.argv[1], 'r+b') as assembly:
