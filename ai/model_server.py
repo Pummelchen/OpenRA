@@ -24,8 +24,6 @@ to the game's tool endpoint (default http://127.0.0.1:8766/tools) or empty to di
 The server is deliberately dependency-free (Python standard library only).
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import json

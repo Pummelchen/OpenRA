@@ -12,8 +12,6 @@ Usage (run from the repo root):
   ai/selfplay.py --maps a,b,c --runs 4                   # cross-map overfitting check
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import re

@@ -6,8 +6,6 @@ Repo-level setup uses GITHUB_TOKEN. User-owned Project v2 setup requires a
 project-capable token in PROJECT_TOKEN, OPENRA_PROJECT_TOKEN, or GIT_ACCESS_TOKEN.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sys
