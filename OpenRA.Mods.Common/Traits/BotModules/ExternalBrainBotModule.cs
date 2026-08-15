@@ -160,7 +160,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IBotTick.BotTick(IBot bot)
 		{
-			if (IsTraitDisabled || string.IsNullOrEmpty(info.ExternalBrainUrl))
+			if (IsTraitDisabled || string.IsNullOrEmpty(info.ExternalBrainUrl) || HeadlessSkirmish.DisableExternalBrain)
 				return;
 
 			var world = bot.Player.World;

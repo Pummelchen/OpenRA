@@ -42,6 +42,13 @@ namespace OpenRA
 		public static int? CommanderIntelligence;
 
 		/// <summary>
+		/// When true, the external brain is disabled so a simulation is fully deterministic. The async
+		/// model consultation (even when it only times out) introduces thread-timing nondeterminism, so
+		/// self-play evaluation sets this; live LLM play leaves it false.
+		/// </summary>
+		public static bool DisableExternalBrain;
+
+		/// <summary>
 		/// Optional hook to capture a player's ground-truth kill/death cost before the world is
 		/// disposed. Set by the mod (which can read <c>PlayerStatistics</c>) for self-play evaluation;
 		/// null disables it. The engine never sees fog-independent state through this.

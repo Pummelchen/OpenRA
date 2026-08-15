@@ -197,7 +197,11 @@ namespace OpenRA
 			Timestep = ReplayTimestep = GameSpeed.Timestep;
 
 			SharedRandom = new MersenneTwister(orderManager.LobbyInfo.GlobalSettings.RandomSeed);
-			LocalRandom = new MersenneTwister();
+
+			// LocalRandom is used by bot modules (base placement, squad timing, ...), which must be
+			// reproducible for replays and self-play. Seed it from the world seed so a fixed seed gives
+			// an identical match instead of depending on wall-clock time.
+			LocalRandom = new MersenneTwister(SharedRandom.Next());
 
 			var worldActorType = type == WorldType.Editor ? SystemActors.EditorWorld : SystemActors.World;
 			WorldActor = CreateActor(worldActorType.ToString(), []);

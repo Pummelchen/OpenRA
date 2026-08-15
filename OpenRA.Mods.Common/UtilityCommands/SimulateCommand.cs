@@ -74,6 +74,10 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				return stats == null ? (0, 0) : (stats.KillsCost, stats.DeathsCost);
 			};
 
+			// Self-play evaluation must be replay-deterministic; the async model consultation (even a
+			// timeout) introduces thread-timing nondeterminism, so the external brain is disabled here.
+			HeadlessSkirmish.DisableExternalBrain = true;
+
 			var botTypes = botTypesArg != null
 				? botTypesArg.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray()
 				: null;
