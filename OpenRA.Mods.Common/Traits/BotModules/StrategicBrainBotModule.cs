@@ -233,6 +233,7 @@ namespace OpenRA.Mods.Common.Traits
 		bool enemyAirSpotted;
 		bool enemyArmorSpotted;
 		bool enemyInfantrySpotted;
+		string lastComposition;
 		WPos? enemyBaseCenter;
 
 		Posture posture = Posture.BuildArmy;
@@ -384,6 +385,13 @@ namespace OpenRA.Mods.Common.Traits
 			enemyAirSpotted = sightings.Keys.Any(a => info.AirUnitTypes.Contains(a.Info.Name));
 			enemyArmorSpotted = sightings.Keys.Any(a => info.ArmorUnitTypes.Contains(a.Info.Name));
 			enemyInfantrySpotted = sightings.Keys.Any(a => info.InfantryUnitTypes.Contains(a.Info.Name));
+
+			var composition = $"armor={enemyArmorSpotted} air={enemyAirSpotted} infantry={enemyInfantrySpotted}";
+			if (composition != lastComposition)
+			{
+				lastComposition = composition;
+				CoalitionTelemetry.Log(world, $"Enemy composition: {composition} (army {enemyArmyCount})");
+			}
 
 			var structureSightings = sightings.Keys.Where(IsStructure).Select(a => a.CenterPosition).ToArray();
 			enemyBaseCenter = structureSightings.Length > 0 ? structureSightings.Average() : null;
