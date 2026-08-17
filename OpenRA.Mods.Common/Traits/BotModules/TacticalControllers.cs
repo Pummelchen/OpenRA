@@ -88,7 +88,7 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					var center = mainForce.Select(a => a.CenterPosition).Average();
 					var spread = 15 * 1024; // 15 cells
-					var ahead = mainForce.Where(a => (a.CenterPosition - target).LengthSquared < (center - target).LengthSquared - spread * spread).ToArray();
+					var ahead = mainForce.Where(a => TacticalFormation.IsAheadOfCenter(a.CenterPosition, target, center, (long)spread * spread)).ToArray();
 					var followers = mainForce.Except(ahead).ToArray();
 					if (ahead.Length > 0 && followers.Length > 0)
 					{
@@ -107,26 +107,7 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				var baseCenter = Brain.BaseCenter();
 				if (baseCenter != null)
-				{
-					var dir = target - baseCenter.Value;
-					var len = dir.Length;
-					if (len > 0)
-					{
-						var offset = 8 * 1024; // 8 cells
-						var pullbackX = 0;
-						var pullbackY = 0;
-						if (len > offset)
-						{
-							pullbackX = -dir.X * offset / len;
-							pullbackY = -dir.Y * offset / len;
-						}
-
-						var artilleryTarget = new WPos(target.X + pullbackX, target.Y + pullbackY, target.Z);
-						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(artilleryTarget), false, groupedActors: artillery));
-					}
-					else
-						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: artillery));
-				}
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(TacticalFormation.ArtilleryPullbackTarget(target, baseCenter.Value, 8 * 1024)), false, groupedActors: artillery));
 				else
 					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: artillery));
 			}

@@ -1120,32 +1120,6 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>
-		/// Manages strategic reserve commitments and their justifications (reqs 355-360).
-		/// Tracks each commitment with a reason, warns when the reserve drops below MinWaveSize/2,
-		/// and provides hooks for counterattack interception, front reinforcement, breakthrough
-		/// exploitation, and expansion protection.
-		/// </summary>
-		sealed class ReserveManager
-		{
-			public int LastCommitTick = int.MinValue;
-			public string LastCommitReason;
-			public int CommittedUnits;
-
-			/// <summary>Records a reserve commitment with a reason for telemetry (req 360).</summary>
-			public void Commit(int tick, int units, string reason, World world, int minWaveSize)
-			{
-				LastCommitTick = tick;
-				CommittedUnits = units;
-				LastCommitReason = reason;
-				CoalitionTelemetry.Log(world, $"Reserve committed: {units} units for {reason}");
-
-				// LLM must justify: warn when reserve would drop below MinWaveSize/2 (req 360).
-				if (units < minWaveSize / 2)
-					CoalitionTelemetry.Log(world, $"Reserve warning: commitment of {units} units drops reserve below MinWaveSize/2 ({minWaveSize / 2}) — LLM must justify");
-			}
-		}
-
-		/// <summary>
 		/// Directs the reserve to stop counterattacks by intercepting enemy attackers (req 355).
 		/// Called when the enemy is attacking and the reserve can intercept.
 		/// </summary>
