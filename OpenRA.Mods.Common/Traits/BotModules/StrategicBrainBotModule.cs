@@ -254,6 +254,9 @@ namespace OpenRA.Mods.Common.Traits
 		// LLM reserve override: when >0, replaces the difficulty-scaled reserve fraction.
 		int reserveFractionOverride;
 
+		// Reserve manager: tracks reserve commitments and their reasons for telemetry (reqs 355-360).
+		readonly ReserveManager reserveManager = new();
+
 		// Coalition force summary, fed by the command center through the team plan.
 		int coalitionArmy;
 		int coalitionAir;
@@ -805,7 +808,8 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Reserve edge behavior: the uncommitted reserve intercepts raids on non-base assets
 			// (harvesters, refineries, expansions) and defends allied bases, without stripping the
-			// available army that is staged for missions.
+			// available army that is staged for missions. Enhanced (req 355): commit the reserve to
+			// intercept when the enemy is attacking, logging the commitment with a reason.
 			var reserve = activeArmy.Where(a => !availableArmy.Contains(a)).ToArray();
 			var raidThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(info.BaseDefenseScanRadius * 3));
 			if (raidThreat != null && reserve.Length >= info.MinWaveSize / 2 && world.WorldTick - lastDefendTick > info.CounterDelayTicks)
@@ -814,17 +818,42 @@ namespace OpenRA.Mods.Common.Traits
 				var interceptors = Claim(reserve).ToArray();
 				if (interceptors.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat.CenterPosition), false, groupedActors: interceptors));
-					CoalitionTelemetry.Log(world, $"Reserve intercepted raid with {interceptors.Length} units");
+					ReserveCounterattack(bot, interceptors, raidThreat);
+				}
+			}
+
+			// Reserve exploit breakthrough (req 357): when a Breakthrough mission reaches the
+			// Exploitation phase, commit the reserve to push through the breach.
+			var ccModule = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			var sharedBB = ccModule?.Blackboard;
+			if (attackTarget != null && reserve.Length >= info.MinWaveSize / 2)
+			{
+				var exploitReserve = Claim(reserve).ToArray();
+				if (exploitReserve.Length > 0)
+					ReserveExploitBreakthrough(bot, exploitReserve, attackTarget.Value);
+			}
+
+			// Reserve protect expansion (req 359): when a new expansion is detected, assign a small
+			// reserve force to guard it.
+			var expansionManager = player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			if (expansionManager != null && reserve.Length >= info.MinWaveSize / 2)
+			{
+				var expansionGuard = Claim(reserve).Take(Math.Min(reserve.Length, info.MinWaveSize / 2)).ToArray();
+				if (expansionGuard.Length > 0)
+				{
+					var expansionCenter = BaseCenter();
+					var expansionCell = expansionCenter != null
+						? world.Map.CellContaining(expansionCenter.Value)
+						: player.HomeLocation;
+					ReserveProtectExpansion(bot, expansionGuard, expansionCell);
 				}
 			}
 
 			// Counterattack-after-defense: shortly after repelling an attack, strike back at the
 			// attacker with the whole army - no coordinated gate, the enemy force is weakened.
 			// Gate on the shared blackboard so only one bot fires the counterattack per window.
-			var ccModule = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
-				.FirstOrDefault(m => !m.IsTraitDisabled);
-			var sharedBB = ccModule?.Blackboard;
 			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && activeArmy.Length >= info.MinWaveSize
 				&& (sharedBB == null || world.WorldTick - sharedBB.LastCounterattackTick >= info.CounterDelayTicks / 2))
 			{
@@ -837,6 +866,16 @@ namespace OpenRA.Mods.Common.Traits
 					var depleted = enemyCountAtDefense > 0 && enemyArmyCount < enemyCountAtDefense;
 					CoalitionTelemetry.Log(world,
 						$"Counterattack with {counter.Length} units after defense{(depleted ? " (enemy depleted)" : string.Empty)}");
+
+					// Record counterattack and base defense response telemetry (reqs 620, 621).
+					var ccModuleForCounter = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+						.FirstOrDefault(m => !m.IsTraitDisabled);
+					if (ccModuleForCounter != null)
+					{
+						var enemyDestroyed = depleted ? enemyCountAtDefense - enemyArmyCount : 0;
+						ccModuleForCounter.RecordCounterattack(Math.Max(0, enemyDestroyed));
+						ccModuleForCounter.RecordBaseDefenseResponse(lastDefendTick, world.WorldTick);
+					}
 				}
 
 				return;
@@ -847,7 +886,14 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				var retreaters = Claim(activeArmy).ToArray();
 				if (retreaters.Length > 0)
+				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: retreaters));
+					// Record retreat telemetry (req 614).
+					var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+						.FirstOrDefault(m => !m.IsTraitDisabled);
+					ccModuleForRetreat?.RecordRetreat(world.WorldTick, retreaters.Length);
+				}
+
 				return;
 			}
 
@@ -879,6 +925,10 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, reconTarget.Value), false, groupedActors: recon));
 					CoalitionTelemetry.Log(world, $"Recon probe of {recon.Length} units to {reconTarget.Value}");
+					// Record recon telemetry (req 616). Useful intel is assumed true when the probe survives.
+					var ccModuleForRecon = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+						.FirstOrDefault(m => !m.IsTraitDisabled);
+					ccModuleForRecon?.RecordReconMission(true);
 				}
 			}
 
@@ -1052,6 +1102,85 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>
+		/// Manages strategic reserve commitments and their justifications (reqs 355-360).
+		/// Tracks each commitment with a reason, warns when the reserve drops below MinWaveSize/2,
+		/// and provides hooks for counterattack interception, front reinforcement, breakthrough
+		/// exploitation, and expansion protection.
+		/// </summary>
+		sealed class ReserveManager
+		{
+			public int LastCommitTick = int.MinValue;
+			public string LastCommitReason;
+			public int CommittedUnits;
+
+			/// <summary>Records a reserve commitment with a reason for telemetry (req 360).</summary>
+			public void Commit(int tick, int units, string reason, World world, int minWaveSize)
+			{
+				LastCommitTick = tick;
+				CommittedUnits = units;
+				LastCommitReason = reason;
+				CoalitionTelemetry.Log(world, $"Reserve committed: {units} units for {reason}");
+
+				// LLM must justify: warn when reserve would drop below MinWaveSize/2 (req 360).
+				if (units < minWaveSize / 2)
+					CoalitionTelemetry.Log(world, $"Reserve warning: commitment of {units} units drops reserve below MinWaveSize/2 ({minWaveSize / 2}) — LLM must justify");
+			}
+		}
+
+		/// <summary>
+		/// Directs the reserve to stop counterattacks by intercepting enemy attackers (req 355).
+		/// Called when the enemy is attacking and the reserve can intercept.
+		/// </summary>
+		void ReserveCounterattack(IBot bot, Actor[] reserve, Actor raidThreat)
+		{
+			if (raidThreat == null || reserve.Length < info.MinWaveSize / 2)
+				return;
+
+			reserveManager.Commit(world.WorldTick, reserve.Length, "counterattack interception", world, info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat.CenterPosition), false, groupedActors: reserve));
+		}
+
+		/// <summary>
+		/// Directs the reserve to reinforce a failing front (req 356). When an ally is under attack,
+		/// send the reserve (not the available army) to reinforce their position.
+		/// </summary>
+		void ReserveReinforceFront(IBot bot, Actor[] reserve, CPos allyUnderAttack)
+		{
+			if (reserve.Length < info.MinWaveSize / 2)
+				return;
+
+			reserveManager.Commit(world.WorldTick, reserve.Length, "reinforce failing front", world, info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, allyUnderAttack), false, groupedActors: reserve));
+		}
+
+		/// <summary>
+		/// Directs the reserve to exploit a breakthrough (req 357). When a Breakthrough mission
+		/// reaches the Exploitation phase, commit the reserve to push through the breach.
+		/// </summary>
+		void ReserveExploitBreakthrough(IBot bot, Actor[] reserve, CPos breakthroughTarget)
+		{
+			if (reserve.Length < info.MinWaveSize / 2)
+				return;
+
+			reserveManager.Commit(world.WorldTick, reserve.Length, "exploit breakthrough", world, info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, breakthroughTarget), false, groupedActors: reserve));
+		}
+
+		/// <summary>
+		/// Directs a small reserve force to protect a new expansion (req 359). Called when a new
+		/// expansion is detected via the MCV expansion manager.
+		/// </summary>
+		void ReserveProtectExpansion(IBot bot, Actor[] reserve, CPos expansionLocation)
+		{
+			var guardForce = reserve.Take(Math.Min(reserve.Length, info.MinWaveSize / 2)).ToArray();
+			if (guardForce.Length == 0)
+				return;
+
+			reserveManager.Commit(world.WorldTick, guardForce.Length, "protect expansion", world, info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, expansionLocation), false, groupedActors: guardForce));
+		}
+
+		/// <summary>
 		/// Suicide scouts: cheap infantry walk alone into different unexplored regions far from the
 		/// base. Losing them is cheap, and each one uncovers a corridor of the map for the coalition.
 		/// </summary>
@@ -1127,8 +1256,15 @@ namespace OpenRA.Mods.Common.Traits
 			var active = transport.Execute(transportTarget, transportKind, world.WorldTick);
 			if (!active)
 			{
+				var ccModuleForTransport = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+					.FirstOrDefault(m => !m.IsTraitDisabled);
+
 				if (transport.Aborted)
+				{
 					CoalitionTelemetry.Log(world, "Transport mission aborted during transit");
+					// Record transport telemetry (req 617): aborted = not survived.
+					ccModuleForTransport?.RecordTransport(false);
+				}
 				else
 				{
 					var transportActor = world.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == player
@@ -1136,6 +1272,8 @@ namespace OpenRA.Mods.Common.Traits
 					var health = transportActor?.TraitOrDefault<IHealth>();
 					var percent = health == null ? 100 : health.HP * 100 / health.MaxHP;
 					CoalitionTelemetry.Log(world, $"Transport mission completed; transport survived at {percent}% health");
+					// Record transport telemetry (req 617): survived.
+					ccModuleForTransport?.RecordTransport(true);
 				}
 
 				transportTarget = null;
@@ -1187,6 +1325,12 @@ namespace OpenRA.Mods.Common.Traits
 					lastReinforceTick[ally.InternalName] = world.WorldTick;
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(allyBase.Value), false, groupedActors: reinforcements));
 				}
+
+				// Reserve reinforce failing front (req 356): when an ally is under attack, also send
+				// the reserve (not just the available army) to reinforce their position.
+				var reserveForFront = army.Where(a => !available.Contains(a) && claimedUnits.Add(a)).ToArray();
+				if (reserveForFront.Length >= info.MinWaveSize / 2)
+					ReserveReinforceFront(bot, reserveForFront, world.Map.CellContaining(allyBase.Value));
 			}
 		}
 

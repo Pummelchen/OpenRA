@@ -10,6 +10,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -35,6 +36,30 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int friendlyRefineryLosses;
 		int enemyRefineryPeak;
 		int enemyRefineryLosses;
+
+		// Expansion timings: ticks when MCVs deployed (req 608).
+		readonly List<int> expansionTimings = [];
+
+		// Synchronization errors: (tick, errorTicks) from wave launches (req 612).
+		readonly List<(int Tick, int ErrorTicks)> synchronizationErrors = [];
+
+		// Retreat timings: (tick, unitCount) when retreats happen (req 614).
+		readonly List<(int Tick, int UnitCount)> retreatTimings = [];
+
+		// Recon efficiency: (missionsSent, usefulIntelGained) (req 616).
+		int reconMissionsSent;
+		int reconUsefulIntel;
+
+		// Transport survival: (total, survived) (req 617).
+		int transportTotal;
+		int transportSurvived;
+
+		// Counterattack effectiveness: (counterattacks, enemyDestroyed) (req 620).
+		int counterattacksLaunched;
+		int counterattackEnemyDestroyed;
+
+		// Base defense response time: (threatTick, responseTick) pairs (req 621).
+		readonly List<(int ThreatTick, int ResponseTick)> baseDefenseResponseTimes = [];
 
 		// Win/loss result (set at game end).
 		public bool? Won;
@@ -107,6 +132,53 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Won = won;
 		}
 
+		/// <summary>Records the tick of an MCV deployment/expansion (req 608).</summary>
+		public void RecordExpansion(int tick)
+		{
+			expansionTimings.Add(tick);
+		}
+
+		/// <summary>Records a wave-launch synchronization error (req 612).</summary>
+		public void RecordSyncError(int tick, int errorTicks)
+		{
+			synchronizationErrors.Add((tick, errorTicks));
+		}
+
+		/// <summary>Records a retreat event with the unit count that withdrew (req 614).</summary>
+		public void RecordRetreat(int tick, int unitCount)
+		{
+			retreatTimings.Add((tick, unitCount));
+		}
+
+		/// <summary>Records a recon mission and whether it produced useful intel (req 616).</summary>
+		public void RecordReconMission(bool usefulIntel)
+		{
+			reconMissionsSent++;
+			if (usefulIntel)
+				reconUsefulIntel++;
+		}
+
+		/// <summary>Records a transport mission outcome (req 617).</summary>
+		public void RecordTransport(bool survived)
+		{
+			transportTotal++;
+			if (survived)
+				transportSurvived++;
+		}
+
+		/// <summary>Records a counterattack launch and enemy units destroyed (req 620).</summary>
+		public void RecordCounterattack(int enemyDestroyed)
+		{
+			counterattacksLaunched++;
+			counterattackEnemyDestroyed += enemyDestroyed;
+		}
+
+		/// <summary>Records a base-defense response time from threat detection to response (req 621).</summary>
+		public void RecordBaseDefenseResponse(int threatTick, int responseTick)
+		{
+			baseDefenseResponseTimes.Add((threatTick, responseTick));
+		}
+
 		/// <summary>One-line quality summary for the telemetry log.</summary>
 		public string Summary()
 		{
@@ -115,7 +187,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {enemyValueDestroyed:0} / friendly {friendlyValueLost:0} lost), " +
 					$"econ dmg (enemy refineries lost {enemyRefineryLosses}, friendly {friendlyRefineryLosses}), " +
 					$"avg idle {AverageIdleFraction * 100:0}%, cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, " +
-					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, samples {samples}";
+					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, samples {samples}, " +
+					$"expansions {expansionTimings.Count}, sync errors {synchronizationErrors.Count}, " +
+					$"retreats {retreatTimings.Count}, recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
+					$"transports {transportSurvived}/{transportTotal} survived, " +
+					$"counterattacks {counterattacksLaunched} ({counterattackEnemyDestroyed} destroyed), " +
+					$"base defense responses {baseDefenseResponseTimes.Count}";
 		}
 	}
 }

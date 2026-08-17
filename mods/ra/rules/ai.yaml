@@ -636,6 +636,7 @@ Player:
 		ArmyPriority: 2tnk, 3tnk, 4tnk, e1, e3, ttnk, v2rl, heli, mig, jeep, arty
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
+		FeintFraction: 6
 		CommitReserveRatio: 0.6
 		CoordinatedAttackMinimum: 10
 		ScoutUnitTypes: e1

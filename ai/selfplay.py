@@ -114,6 +114,41 @@ def set_coordinated(minimum: int) -> None:
     set_ai_param(r"(CoordinatedAttackMinimum:\s*)\d+", str(minimum))
 
 
+def set_feint(fraction: int) -> None:
+    """Patches FeintFraction in ai.yaml (restored on exit)."""
+    set_ai_param(r"(FeintFraction:\s*)\d+", str(fraction))
+
+
+def set_threat(scale: float) -> None:
+    """Sets the THREAT_WEIGHT_SCALE env var for the simulation (req 719).
+
+    The C# ComputeThreats method reads this env var to scale all threat values.
+    Unlike YAML patches, env vars are set per-process so no restore is needed.
+    """
+    os.environ["THREAT_WEIGHT_SCALE"] = str(scale)
+set_threat._env_var = "THREAT_WEIGHT_SCALE"
+
+
+def set_target(profile: str) -> None:
+    """Sets the TARGET_WEIGHT_PROFILE env var for the simulation (req 723).
+
+    The C# PostureSelection.TargetWeightsFor reads this env var to override
+    the target-scoring profile. Values: "balanced", "breakthrough", "raiding".
+    """
+    os.environ["TARGET_WEIGHT_PROFILE"] = profile
+set_target._env_var = "TARGET_WEIGHT_PROFILE"
+
+
+def set_specialops(threshold: float) -> None:
+    """Sets the SPECIALOPS_RISK_THRESHOLD env var for the simulation (req 725).
+
+    The C# SpecialOpsTarget reads this env var to cap the maximum acceptable
+    risk for special-operations insertions.
+    """
+    os.environ["SPECIALOPS_RISK_THRESHOLD"] = str(threshold)
+set_specialops._env_var = "SPECIALOPS_RISK_THRESHOLD"
+
+
 def summarize_head_to_head(label: str, results: list) -> None:
     """Reports the coalition's decisive result and ground-truth exchange vs a scripted opponent."""
     coalition_wins = opponent_wins = stalemates = 0
@@ -142,6 +177,10 @@ def summarize_head_to_head(label: str, results: list) -> None:
 
 def run_sweep(label: str, setter, values: list, args) -> None:
     original = open(AI_YAML, encoding="utf-8").read()
+    # Track env vars that need clearing (for env-var-based sweeps like threat/target/specialops).
+    env_vars_used = []
+    if hasattr(setter, "_env_var"):
+        env_vars_used.append(setter._env_var)
     try:
         for value in values:
             setter(value)
@@ -159,6 +198,9 @@ def run_sweep(label: str, setter, values: list, args) -> None:
     finally:
         with open(AI_YAML, "w", encoding="utf-8") as f:
             f.write(original)
+        # Clear any env vars set by the sweep functions.
+        for var in env_vars_used:
+            os.environ.pop(var, None)
         print("\n(ai.yaml restored)")
 
 
@@ -289,12 +331,20 @@ def main() -> None:
     parser.add_argument("--sweep-reserve", help="comma-separated reserve fractions to compare, e.g. 4,6,8")
     parser.add_argument("--sweep-retreat", help="comma-separated micro-precision values (0-3, lower = retreat later), e.g. 0,1,2,3")
     parser.add_argument("--sweep-coordinated", help="comma-separated coordinated-attack minimums, e.g. 18,24,30")
+    parser.add_argument("--sweep-threat", help="comma-separated threat-weight scale factors, e.g. 0.5,1.0,1.5 (req 719)")
+    parser.add_argument("--sweep-target", help="comma-separated target-scoring profiles, e.g. balanced,breakthrough,raiding (req 723)")
+    parser.add_argument("--sweep-feint", help="comma-separated feint fractions to compare, e.g. 4,6,8 (req 724)")
+    parser.add_argument("--sweep-specialops", help="comma-separated special-ops risk thresholds, e.g. 1.0,2.0,3.0 (req 725)")
     args = parser.parse_args()
 
     sweeps = [
         (args.sweep_reserve, "reserve 1/", set_reserve, int),
         (args.sweep_retreat, "micro precision", set_retreat, int),
         (args.sweep_coordinated, "coordinated min", set_coordinated, int),
+        (args.sweep_threat, "threat scale", set_threat, float),
+        (args.sweep_target, "target profile", set_target, str),
+        (args.sweep_feint, "feint fraction", set_feint, int),
+        (args.sweep_specialops, "specialops threshold", set_specialops, float),
     ]
     for raw, label, setter, cast in sweeps:
         if raw:

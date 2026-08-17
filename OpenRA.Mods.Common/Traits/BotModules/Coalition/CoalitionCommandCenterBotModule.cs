@@ -124,6 +124,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			/// <summary>Override the coalition's reserve fraction (1/N of the army held back). 0 = no override.</summary>
 			public int ReserveFraction { get; set; }
+
+			/// <summary>Production capability directive: the LLM requests a specific capability (e.g. "anti_air", "anti_armor", "naval").</summary>
+			public string RequestCapability { get; set; }
+
+			/// <summary>Production unit-name override: the LLM directly specifies which units to prioritize.</summary>
+			public string[] ProductionDirective { get; set; }
+
+			/// <summary>Expansion priority override (0 = default, 1 = prioritize expansion, -1 = suppress expansion).</summary>
+			public int ExpansionPriority { get; set; }
+
+			/// <summary>Mission IDs to modify (cancel + recreate with new parameters). Each entry is a mission type string.</summary>
+			public string[] ModifyMissions { get; set; }
 		}
 
 		sealed class LlmMission
@@ -173,6 +185,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastMetricsSummaryTick = int.MinValue;
 		int lastFloatingTick = int.MinValue;
 
+		// Durable peak construction-yard count, for detecting new expansions (req 608).
+		int peakConyardCount;
+
 		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
 		public CoalitionBlackboard Blackboard => blackboard;
 
@@ -200,6 +215,49 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public void MarkWaveLaunch(int tick)
 		{
 			lastWaveTick = tick;
+		}
+
+		/// <summary>Records an MCV deployment/expansion for telemetry (req 608).</summary>
+		public void RecordExpansion(int tick)
+		{
+			matchMetrics.RecordExpansion(tick);
+			CoalitionTelemetry.Log(world, $"Expansion recorded at tick {tick}");
+		}
+
+		/// <summary>Records a wave-launch synchronization error for telemetry (req 612).</summary>
+		public void RecordSyncError(int tick, int errorTicks)
+		{
+			matchMetrics.RecordSyncError(tick, errorTicks);
+		}
+
+		/// <summary>Records a retreat event for telemetry (req 614).</summary>
+		public void RecordRetreat(int tick, int unitCount)
+		{
+			matchMetrics.RecordRetreat(tick, unitCount);
+		}
+
+		/// <summary>Records a recon mission outcome for telemetry (req 616).</summary>
+		public void RecordReconMission(bool usefulIntel)
+		{
+			matchMetrics.RecordReconMission(usefulIntel);
+		}
+
+		/// <summary>Records a transport mission outcome for telemetry (req 617).</summary>
+		public void RecordTransport(bool survived)
+		{
+			matchMetrics.RecordTransport(survived);
+		}
+
+		/// <summary>Records a counterattack and enemy destroyed for telemetry (req 620).</summary>
+		public void RecordCounterattack(int enemyDestroyed)
+		{
+			matchMetrics.RecordCounterattack(enemyDestroyed);
+		}
+
+		/// <summary>Records a base-defense response time for telemetry (req 621).</summary>
+		public void RecordBaseDefenseResponse(int threatTick, int responseTick)
+		{
+			matchMetrics.RecordBaseDefenseResponse(threatTick, responseTick);
 		}
 
 		static readonly JsonSerializerOptions IntentOptions = new() { PropertyNameCaseInsensitive = true };
@@ -499,6 +557,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CoalitionTelemetry.Log(world, $"Reserve fraction overridden by LLM: 1/{llmIntent.ReserveFraction}");
 			}
 
+			// LLM mission modification: cancel existing missions of each requested type so the
+			// deterministic commander recreates them on the next tick with updated parameters.
+			if (llmIntent?.ModifyMissions != null)
+			{
+				foreach (var modifyType in llmIntent.ModifyMissions)
+				{
+					var type = ParseMissionType(modifyType);
+					if (type == null)
+						continue;
+					foreach (var mission in missions.Missions.Where(m => m.Type == type.Value && m.Status is MissionStatus.Executing or MissionStatus.Ready).ToArray())
+					{
+						mission.Status = MissionStatus.Cancelled;
+						mission.OutcomeReason = "LLM modification";
+						arbiter.ReleaseMission(mission.Id);
+						CoalitionTelemetry.Log(world, $"Mission {mission.Id} ({mission.Type}) cancelled by LLM modify directive");
+					}
+				}
+			}
+
 			// Assign forces to missions through the order arbiter: every active mission owns a force
 			// at a priority, conflicting assignments are rejected with a machine-readable reason, and
 			// completed or cancelled missions release their forces back to the pool.
@@ -507,6 +584,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Capability-driven production from observed enemy composition, plus any LLM production
 			// boost (already validated and cleaned by ApplyLlmIntent).
 			var produceJson = MergeProduce(BuildProduceJson(), llmIntent?.Produce);
+
+			// LLM capability directive: translate the requested capability into the matching
+			// counter-unit list and merge it into the production directive.
+			if (llmIntent?.RequestCapability != null)
+			{
+				var capabilityUnits = ResolveCapabilityUnits(llmIntent.RequestCapability);
+				if (capabilityUnits != null && capabilityUnits.Length > 0)
+					produceJson = MergeProduce(produceJson, capabilityUnits);
+			}
+
+			// LLM production directive: the commander directly specifies which units to prioritize.
+			if (llmIntent?.ProductionDirective != null && llmIntent.ProductionDirective.Length > 0)
+				produceJson = MergeProduce(produceJson, llmIntent.ProductionDirective);
 
 			// Corps role assignment: specialize this bot within the coalition (naval/main/escort).
 			var rolesJson = AssignRole();
@@ -534,9 +624,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
+
+			// LLM expansion priority override: signal the brain to prioritize or suppress expansion.
+			if (llmIntent?.ExpansionPriority is 1 or -1)
+				directiveJson = directiveJson.Insert(directiveJson.Length - 1, $",\"expansion_priority\":{llmIntent.ExpansionPriority}");
+
 			if (llmIntent != null)
 				CoalitionTelemetry.Log(world,
-					$"LLM intent applied: posture={llmIntent.Posture ?? "none"} missions={llmIntent.Missions?.Length ?? 0} produce={llmIntent.Produce?.Length ?? 0} retreat={llmIntent.Retreat}");
+					$"LLM intent applied: posture={llmIntent.Posture ?? "none"} missions={llmIntent.Missions?.Length ?? 0} produce={llmIntent.Produce?.Length ?? 0} retreat={llmIntent.Retreat} capability={llmIntent.RequestCapability ?? "none"} directive={llmIntent.ProductionDirective?.Length ?? 0} expansion={llmIntent.ExpansionPriority} modify={llmIntent.ModifyMissions?.Length ?? 0}");
 			llmIntent = null;
 
 			var strategy = directiveJson.Contains("\"strategy\":\"attack\"") ? "attack"
@@ -563,9 +658,53 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CoalitionTelemetry.Log(world, $"Strategic posture: {strategicPosture.ToString().ToLowerInvariant()}");
 			}
 
+			// Per-front postures (req 341): set local postures for the home and enemy regions based
+			// on the force ratio in those regions specifically, overriding the global posture where
+			// the local situation differs. StrategicPosture.None means "use global".
+			SetLocalPostures(enemyRatio);
+
 			brain?.ApplyTeamPlan(directiveJson);
 
 			SampleMatchMetrics();
+		}
+
+		/// <summary>
+		/// Sets per-region local postures for the home and enemy fronts based on the force ratio
+		/// in each region specifically. A home region under heavy pressure gets a Defensive local
+		/// posture; an enemy region where we outnumber the local defence gets a Breakthrough local
+		/// posture. Regions with no overriding local condition keep LocalPosture = None (use global).
+		/// </summary>
+		void SetLocalPostures(float globalEnemyRatio)
+		{
+			// Home front: when the enemy is pressing our base region, defend locally even if the
+			// global posture is offensive.
+			if (blackboard.HomeRegion >= 0)
+			{
+				var home = blackboard.Regions[blackboard.HomeRegion];
+				var homePressure = home.EnemyPressure;
+				var homePosture = homePressure > 0.5f ? StrategicPosture.Defensive : StrategicPosture.None;
+				if (home.LocalPosture != homePosture)
+				{
+					home.LocalPosture = homePosture;
+					if (homePosture != StrategicPosture.None)
+						CoalitionTelemetry.Log(world, $"Local posture {homePosture.ToString().ToLowerInvariant()} for home region {home.Index} (pressure {homePressure:0.00})");
+				}
+			}
+
+			// Enemy front: when we have a decisive local advantage at the enemy region, push for a
+			// breakthrough there even if the global posture is more conservative.
+			if (blackboard.EnemyRegion >= 0)
+			{
+				var enemy = blackboard.Regions[blackboard.EnemyRegion];
+				var localRatio = globalEnemyRatio;
+				var enemyPosture = localRatio <= 0.4f ? StrategicPosture.Breakthrough : StrategicPosture.None;
+				if (enemy.LocalPosture != enemyPosture)
+				{
+					enemy.LocalPosture = enemyPosture;
+					if (enemyPosture != StrategicPosture.None)
+						CoalitionTelemetry.Log(world, $"Local posture {enemyPosture.ToString().ToLowerInvariant()} for enemy region {enemy.Index} (ratio {localRatio:0.00})");
+				}
+			}
 		}
 
 		/// <summary>
@@ -604,6 +743,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var friendlyRefineries = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName) && a.Info.HasTraitInfo<RefineryInfo>());
 			var enemyRefineries = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
 			matchMetrics.SampleEconomy(friendlyRefineries, enemyRefineries);
+
+			// Expansion detection (req 608): record the tick when a new construction yard appears.
+			// Construction yards are identified by the BuildingInfo trait and being a "fact" type
+			// (the standard RA construction yard). This is a heuristic but sufficient for telemetry.
+			var conyardCount = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName)
+				&& a.Info.HasTraitInfo<BuildingInfo>() && a.Info.Name == "fact");
+			if (conyardCount > peakConyardCount)
+			{
+				for (var i = peakConyardCount; i < conyardCount; i++)
+					matchMetrics.RecordExpansion(world.WorldTick);
+				peakConyardCount = conyardCount;
+			}
 
 			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
 
@@ -812,6 +963,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					continue;
 
 				// Consequence-aware scoring: the target's strategic value minus the approach risk.
+				// The SPECIALOPS_RISK_THRESHOLD env var (req 725) sets the maximum acceptable risk
+				// for self-play parameter sweeps. Targets above this threshold are skipped.
+				var specialopsThreshold = float.MaxValue;
+				var envThreshold = Environment.GetEnvironmentVariable("SPECIALOPS_RISK_THRESHOLD");
+				if (float.TryParse(envThreshold, out var parsedThreshold))
+					specialopsThreshold = parsedThreshold;
+
 				var value = TargetEvaluator.EconomicValue(intel.Type)
 					+ TargetEvaluator.ProductionValue(intel.Type)
 					+ TargetEvaluator.TechnologyValue(intel.Type);
@@ -819,6 +977,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var risk = region.Threats[(int)CoalitionCapability.StaticDefense]
 					+ region.Threats[(int)CoalitionCapability.VisionExposure]
 					+ route.Cost * 0.5f;
+
+				// Skip targets above the risk threshold (req 725).
+				if (risk > specialopsThreshold)
+					continue;
+
 				var score = value * 2f - risk;
 
 				if (score > bestScore)
@@ -1053,6 +1216,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var merged = CommandValidator.MergeProduce(existing, llmProduce);
 			return merged.Count == 0 ? null : "[\"" + string.Join("\",\"", merged) + "\"]";
+		}
+
+		/// <summary>
+		/// Resolves an LLM capability directive string into the matching configured counter-unit
+		/// list. Returns null for an unknown capability (already rejected by the validator).
+		/// </summary>
+		string[] ResolveCapabilityUnits(string capability)
+		{
+			return capability?.ToLowerInvariant().Trim() switch
+			{
+				"anti_air" => info.AntiAirUnits.ToArray(),
+				"anti_armor" => info.AntiArmorUnits.ToArray(),
+				"anti_infantry" => info.AntiInfantryUnits.ToArray(),
+				"artillery" => info.ArtilleryTypes.ToArray(),
+				"naval" => info.NavalPriority.ToArray(),
+				"recon" => brain?.Info.ScoutUnitTypes?.ToArray(),
+				"transport" => brain?.Info.TransportTypes?.ToArray(),
+				"base_defense" => info.AntiAirUnits
+					.Concat(info.AntiArmorUnits)
+					.Concat(info.AntiInfantryUnits)
+					.ToArray(),
+				_ => null
+			};
 		}
 
 		/// <summary>
@@ -1584,6 +1770,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 				if (produceRejections.Count > 0)
 					intent.Produce = intent.Produce.Where((_, i) => !produceRejections.Any(r => r.Index == i)).ToArray();
+
+				// Validate the new intent fields: unknown capabilities, blank production directive
+				// entries, and out-of-range expansion priorities are rejected and cleared.
+				var capabilityRejection = CommandValidator.ValidateCapability(intent.RequestCapability);
+				if (capabilityRejection != null)
+				{
+					CoalitionTelemetry.Log(world, $"Command validator: {capabilityRejection}");
+					intent.RequestCapability = null;
+				}
+
+				var directiveRejections = CommandValidator.ValidateProduce(intent.ProductionDirective);
+				foreach (var (_, reason) in directiveRejections)
+					CoalitionTelemetry.Log(world, $"Command validator: {reason}");
+
+				if (directiveRejections.Count > 0)
+					intent.ProductionDirective = intent.ProductionDirective.Where((_, i) => !directiveRejections.Any(r => r.Index == i)).ToArray();
+
+				var expansionRejection = CommandValidator.ValidateExpansionPriority(intent.ExpansionPriority);
+				if (expansionRejection != null)
+				{
+					CoalitionTelemetry.Log(world, $"Command validator: {expansionRejection}");
+					intent.ExpansionPriority = 0;
+				}
 
 				llmIntent = intent;
 			}

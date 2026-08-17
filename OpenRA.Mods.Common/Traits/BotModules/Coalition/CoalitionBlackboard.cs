@@ -67,6 +67,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float EnemyPressure;
 		public readonly float[] Threats = new float[Enum.GetValues<CoalitionCapability>().Length];
 
+		/// <summary>Optional local posture for this region, overriding the global posture when set. StrategicPosture.None means use global.</summary>
+		public StrategicPosture LocalPosture = StrategicPosture.None;
+
 		public CoalitionRegion(int index, Rectangle bounds)
 		{
 			Index = index;
@@ -762,21 +765,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>
 		/// Independent per-region threat fields per combat capability, derived deterministically from
 		/// enemy intel classes and type lists. The LLM and mission planners weight routes and targets
-		/// with these.
+		/// with these. The THREAT_WEIGHT_SCALE environment variable (req 719) scales all threat values
+		/// for self-play parameter sweeps.
 		/// </summary>
 		void ComputeThreats()
 		{
+			// Threat weight scale from env var (req 719): allows self-play sweeps to modulate
+			// how much the AI weights enemy threats in route planning and target scoring.
+			var threatScale = 1f;
+			var envScale = Environment.GetEnvironmentVariable("THREAT_WEIGHT_SCALE");
+			if (float.TryParse(envScale, out var parsed))
+				threatScale = parsed;
+
 			foreach (var intel in EnemyIntel)
 			{
 				var region = RegionOf(intel.LastSeenCell);
 				var threats = region.Threats;
 				foreach (var capability in CapabilitiesFor(intel.Class, intel.Type, artilleryTypes, submarineTypes,
 					detectionTypes, supportPowerStructures, productionStructures))
-					threats[(int)capability] = Max(threats[(int)capability], intel.Confidence);
+					threats[(int)capability] = Max(threats[(int)capability], intel.Confidence * threatScale);
 
 				// Active combat: recently-observed enemy presence marks a region as a live combat zone.
 				if (intel.Status == IntelStatus.Observed)
-					threats[(int)CoalitionCapability.ActiveCombat] = Max(threats[(int)CoalitionCapability.ActiveCombat], intel.Confidence);
+					threats[(int)CoalitionCapability.ActiveCombat] = Max(threats[(int)CoalitionCapability.ActiveCombat], intel.Confidence * threatScale);
 			}
 
 			// Exposure: regions with little friendly coverage are riskier to move through.

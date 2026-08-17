@@ -9,11 +9,15 @@
  */
 #endregion
 
+using System;
+
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
 	/// <summary>The coalition's strategic posture: its overall operational stance for this review.</summary>
 	public enum StrategicPosture
 	{
+		/// <summary>No local posture set — use the global posture. Only valid as a region's LocalPosture.</summary>
+		None,
 		Opening,
 		Expansion,
 		Pressure,
@@ -63,9 +67,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return enemyEconomyStrong ? StrategicPosture.Containment : StrategicPosture.Attrition;
 		}
 
-		/// <summary>The target-scoring profile a posture implies.</summary>
+		/// <summary>The target-scoring profile a posture implies. The TARGET_WEIGHT_PROFILE env var
+		/// (req 723) overrides the profile selection for self-play parameter sweeps: "balanced",
+		/// "breakthrough", or "raiding".</summary>
 		public static TargetWeights TargetWeightsFor(StrategicPosture posture)
 		{
+			// Target weight profile from env var (req 723): allows self-play sweeps to force
+			// a specific target-scoring profile regardless of the global posture.
+			var profile = Environment.GetEnvironmentVariable("TARGET_WEIGHT_PROFILE");
+			if (!string.IsNullOrEmpty(profile))
+			{
+				return profile.ToLowerInvariant() switch
+				{
+					"breakthrough" => TargetWeights.Breakthrough(),
+					"raiding" => TargetWeights.Raiding(),
+					_ => TargetWeights.Balanced()
+				};
+			}
+
 			return posture switch
 			{
 				StrategicPosture.Breakthrough or StrategicPosture.Siege or StrategicPosture.AllIn
