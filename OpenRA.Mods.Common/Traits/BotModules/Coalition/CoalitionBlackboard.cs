@@ -281,6 +281,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int EnemyRegion = -1;
 
 		/// <summary>
+		/// Shared counterattack gate: the tick of the last coalition-wide counterattack launch.
+		/// Each bot checks this before firing its own counterattack so the coalition doesn't send
+		/// N duplicate counterattack waves from N bots.
+		/// </summary>
+		public int LastCounterattackTick = int.MinValue;
+
+		/// <summary>
 		/// Per-region threat arrays in map-analysis order, for route planning. The route planner
 		/// consumes this as a <c>float[][]</c> keyed by region index then capability.
 		/// </summary>

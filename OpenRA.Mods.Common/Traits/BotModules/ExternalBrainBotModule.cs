@@ -74,6 +74,16 @@ namespace OpenRA.Mods.Common.Traits
 			public float Readiness { get; set; }
 			public Dictionary<string, int> Composition { get; set; }
 			public Dictionary<string, int> Capabilities { get; set; }
+
+			/// <summary>Region index where this force group is concentrated, or -1.</summary>
+			public int Region { get; set; } = -1;
+
+			/// <summary>Cell coordinates of the force group's center, for LLM spatial reasoning.</summary>
+			public int X { get; set; } = -1;
+			public int Y { get; set; } = -1;
+
+			/// <summary>Threats known in the force's region, keyed by capability name.</summary>
+			public Dictionary<string, float> NearbyThreats { get; set; }
 		}
 
 		sealed class EstimateState
@@ -353,19 +363,32 @@ namespace OpenRA.Mods.Common.Traits
 			if (blackboard == null)
 				return [];
 
-			return blackboard.Forces.Select(f => new ArmyGroupState
+			return blackboard.Forces.Select(f =>
 			{
-				Owner = f.Owner,
-				Mission = f.MissionId,
-				Role = f.Role,
-				Status = f.Status.ToString().ToLowerInvariant(),
-				TotalUnits = f.TotalUnits,
-				Strength = f.Strength,
-				Readiness = f.Readiness,
-				Composition = new Dictionary<string, int>(f.ByType),
-				Capabilities = Enumerable.Range(0, f.Capabilities.Length)
-					.Where(c => f.Capabilities[c] > 0)
-					.ToDictionary(c => CommandToolApi.FriendlyCapabilityKeys[c], c => 1)
+				var region = blackboard.RegionOf(f.Center);
+				var nearbyThreats = new Dictionary<string, float>();
+				for (var c = 0; c < region.Threats.Length; c++)
+					if (region.Threats[c] > 0)
+						nearbyThreats[CommandToolApi.CapabilityKeys[c]] = region.Threats[c];
+
+				return new ArmyGroupState
+				{
+					Owner = f.Owner,
+					Mission = f.MissionId,
+					Role = f.Role,
+					Status = f.Status.ToString().ToLowerInvariant(),
+					TotalUnits = f.TotalUnits,
+					Strength = f.Strength,
+					Readiness = f.Readiness,
+					Composition = new Dictionary<string, int>(f.ByType),
+					Capabilities = Enumerable.Range(0, f.Capabilities.Length)
+						.Where(c => f.Capabilities[c] > 0)
+						.ToDictionary(c => CommandToolApi.FriendlyCapabilityKeys[c], c => 1),
+					Region = region.Index,
+					X = f.Center.X,
+					Y = f.Center.Y,
+					NearbyThreats = nearbyThreats
+				};
 			}).ToArray();
 		}
 

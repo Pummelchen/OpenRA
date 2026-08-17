@@ -118,6 +118,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			public string[] Produce { get; set; }
 			public bool Retreat { get; set; }
 			public LlmMission[] Missions { get; set; }
+
+			/// <summary>Mission types to cancel. Each matching active mission is cancelled and its forces released.</summary>
+			public string[] CancelMissions { get; set; }
+
+			/// <summary>Override the coalition's reserve fraction (1/N of the army held back). 0 = no override.</summary>
+			public int ReserveFraction { get; set; }
 		}
 
 		sealed class LlmMission
@@ -304,7 +310,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>All allied players with an enabled bot, including this one.</summary>
-		Player[] TeamPlayers()
+		internal Player[] TeamPlayers()
 		{
 			return world.Players.Where(p =>
 				p.PlayerActor.TraitsImplementing<ModularBot>().Any(b => b.IsEnabled) &&
@@ -467,6 +473,32 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (llmIntent?.Retreat == true)
 				EnsureMission(MissionType.Retreat, 100, null, "Withdraw");
 
+			// LLM mission cancellation: cancel each active mission whose type matches a requested
+			// cancellation, releasing its forces back to the pool for reassignment.
+			if (llmIntent?.CancelMissions != null)
+			{
+				foreach (var cancelType in llmIntent.CancelMissions)
+				{
+					var type = ParseMissionType(cancelType);
+					if (type == null)
+						continue;
+					foreach (var mission in missions.Missions.Where(m => m.Type == type.Value && m.Status is MissionStatus.Executing or MissionStatus.Ready).ToArray())
+					{
+						mission.Status = MissionStatus.Cancelled;
+						mission.OutcomeReason = "LLM cancellation";
+						arbiter.ReleaseMission(mission.Id);
+						CoalitionTelemetry.Log(world, $"Mission {mission.Id} ({mission.Type}) cancelled by LLM directive");
+					}
+				}
+			}
+
+			// LLM reserve override: the commander can tighten or loosen the reserve fraction.
+			if (llmIntent?.ReserveFraction > 0 && brain != null)
+			{
+				brain.OverrideReserveFraction(llmIntent.ReserveFraction);
+				CoalitionTelemetry.Log(world, $"Reserve fraction overridden by LLM: 1/{llmIntent.ReserveFraction}");
+			}
+
 			// Assign forces to missions through the order arbiter: every active mission owns a force
 			// at a priority, conflicting assignments are rejected with a machine-readable reason, and
 			// completed or cancelled missions release their forces back to the pool.
@@ -567,6 +599,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				cohesion = 1f;
 
 			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
+
+			// Economic damage tracking: sample refinery counts for both sides.
+			var friendlyRefineries = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName) && a.Info.HasTraitInfo<RefineryInfo>());
+			var enemyRefineries = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
+			matchMetrics.SampleEconomy(friendlyRefineries, enemyRefineries);
+
 			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
 
 			// Excess resource floating: a growing, unspent cash pile means production is not keeping up.
@@ -585,6 +623,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			if (world.IsGameOver)
 			{
+				var won = player.WinState == WinState.Won;
+				matchMetrics.RecordResult(won);
 				CoalitionTelemetry.Log(world, matchMetrics.Summary());
 				CoalitionTelemetry.Log(world, missions.MissionSummary());
 			}

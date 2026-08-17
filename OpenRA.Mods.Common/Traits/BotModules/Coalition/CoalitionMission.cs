@@ -62,7 +62,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Executing,
 		Succeeded,
 		Aborted,
-		Failed
+		Failed,
+		Cancelled
 	}
 
 	/// <summary>

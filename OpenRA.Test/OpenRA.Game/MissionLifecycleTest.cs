@@ -111,7 +111,8 @@ namespace OpenRA.Test
 				MissionStatus.Executing,
 				MissionStatus.Succeeded,
 				MissionStatus.Aborted,
-				MissionStatus.Failed
+				MissionStatus.Failed,
+				MissionStatus.Cancelled
 			}));
 		}
 

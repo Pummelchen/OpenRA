@@ -234,6 +234,7 @@ namespace OpenRA.Mods.Common.Traits
 		bool enemyArmorSpotted;
 		bool enemyInfantrySpotted;
 		string lastComposition;
+		string lastPickOrder;
 		WPos? enemyBaseCenter;
 
 		Posture posture = Posture.BuildArmy;
@@ -244,6 +245,14 @@ namespace OpenRA.Mods.Common.Traits
 		bool reserveCommitted;
 		bool lastReserveCommitted;
 		string lastCoordGate;
+
+		// Per-ally reinforcement cooldown: prevents every allied bot from sending reinforcements
+		// to the same ally in the same interval. Keyed by ally InternalName, value is the tick of
+		// the last reinforcement sent to that ally.
+		readonly Dictionary<string, int> lastReinforceTick = [];
+
+		// LLM reserve override: when >0, replaces the difficulty-scaled reserve fraction.
+		int reserveFractionOverride;
 
 		// Coalition force summary, fed by the command center through the team plan.
 		int coalitionArmy;
@@ -572,6 +581,14 @@ namespace OpenRA.Mods.Common.Traits
 				pickOrder.AddRange(info.AntiInfantryUnits);
 			pickOrder.AddRange(info.ArmyPriority);
 
+			// Log production-priority changes so the build plan is auditable in telemetry.
+			var pickOrderStr = string.Join(",", pickOrder.Take(8));
+			if (pickOrderStr != lastPickOrder)
+			{
+				lastPickOrder = pickOrderStr;
+				CoalitionTelemetry.Log(world, $"Production priorities: {pickOrderStr}");
+			}
+
 			// Aggressive cancellation: while defending, cancel whatever is in production if it is not
 			// one of the top-priority units, so the counter force comes out fast.
 			if (posture == Posture.Defend)
@@ -588,6 +605,28 @@ namespace OpenRA.Mods.Common.Traits
 			var idleQueues = queues.Where(q => q.CurrentItem() == null).ToArray();
 			if (idleQueues.Length == 0)
 				return;
+
+			// Emergency replacement: when defending, rebuild lost production infrastructure before
+			// spending on units, so the coalition can resume producing counters from its own factory.
+			if (posture == Posture.Defend)
+			{
+				var buildingQueue = queues.FirstOrDefault(q => q.Info.Type == "Building" && q.CurrentItem() == null);
+				if (buildingQueue != null)
+				{
+					var criticalBuildings = new[] { "weap", "barr", "tent", "proc", "powr", "apwr" };
+					foreach (var building in criticalBuildings)
+					{
+						var exists = world.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.Name == building);
+						var alreadyQueued = queues.Any(q => q.AllQueued().Any(i => i.Item == building));
+						if (!exists && !alreadyQueued && buildingQueue.BuildableItems().Any(i => i.Name == building))
+						{
+							bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, building, 1));
+							CoalitionTelemetry.Log(world, $"Emergency replacement: {building} ordered");
+							return;
+						}
+					}
+				}
+			}
 
 			// Produce on every idle queue in parallel: each queue takes the highest-priority unit it can
 			// build, so the air, naval, and land arms all get produced instead of the first pick
@@ -782,8 +821,15 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Counterattack-after-defense: shortly after repelling an attack, strike back at the
 			// attacker with the whole army - no coordinated gate, the enemy force is weakened.
-			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && activeArmy.Length >= info.MinWaveSize)
+			// Gate on the shared blackboard so only one bot fires the counterattack per window.
+			var ccModule = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			var sharedBB = ccModule?.Blackboard;
+			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && activeArmy.Length >= info.MinWaveSize
+				&& (sharedBB == null || world.WorldTick - sharedBB.LastCounterattackTick >= info.CounterDelayTicks / 2))
 			{
+				if (sharedBB != null)
+					sharedBB.LastCounterattackTick = world.WorldTick;
 				var counter = Claim(activeArmy).ToArray();
 				if (counter.Length > 0)
 				{
@@ -954,10 +1000,13 @@ namespace OpenRA.Mods.Common.Traits
 				commander.MarkWaveLaunch(world.WorldTick);
 				if (attackTarget != null)
 				{
+					var raidCell = attackTarget.Value;
+					var team = commander.TeamPlayers();
 					var enemiesNearRaid = world.Actors.Count(a =>
 						a.IsInWorld && !a.IsDead && a.Owner != player && a.OccupiesSpace != null
 						&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
-						&& (a.CenterPosition - world.Map.CenterOfCell(attackTarget.Value)).LengthSquared <= BaseRadiusSquared(20));
+						&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition))
+						&& (a.CenterPosition - world.Map.CenterOfCell(raidCell)).LengthSquared <= BaseRadiusSquared(20));
 					commander.RecordRaidContact(enemiesNearRaid);
 				}
 			}
@@ -989,11 +1038,17 @@ namespace OpenRA.Mods.Common.Traits
 		Actor[] AvailableArmy(IEnumerable<Actor> army)
 		{
 			var list = army as Actor[] ?? army.ToArray();
-			var reserveFraction = info.ScaledReserveFraction();
+			var reserveFraction = reserveFractionOverride > 0 ? reserveFractionOverride : info.ScaledReserveFraction();
 			if (reserveCommitted || list.Length < reserveFraction)
 				return list;
 
 			return list.Take(list.Length - list.Length / reserveFraction).ToArray();
+		}
+
+		/// <summary>Overrides the reserve fraction from an LLM directive (0 = revert to difficulty-scaled default).</summary>
+		internal void OverrideReserveFraction(int fraction)
+		{
+			reserveFractionOverride = Math.Clamp(fraction, 0, 10);
 		}
 
 		/// <summary>
@@ -1120,14 +1175,23 @@ namespace OpenRA.Mods.Common.Traits
 				if (ClosestEnemyTo(allyBase.Value, BaseRadiusSquared(info.AllyReinforceScanRadius)) == null)
 					continue;
 
+				// Per-ally cooldown: only one bot reinforces a given ally per coordination interval,
+				// so the whole coalition doesn't send duplicate waves to the same defender.
+				var lastSent = lastReinforceTick.GetValueOrDefault(ally.InternalName);
+				if (world.WorldTick - lastSent < info.CoordinationInterval)
+					continue;
+
 				var reinforcements = Claim(available).Take(Math.Max(1, available.Length / info.ReinforcementFraction)).ToArray();
 				if (reinforcements.Length > 0)
+				{
+					lastReinforceTick[ally.InternalName] = world.WorldTick;
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(allyBase.Value), false, groupedActors: reinforcements));
+				}
 			}
 		}
 
 		/// <summary>Returns the average position of the bot's structures, or null if it has none.</summary>
-		WPos? BaseCenter()
+		internal WPos? BaseCenter()
 		{
 			var structures = OwnStructures().ToArray();
 			return structures.Length == 0 ? null : structures.Select(a => a.CenterPosition).Average();

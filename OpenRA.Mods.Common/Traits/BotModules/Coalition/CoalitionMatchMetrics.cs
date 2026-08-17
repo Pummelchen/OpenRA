@@ -30,6 +30,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		float cohesionSum;
 		float cashSum;
 
+		// Economic damage: refineries/harvesters destroyed (friendly and enemy), tracked via peak deltas.
+		int friendlyRefineryPeak;
+		int friendlyRefineryLosses;
+		int enemyRefineryPeak;
+		int enemyRefineryLosses;
+
+		// Win/loss result (set at game end).
+		public bool? Won;
+
 		/// <summary>The most recent combat win-ratio estimate, for comparing predictions against actual outcomes.</summary>
 		public float LastWinRatioEstimate;
 
@@ -75,14 +84,38 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public float AverageCash => samples == 0 ? 0f : cashSum / samples;
 
+		public int FriendlyRefineryLosses => friendlyRefineryLosses;
+		public int EnemyRefineryLosses => enemyRefineryLosses;
+
+		/// <summary>Records one sample of economic infrastructure (refinery counts) for damage tracking.</summary>
+		public void SampleEconomy(int friendlyRefineries, int enemyRefineries)
+		{
+			if (friendlyRefineries > friendlyRefineryPeak)
+				friendlyRefineryPeak = friendlyRefineries;
+			else if (friendlyRefineryPeak > 0 && friendlyRefineries < friendlyRefineryPeak)
+				friendlyRefineryLosses += friendlyRefineryPeak - friendlyRefineries;
+
+			if (enemyRefineries > enemyRefineryPeak)
+				enemyRefineryPeak = enemyRefineries;
+			else if (enemyRefineryPeak > 0 && enemyRefineries < enemyRefineryPeak)
+				enemyRefineryLosses += enemyRefineryPeak - enemyRefineries;
+		}
+
+		/// <summary>Records the final win/loss result at game end.</summary>
+		public void RecordResult(bool won)
+		{
+			Won = won;
+		}
+
 		/// <summary>One-line quality summary for the telemetry log.</summary>
 		public string Summary()
 		{
 			return samples == 0
 				? "Match metrics: no samples"
 				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {enemyValueDestroyed:0} / friendly {friendlyValueLost:0} lost), " +
+					$"econ dmg (enemy refineries lost {enemyRefineryLosses}, friendly {friendlyRefineryLosses}), " +
 					$"avg idle {AverageIdleFraction * 100:0}%, cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, " +
-					$"predicted win ratio {LastWinRatioEstimate:0.00}, samples {samples}";
+					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, samples {samples}";
 		}
 	}
 }

@@ -116,7 +116,8 @@ namespace OpenRA.Test
 			Assert.That(Enum.GetValues<MissionStatus>(), Is.EqualTo(new[]
 			{
 				MissionStatus.Ready, MissionStatus.Executing,
-				MissionStatus.Succeeded, MissionStatus.Aborted, MissionStatus.Failed
+				MissionStatus.Succeeded, MissionStatus.Aborted, MissionStatus.Failed,
+				MissionStatus.Cancelled
 			}));
 		}
 	}

@@ -40,11 +40,13 @@ if sys.version_info < (3, 14):
 
 DEFAULT_PORT = 8765
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
+BRAIN_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB cap; truncate from the top when exceeded.
 
 # One team plan per consultation round: every allied bot posts the same round key and receives
 # the identical plan, so all friendly bots act as one coordinated force. Keys are scoped by
 # (round, team) so opposing teams never share plans.
 PLAN_CACHE: dict = {}
+PLAN_CACHE_MAX = 100
 
 MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL_NAME = os.getenv("AI_MODEL_NAME", "qwen3")
@@ -162,6 +164,8 @@ class PlanServer(BaseHTTPRequestHandler):
             else:
                 plan = self.server.decide(state)
                 if cache_key is not None:
+                    if len(PLAN_CACHE) >= PLAN_CACHE_MAX:
+                        PLAN_CACHE.pop(next(iter(PLAN_CACHE)))
                     PLAN_CACHE[cache_key] = plan
             self._respond(200, plan)
         except Exception as exc:  # noqa: BLE001 - keep the game running on any backend error
@@ -528,6 +532,15 @@ def log_brain(message: str) -> None:
     line = f"[{time.strftime('%H:%M:%S')}] {message}"
     print(line, flush=True)
     try:
+        # Rotate: if the log has grown past the cap, keep only the most recent half.
+        try:
+            if os.path.getsize(BRAIN_LOG) > BRAIN_LOG_MAX_BYTES:
+                with open(BRAIN_LOG, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                with open(BRAIN_LOG, "w", encoding="utf-8") as f:
+                    f.writelines(lines[len(lines) // 2:])
+        except OSError:
+            pass
         with open(BRAIN_LOG, "a", encoding="utf-8") as log_file:
             log_file.write(line + "\n")
     except OSError:

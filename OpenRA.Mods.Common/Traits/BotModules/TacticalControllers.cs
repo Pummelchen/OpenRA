@@ -72,7 +72,65 @@ namespace OpenRA.Mods.Common.Traits
 			if (land.Length == 0)
 				return;
 
-			Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: land));
+			// Artillery screening: artillery units (v2rl, arty) hold behind the main force so they
+			// fire from range instead of charging into melee. Send them to a point pulled back from
+			// the target by ~8 cells along the axis from the base to the target.
+			var artilleryTypes = new HashSet<string> { "v2rl", "arty" };
+			var artillery = land.Where(a => artilleryTypes.Contains(a.Info.Name)).ToArray();
+			var mainForce = land.Where(a => !artilleryTypes.Contains(a.Info.Name)).ToArray();
+
+			if (mainForce.Length > 0)
+			{
+				// Speed coordination: fast units (tanks) must not outrun slow support (infantry, AA).
+				// Units that are more than 15 cells ahead of the group center hold position briefly
+				// so the formation stays together.
+				if (mainForce.Length > 3)
+				{
+					var center = mainForce.Select(a => a.CenterPosition).Average();
+					var spread = 15 * 1024; // 15 cells
+					var ahead = mainForce.Where(a => (a.CenterPosition - target).LengthSquared < (center - target).LengthSquared - spread * spread).ToArray();
+					var followers = mainForce.Except(ahead).ToArray();
+					if (ahead.Length > 0 && followers.Length > 0)
+					{
+						// Followers advance; ahead units hold at the group center to let the rest catch up.
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: followers));
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(center), false, groupedActors: ahead));
+					}
+					else
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: mainForce));
+				}
+				else
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: mainForce));
+			}
+
+			if (artillery.Length > 0)
+			{
+				var baseCenter = Brain.BaseCenter();
+				if (baseCenter != null)
+				{
+					var dir = target - baseCenter.Value;
+					var len = dir.Length;
+					if (len > 0)
+					{
+						var offset = 8 * 1024; // 8 cells
+						var pullbackX = 0;
+						var pullbackY = 0;
+						if (len > offset)
+						{
+							pullbackX = -dir.X * offset / len;
+							pullbackY = -dir.Y * offset / len;
+						}
+
+						var artilleryTarget = new WPos(target.X + pullbackX, target.Y + pullbackY, target.Z);
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(artilleryTarget), false, groupedActors: artillery));
+					}
+					else
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: artillery));
+				}
+				else
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: artillery));
+			}
+
 			Executed = true;
 		}
 	}

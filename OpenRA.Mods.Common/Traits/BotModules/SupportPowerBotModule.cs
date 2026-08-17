@@ -67,6 +67,11 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IBotTick.BotTick(IBot bot)
 		{
+			// Deconflict with the coalition brain: when the strategic brain is active, it manages
+			// support powers via FireSupportPower, so the stock module must not fire independently.
+			if (!IsTraitDisabled && player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>().Any(m => !m.IsTraitDisabled))
+				return;
+
 			foreach (var sp in supportPowerManager.Powers.Values)
 			{
 				if (sp.Disabled)

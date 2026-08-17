@@ -98,6 +98,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			foreach (var commitment in commitments.Where(c => c.MissionId == missionId && !c.Released))
 				commitment.Released = true;
+
+			PruneReleased();
 		}
 
 		/// <summary>Releases a specific force, whatever mission holds it.</summary>
@@ -105,6 +107,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			if (byForce.TryGetValue(force, out var commitment) && !commitment.Released)
 				commitment.Released = true;
+
+			PruneReleased();
+		}
+
+		/// <summary>
+		/// Removes released commitments from the ledger so it does not grow unbounded over a long match.
+		/// The by-force dictionary is kept in sync: a released entry is dropped entirely so future
+		/// assignments are not blocked by stale records.
+		/// </summary>
+		void PruneReleased()
+		{
+			for (var i = commitments.Count - 1; i >= 0; i--)
+			{
+				if (commitments[i].Released)
+				{
+					byForce.Remove(commitments[i].Force);
+					commitments.RemoveAt(i);
+				}
+			}
 		}
 
 		/// <summary>The mission currently holding a force, or null.</summary>
