@@ -27,10 +27,11 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			return args.Length >= 2;
 		}
 
-		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n]",
+		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n] [ENABLE_LLM=1]",
 			  "Run a headless skirmish simulation and report the outcome. BOT_TYPES lists one bot type " +
 			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all. " +
-			  "INTELLIGENCE overrides the coalition commander's fog advantage (0 = fair fog, 3 = omniscient).")]
+			  "INTELLIGENCE overrides the coalition commander's fog advantage (0 = fair fog, 3 = omniscient). " +
+			  "ENABLE_LLM=1 enables the real LLM brain (requires model server on port 8765); default is deterministic-only.")]
 		void IUtilityCommand.Run(Utility utility, string[] args)
 		{
 			// The engine assumes Game.ModData is set; do so before touching any map data.
@@ -75,8 +76,10 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			};
 
 			// Self-play evaluation must be replay-deterministic; the async model consultation (even a
-			// timeout) introduces thread-timing nondeterminism, so the external brain is disabled here.
-			HeadlessSkirmish.DisableExternalBrain = true;
+			// timeout) introduces thread-timing nondeterminism, so the external brain is disabled by
+			// default. Set ENABLE_LLM=1 to run with the real LLM brain (radar images + model server)
+			// for testing the full LLM pipeline headlessly.
+			HeadlessSkirmish.DisableExternalBrain = ParseArg(args, "ENABLE_LLM", null) != "1";
 
 			var botTypes = botTypesArg != null
 				? botTypesArg.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray()

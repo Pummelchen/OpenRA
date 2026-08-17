@@ -455,6 +455,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Specialized defense: mobile interception, anti-air umbrella, naval screen, and economy escort.
 			CreateDefensiveMissions();
 
+			// Advanced mission types: harassment, expansion denial, naval blockade/strike, pincer,
+			// delaying action, air/naval/route recon, and decoy transport. These extend the deterministic
+			// commander with the remaining mission types that were previously enum-only or missing.
+			CreateAdvancedMissions(ratio);
+
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
 			// Enemy models that over-respond to raids make feints more valuable, and the measured deception
 			// record feeds back: feints that drew enemy responses are funded harder, while a string of
@@ -1131,6 +1136,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				case "decoytransport":
 				case "decoy_transport":
 					return MissionType.DecoyTransport;
+				case "pincer":
+					return MissionType.Pincer;
+				case "navalblockade":
+				case "naval_blockade":
+					return MissionType.NavalBlockade;
+				case "fakebuildup":
+				case "fake_buildup":
+					return MissionType.FakeBuildup;
 				default:
 					return null;
 			}
@@ -1306,8 +1319,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
 						or MissionType.Siege or MissionType.ChokepointSeizure => main,
 					MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
-						or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Feint or MissionType.Bait => secondary ?? main,
-					MissionType.Transport or MissionType.SpecialOps => blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
+						or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer
+						or MissionType.Feint or MissionType.Bait or MissionType.FakeBuildup => secondary ?? main,
+					MissionType.Transport or MissionType.SpecialOps or MissionType.DecoyTransport
+						=> blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
+					MissionType.NavalBlockade => blackboard.Forces.FirstOrDefault(f => f.Counts[(int)UnitClass.Naval] > 0) ?? main,
 					MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
 						or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => main,
 					_ => null
@@ -1367,13 +1383,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
 					or MissionType.Siege or MissionType.ChokepointSeizure => ArbiterPriority.ActiveCombat,
 				MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
-					or MissionType.ExpansionDenial or MissionType.Flank => ArbiterPriority.ActiveCombat,
-				MissionType.AirStrike or MissionType.NavalStrike or MissionType.SupportPowerStrike => ArbiterPriority.SpecialMission,
+					or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer => ArbiterPriority.ActiveCombat,
+				MissionType.AirStrike or MissionType.NavalStrike or MissionType.NavalBlockade or MissionType.SupportPowerStrike => ArbiterPriority.SpecialMission,
 				MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
 					or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => ArbiterPriority.Defense,
 				MissionType.Recon or MissionType.Feint or MissionType.Bait or MissionType.DeepRecon or MissionType.AirRecon
 					or MissionType.NavalRecon or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe
-					or MissionType.Demonstration or MissionType.DecoyTransport => ArbiterPriority.Recon,
+					or MissionType.Demonstration or MissionType.DecoyTransport or MissionType.FakeBuildup => ArbiterPriority.Recon,
 				_ => ArbiterPriority.Staging
 			};
 		}
@@ -1385,11 +1401,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
 					or MissionType.Siege or MissionType.ChokepointSeizure => "main",
 				MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
-					or MissionType.ExpansionDenial or MissionType.Flank => "flank",
+					or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer => "flank",
 				MissionType.AirStrike => "air",
-				MissionType.NavalStrike => "naval",
+				MissionType.NavalStrike or MissionType.NavalBlockade => "naval",
 				MissionType.SupportPowerStrike => "support",
-				MissionType.Feint or MissionType.Demonstration => "feint",
+				MissionType.Feint or MissionType.Demonstration or MissionType.FakeBuildup => "feint",
 				MissionType.Bait => "bait",
 				MissionType.Transport or MissionType.SpecialOps or MissionType.DecoyTransport => "special",
 				MissionType.Defend or MissionType.MobileDefense or MissionType.DelayingAction
@@ -1668,6 +1684,188 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Economy escort: a raid-sensitive enemy threatens harvesters.
 			if (blackboard.Opponent.AttacksHarvesters && !missions.Missions.Any(m => m.Type == MissionType.Escort))
 				EnsureMission(MissionType.Escort, 45, RegionCenter(blackboard.HomeRegion), "Escort harvesters");
+		}
+
+		/// <summary>
+		/// Creates the remaining mission types that extend the deterministic commander: harassment,
+		/// expansion denial, naval blockade and naval strike, pincer envelopment, delaying action,
+		/// air/naval/route reconnaissance, decoy transport, and fake buildup. Each is gated on its
+		/// tactical precondition and deduplicated against the active mission set.
+		/// </summary>
+		void CreateAdvancedMissions(float ratio)
+		{
+			var hasAir = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
+			var hasNaval = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Naval] > 0);
+			var enemyNavalKnown = blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Naval);
+			var enemyStructures = blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
+
+			// Harassment: a small fast force raids enemy harvesters when the fight is not heavily
+			// unfavorable and the enemy economy is known.
+			if (ratio < 1.5f && blackboard.EnemyRegion >= 0 && enemyStructures.Any(i => TargetEvaluator.EconomicValue(i.Type) > 0)
+				&& !missions.Missions.Any(m => m.Type == MissionType.Harassment))
+			{
+				var economyTarget = HighestScored(
+					enemyStructures.Where(i => TargetEvaluator.EconomicValue(i.Type) > 0).ToArray(),
+					i => TargetEvaluator.EconomicValue(i.Type));
+				if (economyTarget != null)
+					EnsureMission(MissionType.Harassment, 45, economyTarget, "Raid enemy harvesters");
+			}
+
+			// Expansion denial: enemy structures sit in a region that is not their base region.
+			if (blackboard.EnemyRegion >= 0 && !missions.Missions.Any(m => m.Type == MissionType.ExpansionDenial))
+			{
+				var expansion = enemyStructures.FirstOrDefault(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion);
+				if (expansion != null)
+					EnsureMission(MissionType.ExpansionDenial, 50, expansion.LastSeenCell, "Deny enemy expansion");
+			}
+
+			// Naval blockade: patrol the enemy coast to deny enemy naval movement when big water exists
+			// and the enemy has ships.
+			if (blackboard.HasBigWater && enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalBlockade))
+			{
+				var coast = EnemyCoastRegion();
+				if (coast != null)
+					EnsureMission(MissionType.NavalBlockade, 60, coast, "Blockade the enemy coast");
+			}
+
+			// Naval strike: when the coalition has ships and big water, strike alongside the air strike.
+			if (blackboard.HasBigWater && hasNaval && blackboard.EnemyRegion >= 0
+				&& !missions.Missions.Any(m => m.Type == MissionType.NavalStrike))
+			{
+				var highValue = BestScoredTarget();
+				EnsureMission(MissionType.NavalStrike, 65, highValue ?? RegionCenter(blackboard.EnemyRegion), "Naval strike on high-value target");
+			}
+
+			// Pincer: a strong coalition (ratio < 0.8f) with a staged attack sends a second flanking
+			// force converging on the same target from the opposite side.
+			var stagedAttack = missions.Missions.FirstOrDefault(m => MissionManager.IsOffensive(m.Type)
+				&& m.Type != MissionType.AirStrike && m.Type != MissionType.NavalStrike
+				&& m.Type != MissionType.SupportPowerStrike && m.Type != MissionType.Pincer
+				&& m.Status == MissionStatus.Executing && m.Target != null);
+			if (ratio < 0.8f && stagedAttack != null && !missions.Missions.Any(m => m.Type == MissionType.Pincer))
+			{
+				var pincerTarget = PincerRegionTarget(stagedAttack);
+				if (pincerTarget != null)
+					EnsureMission(MissionType.Pincer, 85, pincerTarget, "Double envelopment from the opposite flank");
+			}
+
+			// Delaying action: when defending and outnumbered, a small force slows the enemy advance.
+			if (ratio > 2.0f && !missions.Missions.Any(m => m.Type == MissionType.DelayingAction))
+			{
+				var away = blackboard.EnemyIntel.FirstOrDefault(i => i.Class != UnitClass.Structure
+					&& blackboard.RegionOf(i.LastSeenCell).Index != blackboard.HomeRegion);
+				EnsureMission(MissionType.DelayingAction, 75, away?.LastSeenCell ?? RegionCenter(blackboard.HomeRegion), "Delay the enemy advance");
+			}
+
+			// Air recon: the enemy position is unknown and the coalition has air scouts.
+			if (blackboard.EnemyRegion < 0 && hasAir && !missions.Missions.Any(m => m.Type == MissionType.AirRecon))
+			{
+				var reconTarget = LeastExploredRegionNear();
+				if (reconTarget != null)
+					EnsureMission(MissionType.AirRecon, 38, reconTarget, "Aerial reconnaissance to locate the enemy");
+			}
+
+			// Naval recon: big water with unknown enemy naval presence.
+			if (blackboard.HasBigWater && !enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalRecon))
+			{
+				var reconTarget = LeastExploredRegionNear();
+				if (reconTarget != null)
+					EnsureMission(MissionType.NavalRecon, 38, reconTarget, "Naval reconnaissance to find the enemy fleet");
+			}
+
+			// Route recon: an attack is staged and the planned route passes through unexplored regions.
+			if (stagedAttack != null && stagedAttack.PlannedRegions.Length > 0
+				&& !missions.Missions.Any(m => m.Type == MissionType.RouteRecon))
+			{
+				var unexplored = stagedAttack.PlannedRegions.FirstOrDefault(r => r >= 0 && blackboard.Regions[r].FriendlyControl < 0.1f);
+				if (unexplored >= 0)
+					EnsureMission(MissionType.RouteRecon, 42, RegionCenter(unexplored), "Scout the route to the target");
+			}
+
+			// Decoy transport: a special-operations mission is active and a transport is available;
+			// send an empty transport to a fake landing zone to draw enemy attention.
+			if (missions.Missions.Any(m => m.Type == MissionType.SpecialOps && m.Status == MissionStatus.Executing)
+				&& blackboard.Transports.Count > 0 && !missions.Missions.Any(m => m.Type == MissionType.DecoyTransport))
+			{
+				var decoyTarget = DecoyLandingZone();
+				if (decoyTarget != null)
+					EnsureMission(MissionType.DecoyTransport, 65, decoyTarget, "Feign a naval insertion to draw enemy attention");
+			}
+
+			// Fake buildup: a deception that shows force at a location to make the enemy think a
+			// buildup is happening there, pinning reserves while the real attack goes in elsewhere.
+			if (stagedAttack != null && !missions.Missions.Any(m => m.Type == MissionType.FakeBuildup)
+				&& !DeceptionSaturated())
+			{
+				var fakeTarget = FeintRegionTarget();
+				if (fakeTarget != null)
+					EnsureMission(MissionType.FakeBuildup, 48, fakeTarget, "Feign a force buildup to pin enemy reserves");
+			}
+		}
+
+		/// <summary>
+		/// Picks a water region naval-adjacent to the enemy base region for a blockade patrol, falling
+		/// back to the enemy region center when no distinct coastal region is found.
+		/// </summary>
+		CPos? EnemyCoastRegion()
+		{
+			if (blackboard.EnemyRegion < 0)
+				return RegionCenter(blackboard.EnemyRegion);
+
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+			{
+				if (i == blackboard.EnemyRegion)
+					continue;
+				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, blackboard.EnemyRegion, i))
+					return RegionCenter(i);
+			}
+
+			return RegionCenter(blackboard.EnemyRegion);
+		}
+
+		/// <summary>
+		/// Picks a second flanking axis for a pincer: an enemy-pressured region adjacent to the enemy
+		/// base that is distinct from the main attack's region and from any existing flank mission's
+		/// target, so the two forces converge from opposite sides.
+		/// </summary>
+		CPos? PincerRegionTarget(CoalitionMission attack)
+		{
+			var attackRegion = attack.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
+			var flank = missions.Missions.FirstOrDefault(m => m.Type == MissionType.Flank && m.Target != null);
+			var flankRegion = flank?.Target != null ? blackboard.RegionOf(flank.Target.Value).Index : -1;
+			for (var i = 0; i < blackboard.Regions.Length; i++)
+			{
+				if (blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion || i == flankRegion)
+					continue;
+				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i))
+					return RegionCenter(i);
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Picks a fake landing zone for a decoy transport: a coastal region near the enemy that is
+		/// distinct from the active special-operations target, so the decoy draws attention away from
+		/// the real insertion.
+		/// </summary>
+		CPos? DecoyLandingZone()
+		{
+			var specialOps = missions.Missions.FirstOrDefault(m => m.Type == MissionType.SpecialOps && m.Target != null);
+			var specialOpsRegion = specialOps?.Target != null ? blackboard.RegionOf(specialOps.Target.Value).Index : -1;
+			if (blackboard.EnemyRegion >= 0)
+			{
+				for (var i = 0; i < blackboard.Regions.Length; i++)
+				{
+					if (i == specialOpsRegion || i == blackboard.EnemyRegion)
+						continue;
+					if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i)
+						|| blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, blackboard.EnemyRegion, i))
+						return RegionCenter(i);
+				}
+			}
+
+			return RegionCenter(blackboard.EnemyRegion);
 		}
 
 		/// <summary>

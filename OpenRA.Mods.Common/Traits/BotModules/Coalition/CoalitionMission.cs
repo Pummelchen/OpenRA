@@ -53,7 +53,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		ExpansionSearch,
 		DefenseProbe,
 		Demonstration,
-		DecoyTransport
+		DecoyTransport,
+		Pincer,
+		NavalBlockade,
+		FakeBuildup
 	}
 
 	public enum MissionStatus
@@ -175,6 +178,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Bait => "enemy pursues the bait into the ambush",
 				MissionType.Demonstration => "enemy holds or shifts reserves",
 				MissionType.DecoyTransport => "enemy reacts to the apparent insertion",
+				MissionType.FakeBuildup => "enemy redeploys to face the phantom buildup",
 				_ => null
 			};
 		}
@@ -191,6 +195,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.ExpansionDenial => ["deny_expansion", "contain_enemy"],
 				MissionType.ChokepointSeizure => ["control_chokepoint", "split_enemy"],
 				MissionType.Flank => ["attack_enemy_flank", "divide_defense"],
+				MissionType.Pincer => ["envelop_enemy", "crush_between_forces"],
+				MissionType.NavalBlockade => ["deny_enemy_naval_movement", "isolate_enemy_coast"],
 				MissionType.AirStrike or MissionType.NavalStrike => ["destroy_high_value_target", "soften_defense"],
 				MissionType.SupportPowerStrike => ["strike_high_value_target"],
 				MissionType.Recon => ["locate_enemy", "reveal_terrain"],
@@ -202,6 +208,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.DefenseProbe => ["probe_defenses", "reveal_garrison"],
 				MissionType.Feint or MissionType.Bait => ["draw_enemy_response", "expose_enemy_position"],
 				MissionType.Demonstration => ["show_force", "draw_attention"],
+				MissionType.FakeBuildup => ["feign_buildup", "draw_enemy_redeployment"],
 				MissionType.DecoyTransport => ["feign_insertion", "draw_enemy_response"],
 				MissionType.Transport or MissionType.SpecialOps => ["insert_asset", "destroy_rear_target"],
 				MissionType.Defend => ["protect_base", "repel_attack"],
@@ -223,7 +230,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Attack or MissionType.Raid or MissionType.Counterattack or MissionType.Breakthrough
 					or MissionType.Siege or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
 					or MissionType.ExpansionDenial or MissionType.ChokepointSeizure or MissionType.Flank
-					=> ["force >= MinForce", "route exists"],
+					or MissionType.Pincer => ["force >= MinForce", "route exists"],
+				MissionType.NavalBlockade => ["naval_available", "enemy_coast_identified"],
 				MissionType.AirStrike or MissionType.NavalStrike => ["air_or_naval_available", "target_identified"],
 				MissionType.SupportPowerStrike => ["power_ready", "high_value_target"],
 				MissionType.Transport or MissionType.SpecialOps => ["transport available", "timing window"],
@@ -237,7 +245,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				MissionType.Attack or MissionType.Breakthrough => ["convert to feint", "withdraw"],
 				MissionType.Raid or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
-					or MissionType.ExpansionDenial or MissionType.Flank => ["withdraw"],
+					or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer => ["withdraw"],
+				MissionType.NavalBlockade => ["withdraw_to_port"],
 				MissionType.AirStrike or MissionType.NavalStrike => ["return to base"],
 				MissionType.SupportPowerStrike => ["withhold power"],
 				MissionType.Transport or MissionType.SpecialOps => ["abort and hold"],
@@ -256,11 +265,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				case MissionType.Bait:
 				case MissionType.Demonstration:
 				case MissionType.DecoyTransport:
+				case MissionType.FakeBuildup:
 					return MissionPhase.Deception;
 				case MissionType.Retreat:
 					return MissionPhase.Withdrawal;
 				case MissionType.AirStrike:
 				case MissionType.NavalStrike:
+				case MissionType.NavalBlockade:
 					return MissionPhase.Shaping; // no ground staging for strike missions
 				case MissionType.SupportPowerStrike:
 					return MissionPhase.Breach;  // fire immediately when ready
@@ -347,8 +358,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return type is MissionType.Attack or MissionType.Raid or MissionType.Counterattack
 				or MissionType.Breakthrough or MissionType.Siege or MissionType.Harassment
 				or MissionType.EconomyRaid or MissionType.ProductionRaid or MissionType.ExpansionDenial
-				or MissionType.ChokepointSeizure or MissionType.Flank
-				or MissionType.AirStrike or MissionType.NavalStrike or MissionType.SupportPowerStrike;
+				or MissionType.ChokepointSeizure or MissionType.Flank or MissionType.Pincer
+				or MissionType.AirStrike or MissionType.NavalStrike or MissionType.NavalBlockade
+				or MissionType.SupportPowerStrike;
 		}
 
 		/// <summary>
@@ -362,14 +374,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort
 				or MissionType.DeepRecon or MissionType.AirRecon or MissionType.NavalRecon
 				or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe
-				or MissionType.Demonstration or MissionType.DecoyTransport;
+				or MissionType.Demonstration or MissionType.DecoyTransport or MissionType.FakeBuildup;
 		}
 
 		/// <summary>True for deception missions whose success is measured by the enemy's reaction.</summary>
 		public static bool IsDeception(MissionType type)
 		{
 			return type is MissionType.Feint or MissionType.Bait or MissionType.Demonstration
-				or MissionType.DecoyTransport;
+				or MissionType.DecoyTransport or MissionType.FakeBuildup;
 		}
 
 		/// <summary>True for the reconnaissance family.</summary>
@@ -603,8 +615,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				.ToArray();
 
 			var attack = active.FirstOrDefault(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
-				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
-			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint || m.Type == MissionType.Demonstration);
+				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.NavalBlockade
+				&& m.Type != MissionType.SupportPowerStrike);
+			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint || m.Type == MissionType.Demonstration
+				|| m.Type == MissionType.FakeBuildup);
 			var defend = active.FirstOrDefault(m => IsDefensive(m.Type));
 			var recon = active.FirstOrDefault(m => IsRecon(m.Type));
 			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);

@@ -124,8 +124,22 @@ After your analysis, reply with ONLY the final plan, a JSON object of the form:
  "roles": {"playerid": "main|escort|naval|defend"}, "produce": ["unit1", "unit2"],
  "retreat": false, "transport": {"kind": "naval", "to": {"x": 0, "y": 0}},
  "missions": [{"type": "attack|defend|recon|raid|feint|transport|counterattack|specialops",
-               "x": 0, "y": 0, "priority": 70}]}
-Do not include markdown, comments, or any other text."""
+               "x": 0, "y": 0, "priority": 70}],
+ "request_capability": "anti_air|anti_armor|anti_infantry|artillery|naval|recon|transport|base_defense",
+ "production_directive": ["unit1", "unit2"],
+ "expansion_priority": -1|0|1,
+ "modify_missions": ["attack", "defend"]}
+Do not include markdown, comments, or any other text.
+
+Field reference:
+- request_capability: request production of a specific capability counter (e.g. "anti_air" when the
+  enemy fields aircraft, "naval" when sea power is needed, "base_defense" for a defensive build-up).
+- production_directive: directly specify which unit ids to prioritize (same format as "produce");
+  use when you want exact unit control rather than a capability hint.
+- expansion_priority: 1 = prioritize expansion (claim new resource fields), -1 = suppress expansion
+  (focus on military), 0 = no override.
+- modify_missions: mission types to cancel and recreate with updated parameters; the deterministic
+  commander recreates them on the next tick with fresh target scoring."""
 
 
 class PlanServer(BaseHTTPRequestHandler):

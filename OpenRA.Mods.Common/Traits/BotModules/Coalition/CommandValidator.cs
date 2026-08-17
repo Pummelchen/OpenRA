@@ -147,5 +147,36 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			return units;
 		}
+
+		/// <summary>The capability vocabulary the LLM may request via request_capability.</summary>
+		public static readonly IReadOnlySet<string> KnownCapabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+		{
+			"anti_air", "anti_armor", "anti_infantry", "artillery", "naval", "recon", "transport", "base_defense"
+		};
+
+		/// <summary>
+		/// Validates a capability directive. A null/empty capability is valid (no directive); an
+		/// unknown value is rejected with a machine-readable reason.
+		/// </summary>
+		public static string ValidateCapability(string capability)
+		{
+			if (string.IsNullOrWhiteSpace(capability))
+				return null;
+
+			return KnownCapabilities.Contains(capability.Trim())
+				? null
+				: $"REJECTED_UNKNOWN_CAPABILITY: unknown capability \"{capability}\"";
+		}
+
+		/// <summary>
+		/// Validates an expansion priority override. A value of 0 is valid (no override); only -1,
+		/// 0, and 1 are accepted. Out-of-range values are rejected with a machine-readable reason.
+		/// </summary>
+		public static string ValidateExpansionPriority(int priority)
+		{
+			return priority is -1 or 0 or 1
+				? null
+				: $"REJECTED_INVALID_EXPANSION_PRIORITY: expansion priority {priority} must be -1, 0, or 1";
+		}
 	}
 }
