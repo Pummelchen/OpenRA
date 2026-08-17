@@ -178,5 +178,44 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				? null
 				: $"REJECTED_INVALID_EXPANSION_PRIORITY: expansion priority {priority} must be -1, 0, or 1";
 		}
+		/// <summary>The maximum reserve fraction the commander may request (1/N of the army held
+		/// back). 0 means no override; the brain clamps to this same ceiling.</summary>
+		public const int MaxReserveFraction = 10;
+
+		/// <summary>
+		/// Validates a reserve-fraction override. 0 is valid (no override); values outside 0..
+		/// <see cref="MaxReserveFraction"/> are rejected with a machine-readable reason.
+		/// </summary>
+		public static string ValidateReserveFraction(int fraction)
+		{
+			return fraction >= 0 && fraction <= MaxReserveFraction
+				? null
+				: $"REJECTED_INVALID_RESERVE_FRACTION: reserve fraction {fraction} must be 0..{MaxReserveFraction}";
+		}
+
+		/// <summary>
+		/// Validates production-directive unit names against the buildable-item set of the live
+		/// ruleset. Blank entries are reported by <see cref="ValidateProduce"/>, so they are
+		/// skipped here; unknown names are rejected with a machine-readable reason.
+		/// </summary>
+		public static IReadOnlyList<(int Index, string Reason)> ValidateUnitNames(
+		IReadOnlyList<string> units, IReadOnlySet<string> buildable, string fieldName)
+		{
+			var rejections = new List<(int Index, string Reason)>();
+			if (units == null)
+				return rejections;
+
+			for (var i = 0; i < units.Count; i++)
+			{
+				var name = units[i];
+				if (string.IsNullOrWhiteSpace(name))
+					continue;
+
+				if (!buildable.Contains(name))
+					rejections.Add((i, $"REJECTED_UNKNOWN_UNIT: {fieldName} entry \"{name}\" is not buildable"));
+			}
+
+			return rejections;
+		}
 	}
 }

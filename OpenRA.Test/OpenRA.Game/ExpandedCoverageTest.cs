@@ -265,5 +265,47 @@ namespace OpenRA.Test
 			Assert.That(CommandValidator.KnownCapabilities.Contains("transport"), Is.True);
 			Assert.That(CommandValidator.KnownCapabilities.Contains("base_defense"), Is.True);
 		}
+
+		[TestCase(TestName = "ValidateReserveFraction accepts 0..MaxReserveFraction.")]
+		public void ValidateReserveFractionValid()
+		{
+			Assert.That(CommandValidator.ValidateReserveFraction(0), Is.Null);
+			Assert.That(CommandValidator.ValidateReserveFraction(1), Is.Null);
+			Assert.That(CommandValidator.ValidateReserveFraction(5), Is.Null);
+			Assert.That(CommandValidator.ValidateReserveFraction(CommandValidator.MaxReserveFraction), Is.Null);
+		}
+
+		[TestCase(TestName = "ValidateReserveFraction rejects out-of-range values.")]
+		public void ValidateReserveFractionInvalid()
+		{
+			Assert.That(CommandValidator.ValidateReserveFraction(-1), Does.Contain("REJECTED_INVALID_RESERVE_FRACTION"));
+			Assert.That(CommandValidator.ValidateReserveFraction(CommandValidator.MaxReserveFraction + 1), Does.Contain("REJECTED_INVALID_RESERVE_FRACTION"));
+		}
+
+		[TestCase(TestName = "ValidateUnitNames accepts buildable units.")]
+		public void ValidateUnitNamesValid()
+		{
+			var buildable = new System.Collections.Generic.HashSet<string> { "e1", "e2", "tank" };
+			var result = CommandValidator.ValidateUnitNames(new[] { "e1", "tank" }, buildable, "production_directive");
+			Assert.That(result.Count, Is.EqualTo(0));
+		}
+
+		[TestCase(TestName = "ValidateUnitNames rejects unknown units and skips blanks.")]
+		public void ValidateUnitNamesInvalid()
+		{
+			var buildable = new System.Collections.Generic.HashSet<string> { "e1", "e2" };
+			var result = CommandValidator.ValidateUnitNames(new[] { "e1", "ghost", "", null, "e2" }, buildable, "production_directive");
+			Assert.That(result.Count, Is.EqualTo(1));
+			Assert.That(result[0].Index, Is.EqualTo(1));
+			Assert.That(result[0].Reason, Does.Contain("REJECTED_UNKNOWN_UNIT"));
+			Assert.That(result[0].Reason, Does.Contain("ghost"));
+		}
+
+		[TestCase(TestName = "ValidateUnitNames handles a null list.")]
+		public void ValidateUnitNamesNull()
+		{
+			var result = CommandValidator.ValidateUnitNames(null, new System.Collections.Generic.HashSet<string>(), "production_directive");
+			Assert.That(result.Count, Is.EqualTo(0));
+		}
 	}
 }

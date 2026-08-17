@@ -1232,6 +1232,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// <summary>
+		/// Collects the set of unit names this bot can currently build, used to validate the
+		/// LLM production-directive override against the live ruleset.
+		/// </summary>
+		HashSet<string> BuildableUnitNames()
+		{
+			var names = new HashSet<string>();
+			foreach (var queue in player.PlayerActor.TraitsImplementing<ProductionQueue>())
+				foreach (var item in queue.BuildableItems())
+					names.Add(item.Name);
+			return names;
+		}
+
+		/// <summary>
 		/// Resolves an LLM capability directive string into the matching configured counter-unit
 		/// list. Returns null for an unknown capability (already rejected by the validator).
 		/// </summary>
@@ -1991,6 +2005,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					CoalitionTelemetry.Log(world, $"Command validator: {expansionRejection}");
 					intent.ExpansionPriority = 0;
 				}
+
+				var reserveRejection = CommandValidator.ValidateReserveFraction(intent.ReserveFraction);
+				if (reserveRejection != null)
+				{
+					CoalitionTelemetry.Log(world, $"Command validator: {reserveRejection}");
+					intent.ReserveFraction = 0;
+				}
+
+				// Production-directive unit names are checked against the local buildable-item set so an
+				// unknown unit is rejected engine-side instead of silently dropped downstream.
+				var unitRejections = CommandValidator.ValidateUnitNames(
+					intent.ProductionDirective, BuildableUnitNames(), "production_directive");
+				foreach (var (_, reason) in unitRejections)
+					CoalitionTelemetry.Log(world, $"Command validator: {reason}");
+
+				if (unitRejections.Count > 0)
+					intent.ProductionDirective = intent.ProductionDirective.Where((_, i) => !unitRejections.Any(r => r.Index == i)).ToArray();
 
 				llmIntent = intent;
 			}
