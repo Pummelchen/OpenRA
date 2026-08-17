@@ -61,6 +61,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// Base defense response time: (threatTick, responseTick) pairs (req 621).
 		readonly List<(int ThreatTick, int ResponseTick)> baseDefenseResponseTimes = [];
 
+		// Local combat superiority: engagements fought and how many were fought with superior
+		// local numbers (req 613).
+		int engagements;
+		int engagementsSuperior;
+
+		// Feint effectiveness: feints launched and how many opened a launch window (req 627).
+		int feintsLaunched;
+		int feintsOpenedWindow;
+
 		// Win/loss result (set at game end).
 		public bool? Won;
 
@@ -132,11 +141,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Counterattacks launched and enemy units destroyed (req 620).</summary>
 		public CounterattackStats CounterattackEffectiveness => new(counterattacksLaunched, counterattackEnemyDestroyed);
 
+		/// <summary>Engagements fought and how many were local-superiority (req 613).</summary>
+		public LocalSuperiorityStats EngagementSuperiority => new(engagements, engagementsSuperior);
+
+		/// <summary>Feints launched and how many opened a window for the main wave (req 627).</summary>
+		public FeintStats FeintEffectiveness => new(feintsLaunched, feintsOpenedWindow);
+
 		public readonly record struct ReconStats(int MissionsSent, int UsefulIntelGained);
 
 		public readonly record struct TransportStats(int Total, int Survived);
 
 		public readonly record struct CounterattackStats(int Counterattacks, int EnemyDestroyed);
+
+		public readonly record struct LocalSuperiorityStats(int Engagements, int Superior);
+
+		public readonly record struct FeintStats(int Feints, int OpenedWindow);
 
 
 		/// <summary>Records one sample of economic infrastructure (refinery counts) for damage tracking.</summary>
@@ -212,6 +231,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			baseDefenseResponseTimes.Add((threatTick, responseTick));
 		}
 
+		/// <summary>Records an engagement and whether the coalition held local numerical superiority (req 613).</summary>
+		public void RecordEngagement(bool localSuperiority)
+		{
+			engagements++;
+			if (localSuperiority)
+				engagementsSuperior++;
+		}
+
+		/// <summary>Records a feint launch (req 627).</summary>
+		public void RecordFeintLaunch()
+		{
+			feintsLaunched++;
+		}
+
+		/// <summary>Records that a feint opened a launch window for the main wave (req 627).</summary>
+		public void RecordFeintOpenedWindow()
+		{
+			feintsOpenedWindow++;
+		}
+
 		/// <summary>One-line quality summary for the telemetry log.</summary>
 		public string Summary()
 		{
@@ -225,7 +264,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					$"retreats {retreatTimings.Count}, recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
 					$"transports {transportSurvived}/{transportTotal} survived, " +
 					$"counterattacks {counterattacksLaunched} ({counterattackEnemyDestroyed} destroyed), " +
-					$"base defense responses {baseDefenseResponseTimes.Count}";
+					$"base defense responses {baseDefenseResponseTimes.Count}, " +
+					$"engagements {engagements} ({engagementsSuperior} superior), " +
+					$"feints {feintsLaunched} ({feintsOpenedWindow} window)";
 		}
 	}
 }

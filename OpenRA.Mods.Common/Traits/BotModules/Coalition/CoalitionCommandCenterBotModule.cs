@@ -183,6 +183,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int responseTimeSum;
 		int responseTimeSamples;
 		int lastWaveTick = int.MinValue;
+		int lastFeintTick = int.MinValue;
 		int raidContactTicks;
 
 		// Durable peak unit count per owner, for casualty tracking across blackboard rebuilds.
@@ -229,6 +230,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			lastWaveTick = tick;
 		}
 
+		/// <summary>The tick of the most recent feint, for measuring whether it opened a window (req 627).</summary>
+		public int LastFeintTick => lastFeintTick;
+
+		/// <summary>Marks a feint launch tick (req 627).</summary>
+		public void MarkFeintLaunch(int tick)
+		{
+			lastFeintTick = tick;
+		}
+
 		/// <summary>Records an MCV deployment/expansion for telemetry (req 608).</summary>
 		public void RecordExpansion(int tick)
 		{
@@ -270,6 +280,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public void RecordBaseDefenseResponse(int threatTick, int responseTick)
 		{
 			matchMetrics.RecordBaseDefenseResponse(threatTick, responseTick);
+		}
+
+		/// <summary>Records an engagement and whether the coalition held local superiority (req 613).</summary>
+		public void RecordEngagement(bool localSuperiority)
+		{
+			matchMetrics.RecordEngagement(localSuperiority);
+		}
+
+		/// <summary>Records a feint launch for telemetry (req 627).</summary>
+		public void RecordFeintLaunch()
+		{
+			matchMetrics.RecordFeintLaunch();
+		}
+
+		/// <summary>Records that a feint opened a launch window for telemetry (req 627).</summary>
+		public void RecordFeintOpenedWindow()
+		{
+			matchMetrics.RecordFeintOpenedWindow();
 		}
 
 		static readonly JsonSerializerOptions IntentOptions = new() { PropertyNameCaseInsensitive = true };

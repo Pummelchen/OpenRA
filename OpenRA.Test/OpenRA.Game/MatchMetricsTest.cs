@@ -78,5 +78,24 @@ namespace OpenRA.Test
 			Assert.That(summary, Does.Contain("cohesion"));
 			Assert.That(summary, Does.Contain("samples 2"));
 		}
+
+		[TestCase(TestName = "Engagement and feint counters accumulate and appear in the summary.")]
+		public void EngagementAndFeintCounters()
+		{
+			var metrics = new CoalitionMatchMetrics();
+			metrics.Sample(100f, 100f, 0f, 1f, 500f);
+
+			metrics.RecordEngagement(true);
+			metrics.RecordEngagement(false);
+			metrics.RecordEngagement(true);
+			metrics.RecordFeintLaunch();
+			metrics.RecordFeintLaunch();
+			metrics.RecordFeintOpenedWindow();
+
+			Assert.That(metrics.EngagementSuperiority, Is.EqualTo(new CoalitionMatchMetrics.LocalSuperiorityStats(3, 2)));
+			Assert.That(metrics.FeintEffectiveness, Is.EqualTo(new CoalitionMatchMetrics.FeintStats(2, 1)));
+			Assert.That(metrics.Summary(), Does.Contain("engagements 3 (2 superior)"));
+			Assert.That(metrics.Summary(), Does.Contain("feints 2 (1 window)"));
+		}
 	}
 }

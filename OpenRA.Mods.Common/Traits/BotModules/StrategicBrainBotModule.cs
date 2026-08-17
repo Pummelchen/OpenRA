@@ -954,6 +954,16 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, feintTarget.Value), false, groupedActors: feint));
 					CoalitionTelemetry.Log(world, $"Feint of {feint.Length} units to {feintTarget.Value}");
+
+					// Record the feint launch (req 627) so the commander can later measure whether it
+					// opened a launch window for the main wave.
+					var ccModuleForFeint = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+						.FirstOrDefault(m => !m.IsTraitDisabled);
+					if (ccModuleForFeint != null)
+					{
+						ccModuleForFeint.RecordFeintLaunch();
+						ccModuleForFeint.MarkFeintLaunch(feintTick);
+					}
 				}
 			}
 
@@ -1048,6 +1058,14 @@ namespace OpenRA.Mods.Common.Traits
 			if (commander != null)
 			{
 				commander.MarkWaveLaunch(world.WorldTick);
+
+				// Record whether this engagement is fought with local numerical superiority (req 613),
+				// and whether a recent feint opened this launch window (req 627).
+				var bb = commander.Blackboard;
+				if (bb != null)
+					commander.RecordEngagement(bb.CoalitionArmyStrength >= bb.EnemyArmyStrength * 1.5f);
+				if (commander.LastFeintTick >= 0 && world.WorldTick - commander.LastFeintTick <= info.TacticInterval * 5)
+					commander.RecordFeintOpenedWindow();
 				if (attackTarget != null)
 				{
 					var raidCell = attackTarget.Value;
