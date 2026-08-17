@@ -133,5 +133,37 @@ namespace OpenRA.Test
 			var merged = CommandValidator.MergeProduce(new[] { "2tnk", "mig" }, new[] { "MIG", "", "arty" }).ToArray();
 			Assert.That(merged, Is.EqualTo(new[] { "2tnk", "mig", "arty" }));
 		}
+
+		[TestCase(TestName = "Posture hints resolve into intent flags with build collapsing to economy.")]
+		public void IntentFlags()
+		{
+			// No hint: deterministic thresholds decide attack vs defend.
+			var (attack, defend, build) = CommandValidator.ResolveCommanderIntent(null, 1.0f);
+			Assert.That(attack, Is.True);
+			Assert.That(defend, Is.False);
+			Assert.That(build, Is.False);
+
+			// Overwhelming enemy forces a defensive posture even without a hint.
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent(null, 3.0f);
+			Assert.That(defend, Is.True);
+
+			// Explicit attack/defend/turtle hints override the ratio.
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("attack", 3.0f);
+			Assert.That(attack, Is.True);
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("defend", 1.0f);
+			Assert.That(defend, Is.True);
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("TURTLE", 1.0f);
+			Assert.That(defend, Is.True, "Postures are case-insensitive.");
+
+			// A build posture suppresses attack and defend regardless of ratio.
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("build", 0.5f);
+			Assert.That(attack, Is.False);
+			Assert.That(defend, Is.False);
+			Assert.That(build, Is.True);
+
+			// Whitespace is tolerated.
+			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("  BUILD  ", 3.0f);
+			Assert.That(build, Is.True);
+		}
 	}
 }

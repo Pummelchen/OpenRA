@@ -24,8 +24,8 @@ import re
 import subprocess
 import sys
 
-if sys.version_info < (3, 14):
-    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
+if sys.version_info < (3, 11):
+    sys.exit("Python 3.11 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORT_PATH = os.path.join(REPO, "ai", "llm_eval_report.json")

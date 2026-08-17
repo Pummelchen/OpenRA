@@ -447,8 +447,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Mission creation driven by the force balance, intel, and LLM intent. Attack unless the
 			// enemy is clearly stronger (an even or slightly unfavorable fight is still worth taking
 			// with better tactics and reserve commitment); defend only when clearly outnumbered.
-			var wantAttack = ratio < 1.5f || llmIntent?.Posture == "attack";
-			var wantDefend = ratio > 2.0f || llmIntent?.Posture == "defend" || llmIntent?.Posture == "turtle";
+			var (wantAttack, wantDefend, wantBuild) = CommandValidator.ResolveCommanderIntent(llmIntent?.Posture, ratio);
 
 			if (wantAttack && blackboard.EnemyRegion >= 0)
 			{
@@ -475,8 +474,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				mainEffort = null;
 
 			// Additional offensive missions driven by intel: raids on economy/production, air and
-			// support-power strikes, chokepoint seizure, and a flank to divide the defense.
-			CreateOffensiveMissions(ratio);
+			// support-power strikes, chokepoint seizure, and a flank to divide the defense. A "build"
+			// posture defers offensive raids while the coalition expands its economy.
+			if (!wantBuild)
+				CreateOffensiveMissions(ratio);
 
 			if (wantDefend)
 				EnsureMission(MissionType.Defend, 80, RegionCenter(blackboard.HomeRegion), "Hold the base");
@@ -498,7 +499,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Advanced mission types: harassment, expansion denial, naval blockade/strike, pincer,
 			// delaying action, air/naval/route recon, and decoy transport. These extend the deterministic
 			// commander with the remaining mission types that were previously enum-only or missing.
-			CreateAdvancedMissions(ratio);
+			// A "build" posture defers these proactive strikes while the coalition expands its economy.
+			if (!wantBuild)
+				CreateAdvancedMissions(ratio);
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
 			// Enemy models that over-respond to raids make feints more valuable, and the measured deception

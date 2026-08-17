@@ -35,8 +35,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-if sys.version_info < (3, 14):
-    sys.exit("Python 3.14 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
+if sys.version_info < (3, 11):
+    sys.exit("Python 3.11 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
 
 DEFAULT_PORT = 8765
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
@@ -611,6 +611,15 @@ def empty_team_plan() -> dict:
     }
 
 
+def rotate_brain_log(path: str, max_bytes: int) -> None:
+    """If the log at path exceeds max_bytes, truncate it from the top, keeping the most recent half."""
+    if os.path.getsize(path) > max_bytes:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines[len(lines) // 2:])
+
+
 def log_brain(message: str) -> None:
     """Terminal monitor: append prompt/reply traffic to ai/brain.log and mirror it to stdout."""
     line = f"[{time.strftime('%H:%M:%S')}] {message}"
@@ -618,11 +627,7 @@ def log_brain(message: str) -> None:
     try:
         # Rotate: if the log has grown past the cap, keep only the most recent half.
         try:
-            if os.path.getsize(BRAIN_LOG) > BRAIN_LOG_MAX_BYTES:
-                with open(BRAIN_LOG, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                with open(BRAIN_LOG, "w", encoding="utf-8") as f:
-                    f.writelines(lines[len(lines) // 2:])
+            rotate_brain_log(BRAIN_LOG, BRAIN_LOG_MAX_BYTES)
         except OSError:
             pass
         with open(BRAIN_LOG, "a", encoding="utf-8") as log_file:

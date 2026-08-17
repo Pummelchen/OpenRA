@@ -110,6 +110,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// Resolves a posture hint into intent flags for mission creation. A "build" posture collapses
+		/// into an economy stance and suppresses attack/defend intents; otherwise the deterministic
+		/// force-ratio thresholds are combined with explicit attack/defend/turtle hints.
+		/// </summary>
+		public static (bool Attack, bool Defend, bool Build) ResolveCommanderIntent(string posture, float ratio)
+		{
+			var normalized = posture?.Trim();
+			var build = string.Equals(normalized, "build", StringComparison.OrdinalIgnoreCase);
+			var attack = !build && (ratio < 1.5f || string.Equals(normalized, "attack", StringComparison.OrdinalIgnoreCase));
+			var defend = !build && (ratio > 2.0f || string.Equals(normalized, "defend", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(normalized, "turtle", StringComparison.OrdinalIgnoreCase));
+			return (attack, defend, build);
+		}
+
+		/// <summary>
 		/// Validates production requests. A null/empty list is valid (no directive); blank entries and
 		/// oversized lists are rejected. Unit-name existence is checked against the production queues by
 		/// the caller, not here, because that requires the live ruleset.
