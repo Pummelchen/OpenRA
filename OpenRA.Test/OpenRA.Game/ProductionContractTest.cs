@@ -119,5 +119,22 @@ namespace OpenRA.Test
 		{
 			Assert.That(ProductionContract.Resolve(new float[Enum.GetValues<CoalitionCapability>().Length], Contracts(), _ => 0, true), Is.Null);
 		}
+
+		[TestCase(TestName = "The capability weight scale promotes or suppresses material threats.")]
+		public void WeightScale()
+		{
+			var subMaterial = Profile((CoalitionCapability.AntiAir, 0.1f));
+
+			// Default scale keeps the threat sub-material.
+			Assert.That(ProductionContract.Resolve(subMaterial, Contracts(), _ => 0, true), Is.Null);
+
+			// A scale above 1 lifts it above the material threshold.
+			Assert.That(ProductionContract.Resolve(subMaterial, Contracts(), _ => 0, true, 3f),
+				Is.EqualTo(new[] { "mig", "v2rl" }));
+
+			// A scale below 1 suppresses a fully-material threat.
+			var material = Profile((CoalitionCapability.AntiAir, 1f));
+			Assert.That(ProductionContract.Resolve(material, Contracts(), _ => 0, true, 0.1f), Is.Null);
+		}
 	}
 }

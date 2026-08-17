@@ -1245,7 +1245,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				fielded[a.Info.Name] = fielded.GetValueOrDefault(a.Info.Name) + 1;
 			}
 
-			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), blackboard.HasBigWater);
+			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), blackboard.HasBigWater,
+				ProductionContract.CapabilityWeightScale);
 
 			// Recon requirement: with the enemy position unknown, produce scouts to locate them.
 			if (blackboard.EnemyRegion < 0 && brain?.Info.ScoutUnitTypes is { Count: > 0 } scoutTypes)

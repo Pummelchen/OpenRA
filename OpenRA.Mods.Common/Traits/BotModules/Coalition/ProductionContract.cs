@@ -31,6 +31,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public const int FieldedCounterMinimum = 4;
 
 		/// <summary>
+		/// Multiplier applied to capability threat weights when resolving production contracts.
+		/// Tunable via the PRODUCTION_CAPABILITY_WEIGHT_SCALE environment variable (req 722) for
+		/// self-play parameter sweeps: &gt;1 makes threats material sooner (more counter
+		/// production), &lt;1 later. Non-positive values fall back to the default of 1.
+		/// </summary>
+		public static float CapabilityWeightScale
+		{
+			get
+			{
+				var env = Environment.GetEnvironmentVariable("PRODUCTION_CAPABILITY_WEIGHT_SCALE");
+				return float.TryParse(env, out var scale) && scale > 0f ? scale : 1f;
+			}
+		}
+
+		/// <summary>
 		/// Aggregates the per-region threat arrays into a single per-capability profile (max across
 		/// regions): a capability that is material in any region drives production.
 		/// </summary>
@@ -47,15 +62,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>
 		/// Resolves the production contract: every material enemy capability (at or above
-		/// <see cref="MaterialThreatThreshold"/>) is answered with its counter units, ordered by
-		/// threat strength (ties keep the configured contract order). A contract is skipped when the
-		/// coalition already fields at least <see cref="FieldedCounterMinimum"/> units of its counter
-		/// types, or when naval counters are requested but no usable water body is explored. Returns
-		/// null when nothing is worth contracting.
+		/// <see cref="MaterialThreatThreshold"/> after the optional <paramref name="weightScale"/>
+		/// multiplier) is answered with its counter units, ordered by threat strength (ties keep
+		/// the configured contract order). A contract is skipped when the coalition already fields
+		/// at least <see cref="FieldedCounterMinimum"/> units of its counter types, or when naval
+		/// counters are requested but no usable water body is explored. Returns null when nothing
+		/// is worth contracting.
 		/// </summary>
 		public static string[] Resolve(float[] capabilityThreats,
 			IReadOnlyList<(CoalitionCapability Capability, string[] CounterUnits)> contracts,
-			Func<string, int> fieldedCount, bool hasBigWater)
+			Func<string, int> fieldedCount, bool hasBigWater, float weightScale = 1f)
 		{
 			var selected = new List<(float Threat, int Index, string[] Units)>();
 			for (var i = 0; i < contracts.Count; i++)
@@ -67,7 +83,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if ((capability == CoalitionCapability.Naval || capability == CoalitionCapability.Submarine) && !hasBigWater)
 					continue;
 
-				var threat = capabilityThreats[(int)capability];
+				var threat = capabilityThreats[(int)capability] * weightScale;
 				if (threat < MaterialThreatThreshold)
 					continue;
 

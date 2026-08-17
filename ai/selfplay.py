@@ -149,6 +149,16 @@ def set_specialops(threshold: float) -> None:
 set_specialops._env_var = "SPECIALOPS_RISK_THRESHOLD"
 
 
+def set_capability(scale: float) -> None:
+    """Sets the PRODUCTION_CAPABILITY_WEIGHT_SCALE env var for the simulation (req 722).
+
+    The C# ProductionContract.CapabilityWeightScale reads this env var to scale the
+    capability threat profile that drives production contracts.
+    """
+    os.environ["PRODUCTION_CAPABILITY_WEIGHT_SCALE"] = str(scale)
+set_capability._env_var = "PRODUCTION_CAPABILITY_WEIGHT_SCALE"
+
+
 def summarize_head_to_head(label: str, results: list) -> None:
     """Reports the coalition's decisive result and ground-truth exchange vs a scripted opponent."""
     coalition_wins = opponent_wins = stalemates = 0
@@ -335,6 +345,7 @@ def main() -> None:
     parser.add_argument("--sweep-target", help="comma-separated target-scoring profiles, e.g. balanced,breakthrough,raiding (req 723)")
     parser.add_argument("--sweep-feint", help="comma-separated feint fractions to compare, e.g. 4,6,8 (req 724)")
     parser.add_argument("--sweep-specialops", help="comma-separated special-ops risk thresholds, e.g. 1.0,2.0,3.0 (req 725)")
+    parser.add_argument("--sweep-capability", help="comma-separated production capability weight scales, e.g. 0.5,1.0,1.5 (req 722)")
     args = parser.parse_args()
 
     sweeps = [
@@ -345,6 +356,7 @@ def main() -> None:
         (args.sweep_target, "target profile", set_target, str),
         (args.sweep_feint, "feint fraction", set_feint, int),
         (args.sweep_specialops, "specialops threshold", set_specialops, float),
+        (args.sweep_capability, "capability weight", set_capability, float),
     ]
     for raw, label, setter, cast in sweeps:
         if raw:
