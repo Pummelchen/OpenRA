@@ -82,13 +82,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// production outpaces destruction, but is a stable deterministic proxy for real losses.
 			if (friendlyValue > friendlyPeak)
 				friendlyPeak = friendlyValue;
-			else if (friendlyPeak > 0)
+			else if (friendlyPeak > 0 && friendlyValue < friendlyPeak)
+			{
 				friendlyValueLost += friendlyPeak - friendlyValue;
+				friendlyPeak = friendlyValue;
+			}
 
 			if (enemyValue > enemyPeak)
 				enemyPeak = enemyValue;
-			else if (enemyPeak > 0)
+			else if (enemyPeak > 0 && enemyValue < enemyPeak)
+			{
 				enemyValueDestroyed += enemyPeak - enemyValue;
+				enemyPeak = enemyValue;
+			}
 
 			idleFractionSum += idleFraction;
 			cohesionSum += cohesion;
@@ -111,6 +117,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public int FriendlyRefineryLosses => friendlyRefineryLosses;
 		public int EnemyRefineryLosses => enemyRefineryLosses;
+		/// <summary>Expansion (MCV deployment) ticks, in order (req 608).</summary>
+		public IReadOnlyList<int> ExpansionTimings => expansionTimings;
+
+		/// <summary>Base-defense response times as (threatTick, responseTick) pairs (req 621).</summary>
+		public IReadOnlyList<(int ThreatTick, int ResponseTick)> BaseDefenseResponseTime => baseDefenseResponseTimes;
+
+		/// <summary>Recon missions sent and how many produced useful intel (req 616).</summary>
+		public ReconStats ReconEfficiency => new(reconMissionsSent, reconUsefulIntel);
+
+		/// <summary>Transport missions launched and how many survived (req 617).</summary>
+		public TransportStats TransportSurvivalCount => new(transportTotal, transportSurvived);
+
+		/// <summary>Counterattacks launched and enemy units destroyed (req 620).</summary>
+		public CounterattackStats CounterattackEffectiveness => new(counterattacksLaunched, counterattackEnemyDestroyed);
+
+		public readonly record struct ReconStats(int MissionsSent, int UsefulIntelGained);
+
+		public readonly record struct TransportStats(int Total, int Survived);
+
+		public readonly record struct CounterattackStats(int Counterattacks, int EnemyDestroyed);
+
 
 		/// <summary>Records one sample of economic infrastructure (refinery counts) for damage tracking.</summary>
 		public void SampleEconomy(int friendlyRefineries, int enemyRefineries)
@@ -118,12 +145,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (friendlyRefineries > friendlyRefineryPeak)
 				friendlyRefineryPeak = friendlyRefineries;
 			else if (friendlyRefineryPeak > 0 && friendlyRefineries < friendlyRefineryPeak)
+			{
 				friendlyRefineryLosses += friendlyRefineryPeak - friendlyRefineries;
+				friendlyRefineryPeak = friendlyRefineries;
+			}
 
 			if (enemyRefineries > enemyRefineryPeak)
 				enemyRefineryPeak = enemyRefineries;
 			else if (enemyRefineryPeak > 0 && enemyRefineries < enemyRefineryPeak)
+			{
 				enemyRefineryLosses += enemyRefineryPeak - enemyRefineries;
+				enemyRefineryPeak = enemyRefineries;
+			}
 		}
 
 		/// <summary>Records the final win/loss result at game end.</summary>

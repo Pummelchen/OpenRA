@@ -170,7 +170,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Contingencies = ContingenciesFor(type);
 		}
 
-		static string IntendedReactionFor(MissionType type)
+		public static string IntendedReactionFor(MissionType type)
 		{
 			return type switch
 			{
@@ -183,7 +183,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			};
 		}
 
-		static List<string> DesiredEffectsFor(MissionType type)
+		public static List<string> DesiredEffectsFor(MissionType type)
 		{
 			return type switch
 			{

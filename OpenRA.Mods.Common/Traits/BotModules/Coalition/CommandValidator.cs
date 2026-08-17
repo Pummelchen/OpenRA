@@ -30,7 +30,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"expansiondenial", "chokepointseizure", "flank", "airstrike", "navalstrike", "supportpowerstrike",
 			"mobiledefense", "antiairumbrella", "navalscreen", "delayingaction", "evacuation", "escort",
 			"deeprecon", "airrecon", "navalrecon", "routerecon", "expansionsearch", "defenseprobe",
-			"demonstration", "decoytransport"
+			"demonstration", "decoytransport", "pincer", "navalblockade", "fakebuildup"
 		};
 
 		/// <summary>
