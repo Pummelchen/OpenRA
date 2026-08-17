@@ -113,5 +113,58 @@ namespace OpenRA.Test
 				"An emergency withdrawal must override a combat commitment.");
 			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("RETREAT-1"));
 		}
+
+		[TestCase(TestName = "ForcesOf lists every force still committed to a mission.")]
+		public void ForcesOfListsCommittedForces()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+			arbiter.Assign("OP-1", "escort", ArbiterPriority.ActiveCombat, "Multi1");
+
+			Assert.That(arbiter.ForcesOf("OP-1").ToArray(), Is.EquivalentTo(new[] { "Multi0", "Multi1" }));
+		}
+
+		[TestCase(TestName = "A released force no longer appears in ForcesOf.")]
+		public void ForcesOfExcludesReleasedForces()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
+			arbiter.Assign("OP-1", "escort", ArbiterPriority.ActiveCombat, "Multi1");
+			arbiter.ReleaseForce("Multi0");
+
+			Assert.That(arbiter.ForcesOf("OP-1").ToArray(), Is.EqualTo(new[] { "Multi1" }));
+		}
+
+		[TestCase(TestName = "Unknown force and mission references resolve to null/empty.")]
+		public void UnknownReferencesResolveEmpty()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			Assert.That(arbiter.MissionOf("Ghost"), Is.Null);
+			Assert.That(arbiter.RoleOf("Ghost"), Is.Null);
+			Assert.That(arbiter.ForcesOf("OP-9"), Is.Empty);
+		}
+
+		[TestCase(TestName = "An LLM special-mission assignment supersedes a routine recon commitment.")]
+		public void LlmSpecialMissionSupersedesRecon()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("OP-1", "recon", ArbiterPriority.Recon, "Multi0");
+
+			// assign_force at SpecialMission (as ApplyLlmForceDirectives commits it) wins.
+			Assert.That(arbiter.Assign("OP-2", "attack", ArbiterPriority.SpecialMission, "Multi0"), Is.Empty);
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("OP-2"));
+		}
+
+		[TestCase(TestName = "An emergency survival commitment is not overridden by an LLM special mission.")]
+		public void SurvivalNotOverriddenBySpecialMission()
+		{
+			var arbiter = new CoalitionOrderArbiter();
+			arbiter.Assign("RETREAT-1", "withdraw", ArbiterPriority.Survival, "Multi0");
+
+			var rejections = arbiter.Assign("OP-2", "attack", ArbiterPriority.SpecialMission, "Multi0").ToArray();
+			Assert.That(rejections, Has.Length.EqualTo(1));
+			Assert.That(rejections[0], Does.Contain("REJECTED_CONFLICT"));
+			Assert.That(arbiter.MissionOf("Multi0"), Is.EqualTo("RETREAT-1"));
+		}
 	}
 }

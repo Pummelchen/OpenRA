@@ -136,6 +136,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			/// <summary>Mission IDs to modify (cancel + recreate with new parameters). Each entry is a mission type string.</summary>
 			public string[] ModifyMissions { get; set; }
+
+			/// <summary>Force-to-mission assignments requested by the LLM. Each entry pairs a force player id with a mission id.</summary>
+			public LlmForceAssignment[] AssignForce { get; set; }
+
+			/// <summary>Force player ids to release from their current missions back to the pool.</summary>
+			public string[] ReleaseForce { get; set; }
 		}
 
 		sealed class LlmMission
@@ -144,6 +150,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			public int X { get; set; }
 			public int Y { get; set; }
 			public int Priority { get; set; }
+		}
+
+		sealed class LlmForceAssignment
+		{
+			public string ForceId { get; set; }
+			public string MissionId { get; set; }
 		}
 
 		readonly CoalitionCommandCenterBotModuleInfo info;
@@ -585,6 +597,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// at a priority, conflicting assignments are rejected with a machine-readable reason, and
 			// completed or cancelled missions release their forces back to the pool.
 			SyncForceAssignments();
+
+			// LLM force directives: assign specific forces to missions (or release them back to the
+			// pool). Resolved against the live force registry and mission manager, with rejections
+			// logged for unknown references; the arbiter arbitrates conflicts.
+			ApplyLlmForceDirectives();
 
 			// Capability-driven production from observed enemy composition, plus any LLM production
 			// boost (already validated and cleaned by ApplyLlmIntent).
@@ -1232,7 +1249,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
-		/// <summary>
 		/// Collects the set of unit names this bot can currently build, used to validate the
 		/// LLM production-directive override against the live ruleset.
 		/// </summary>
@@ -1359,6 +1375,99 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				force.MissionId = arbiter.MissionOf(force.Owner);
 				force.Role = arbiter.RoleOf(force.Owner);
 			}
+		}
+
+		/// <summary>
+		/// Applies the LLM's assign_force / release_force directives. Each assignment is resolved to a
+		/// live force (by player id) and mission (by id or type name), then committed through the order
+		/// arbiter at special-mission priority; conflicts are rejected with a machine-readable reason.
+		/// Unknown or blank references are logged and skipped.
+		/// </summary>
+		void ApplyLlmForceDirectives()
+		{
+			if (llmIntent?.ReleaseForce != null)
+			{
+				foreach (var forceId in llmIntent.ReleaseForce)
+				{
+					var force = ResolveForce(forceId);
+					if (force == null)
+					{
+						CoalitionTelemetry.Log(world, $"Force directive: REJECTED_UNKNOWN_FORCE \"{forceId}\"");
+						continue;
+					}
+
+					arbiter.ReleaseForce(force.Owner);
+					CoalitionTelemetry.Log(world, $"Force {force.Owner} released by LLM directive");
+				}
+			}
+
+			if (llmIntent?.AssignForce != null)
+			{
+				foreach (var assignment in llmIntent.AssignForce)
+				{
+					if (assignment == null)
+						continue;
+
+					var force = ResolveForce(assignment.ForceId);
+					if (force == null)
+					{
+						CoalitionTelemetry.Log(world, $"Force directive: REJECTED_UNKNOWN_FORCE \"{assignment.ForceId}\"");
+						continue;
+					}
+
+					var mission = ResolveMission(assignment.MissionId);
+					if (mission == null)
+					{
+						CoalitionTelemetry.Log(world, $"Force directive: REJECTED_UNKNOWN_MISSION \"{assignment.MissionId}\"");
+						continue;
+					}
+
+					foreach (var rejection in arbiter.Assign(mission.Id, RoleOf(mission.Type), ArbiterPriority.SpecialMission, force.Owner))
+						CoalitionTelemetry.Log(world, $"Order arbiter: {rejection}");
+
+					mission.AssignedForces = arbiter.ForcesOf(mission.Id).ToList();
+				}
+			}
+
+			// Copy the resulting ownership back onto the blackboard force groups so the next command
+			// sees the LLM-directed assignments.
+			foreach (var force in blackboard.Forces)
+			{
+				force.MissionId = arbiter.MissionOf(force.Owner);
+				force.Role = arbiter.RoleOf(force.Owner);
+			}
+		}
+
+		/// <summary>Resolves an LLM force reference to a live force group. Accepts the player id with an
+		/// optional "FORCE_" prefix, case-insensitively.</summary>
+		ForceGroup ResolveForce(string forceId)
+		{
+			if (string.IsNullOrWhiteSpace(forceId))
+				return null;
+			var id = forceId.Trim();
+			if (id.StartsWith("FORCE_", StringComparison.OrdinalIgnoreCase))
+				id = id["FORCE_".Length..];
+			return blackboard.Forces.FirstOrDefault(f => string.Equals(f.Owner, id, StringComparison.OrdinalIgnoreCase));
+		}
+
+		/// <summary>Resolves an LLM mission reference to a live, active mission. Accepts either the
+		/// mission id (e.g. "OP-3") or a mission type name (e.g. "attack"). Only missions that are
+		/// ready or executing are assignable.</summary>
+		CoalitionMission ResolveMission(string missionId)
+		{
+			if (string.IsNullOrWhiteSpace(missionId))
+				return null;
+			var id = missionId.Trim();
+			var mission = missions.Missions.FirstOrDefault(m =>
+				m.Status is MissionStatus.Executing or MissionStatus.Ready &&
+				string.Equals(m.Id, id, StringComparison.OrdinalIgnoreCase));
+			if (mission != null)
+				return mission;
+			var type = ParseMissionType(id);
+			if (type == null)
+				return null;
+			return missions.Missions.FirstOrDefault(m =>
+				m.Type == type.Value && m.Status is MissionStatus.Executing or MissionStatus.Ready);
 		}
 
 		/// <summary>Fills the mission's staging region and planned route from the blackboard's map analysis.</summary>

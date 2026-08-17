@@ -128,7 +128,11 @@ After your analysis, reply with ONLY the final plan, a JSON object of the form:
  "request_capability": "anti_air|anti_armor|anti_infantry|artillery|naval|recon|transport|base_defense",
  "production_directive": ["unit1", "unit2"],
  "expansion_priority": -1|0|1,
- "modify_missions": ["attack", "defend"]}
+ "modify_missions": ["attack", "defend"],
+ "cancel_missions": ["attack"],
+ "reserve_fraction": 2,
+ "assign_force": [{"force_id": "Multi0", "mission_id": "OP-1"}],
+ "release_force": ["Multi1"]}
 Do not include markdown, comments, or any other text.
 
 Field reference:
@@ -139,7 +143,12 @@ Field reference:
 - expansion_priority: 1 = prioritize expansion (claim new resource fields), -1 = suppress expansion
   (focus on military), 0 = no override.
 - modify_missions: mission types to cancel and recreate with updated parameters; the deterministic
-  commander recreates them on the next tick with fresh target scoring."""
+  commander recreates them on the next tick with fresh target scoring.
+- cancel_missions: mission types to cancel outright (releasing their forces) without recreating them.
+- reserve_fraction: override the coalition reserve as 1/N of the army held back; 0 = no override.
+- assign_force: commit a player force to a mission: [{"force_id": "Multi0", "mission_id": "OP-1"}].
+- release_force: release player forces back to the pool: ["Multi1"].
+"""
 
 
 class PlanServer(BaseHTTPRequestHandler):
@@ -512,6 +521,51 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
     else:
         transport = None
 
+    def first_of(*keys):
+        for key in keys:
+            value = plan.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    def strs(value):
+        if isinstance(value, list):
+            return [v for v in value if isinstance(v, str) and v]
+        if isinstance(value, str) and value:
+            return [value]
+        return []
+
+    cancel_missions = strs(first_of("cancel_missions", "cancelMissions"))
+    modify_missions = strs(first_of("modify_missions", "modifyMissions"))
+    production_directive = strs(first_of("production_directive", "productionDirective"))
+    release_force = strs(first_of("release_force", "releaseForce"))
+
+    request_capability = first_of("request_capability", "requestCapability")
+    if not isinstance(request_capability, str):
+        request_capability = None
+
+    expansion_priority = first_of("expansion_priority", "expansionPriority")
+    expansion_priority = expansion_priority if expansion_priority in (-1, 0, 1) else 0
+
+    reserve_fraction_raw = first_of("reserve_fraction", "reserveFraction")
+    reserve_fraction = 0
+    if isinstance(reserve_fraction_raw, (int, float)) and not isinstance(reserve_fraction_raw, bool):
+        reserve_fraction = int(reserve_fraction_raw)
+    elif isinstance(reserve_fraction_raw, str):
+        try:
+            reserve_fraction = int(reserve_fraction_raw)
+        except ValueError:
+            reserve_fraction = 0
+
+    assignments = []
+    for item in first_of("assign_force", "assignForce") or []:
+        if not isinstance(item, dict):
+            continue
+        force_id = item.get("force_id") or item.get("forceId")
+        mission_id = item.get("mission_id") or item.get("missionId")
+        if isinstance(force_id, str) and force_id and isinstance(mission_id, str) and mission_id:
+            assignments.append({"forceId": force_id, "missionId": mission_id})
+
     return {
         "posture": strategy,
         "strategy": strategy,
@@ -523,6 +577,14 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
         "retreat": bool(plan.get("retreat")),
         "transport": transport,
         "missions": missions,
+        "cancelMissions": cancel_missions,
+        "reserveFraction": reserve_fraction,
+        "requestCapability": request_capability,
+        "productionDirective": production_directive,
+        "expansionPriority": expansion_priority,
+        "modifyMissions": modify_missions,
+        "assignForce": assignments,
+        "releaseForce": release_force,
     }
 
 
@@ -538,6 +600,14 @@ def empty_team_plan() -> dict:
         "retreat": False,
         "transport": None,
         "missions": [],
+        "cancelMissions": [],
+        "reserveFraction": 0,
+        "requestCapability": None,
+        "productionDirective": [],
+        "expansionPriority": 0,
+        "modifyMissions": [],
+        "assignForce": [],
+        "releaseForce": [],
     }
 
 
