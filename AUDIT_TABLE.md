@@ -2,6 +2,83 @@
 
 Legend: ✅ Done | 🟡 Partial | ❌ Missing
 
+## Current-source correction matrix — 2026-08-22
+
+This table is the per-requirement status register for the 804-item checklist. The
+rows below supersede the matching rows in the historical register that follows;
+all unlisted rows were rechecked against the current source and retain their
+prior status. `Impl` describes the current code, and `Test` describes direct
+coverage (not merely a successful build). The evidence column names the source
+or test family; the companion [audit report](AUDIT_REPORT.md) explains the
+shared evidence and architectural limits.
+
+| # | Impl | Test | Current evidence / note |
+|---:|:---:|:---:|---|
+| 46 | ✅ | ✅ | `CoalitionOrderArbiter.ReleaseMission`; `OrderArbiterTest` |
+| 69 | 🟡 | 🟡 | `IsExplored` observation gate is too broad; needs `IsVisible` |
+| 72 | 🟡 | 🟡 | `CoalitionIntelTracker` tagging exists, but observation gate leaks fog |
+| 73 | 🟡 | 🟡 | `CoalitionIntelTracker` tagging exists, but observation gate leaks fog |
+| 74 | 🟡 | 🟡 | Last-known state exists, but current truth can enter it through fog |
+| 78 | ❌ | ❌ | `ExternalBrainBotModule.BuildSnapshot` serializes explored-but-hidden actor positions |
+| 159 | ✅ | 🟡 | `ai/selfplay.py --combat-accuracy`; synthetic outcome comparison, not replay validation |
+| 186 | 🟡 | ✅ | `MissionType.Pincer`; enum/effect coverage, no distinct battlefield execution |
+| 195 | 🟡 | ✅ | `MissionType.NavalBlockade`; enum/effect coverage, no distinct blockade tactic |
+| 265 | 🟡 | ✅ | `MissionType.FakeBuildup`; enum/effect coverage, no deception outcome test |
+| 341 | 🟡 | 🟡 | `ApplyPerFrontPostures` only overrides home/enemy regions and uses global strength |
+| 359 | 🟡 | 🟡 | reserve response code exists; no expansion-protection scenario test |
+| 360 | 🟡 | 🟡 | validated reserve override exists; no justification contract or scenario test |
+| 401 | 🟡 | 🟡 | emergency replacement logic present; no focused regression test |
+| 445 | ✅ | 🟡 | `ArmyGroupState.Region/X/Y`; no direct external-snapshot test |
+| 447 | ✅ | 🟡 | `ArmyGroupState.NearbyThreats`; no direct external-snapshot test |
+| 464 | ❌ | ❌ | tool API reads leaky blackboard intelligence under fair fog |
+| 477 | 🟡 | 🟡 | plan field `ProductionDirective`, not a separately callable tool |
+| 478 | 🟡 | 🟡 | plan field `ExpansionPriority`, not a separately callable tool |
+| 479 | 🟡 | 🟡 | plan field `RequestCapability`, not a separately callable tool |
+| 485 | 🟡 | 🟡 | plan field `ModifyMissions`, not a separately callable tool |
+| 486 | 🟡 | 🟡 | plan field `CancelMissions`, not a separately callable tool |
+| 487 | 🟡 | 🟡 | plan field `AssignForce`, not a separately callable tool |
+| 488 | 🟡 | 🟡 | plan field `ReleaseForce`, not a separately callable tool |
+| 489 | 🟡 | 🟡 | plan field `ReserveFraction`, not a separately callable tool |
+| 557 | 🟡 | ✅ | `TacticalFormation` helper covered; no full artillery-screen integration test |
+| 559 | 🟡 | ✅ | `TacticalFormation` helper covered; no full fast-unit support integration test |
+| 591 | ✅ | 🟡 | `CoalitionMatchMetrics` records production-priority changes; no focused assertion |
+| 599 | ✅ | 🟡 | game-over result recorded; no end-to-end match-result assertion |
+| 604 | 🟡 | ✅ | economic damage recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 605 | 🟡 | ✅ | economic damage recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 608 | 🟡 | ✅ | expansion timing recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 612 | 🟡 | 🟡 | synchronization metric is sampled but summary/test do not assert its value |
+| 613 | 🟡 | ✅ | local superiority recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 614 | 🟡 | 🟡 | retreat metric recorded; no effectiveness outcome assertion |
+| 616 | 🟡 | ✅ | recon efficiency recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 617 | 🟡 | ✅ | transport survival recorded in `CoalitionMatchMetrics`; unit-level coverage |
+| 620 | 🟡 | ✅ | counterattack effectiveness recorded; unit-level coverage |
+| 621 | 🟡 | ✅ | base-defense response time recorded; unit-level coverage |
+| 627 | 🟡 | ✅ | feint opening window recorded; unit-level coverage |
+| 719 | ✅ | 🟡 | threat weights exposed as configuration; no tuning-sweep assertion |
+| 722 | ✅ | ✅ | `ProductionContract` weight configuration and test coverage |
+| 723 | ✅ | 🟡 | target-scoring weights exposed; no tuning-sweep assertion |
+| 724 | ✅ | 🟡 | feint threshold exposed; no tuning-sweep assertion |
+| 725 | ✅ | 🟡 | special-ops risk threshold exposed; no tuning-sweep assertion |
+| 728 | 🟡 | 🟡 | `ai/llm_eval.py` evaluates plans, but does not replay live engine decisions |
+| 729 | ✅ | 🟡 | legality scorer in `ai/llm_eval.py`; parser/pure-logic coverage only |
+| 730 | ✅ | 🟡 | force-availability scorer in `ai/llm_eval.py`; parser/pure-logic coverage only |
+| 731 | ✅ | 🟡 | mission-completeness scorer in `ai/llm_eval.py`; parser/pure-logic coverage only |
+| 732 | ✅ | 🟡 | risk scorer in `ai/llm_eval.py`; parser/pure-logic coverage only |
+| 733 | ✅ | 🟡 | deterministic baseline comparison in `ai/llm_eval.py`; no live LLM run |
+| 734 | ✅ | 🟡 | oscillation scorer in `ai/llm_eval.py`; no live LLM run |
+| 735 | ✅ | 🟡 | impossible-command scorer in `ai/llm_eval.py`; no live LLM run |
+| 736 | ✅ | 🟡 | uncertain-intel scorer in `ai/llm_eval.py`; no live LLM run |
+| 737 | ✅ | 🟡 | reserve scorer in `ai/llm_eval.py`; no live LLM run |
+| 738 | ✅ | 🟡 | idle-force scorer in `ai/llm_eval.py`; no live LLM run |
+| 739 | ❌ | ❌ | `IsExplored` paths retain live hidden actor references |
+| 740 | ❌ | ❌ | `CommandToolApi` inherits the leaky blackboard visibility decision |
+| 797 | 🟡 | ❌ | acceptance intent exists, but current fog gate invalidates it |
+| 798 | 🟡 | ❌ | fair-fog acceptance claim is invalid until visibility gates are fixed |
+
+The historical row table begins below so every checklist ID remains visible in
+one document. Its repeated rows are deliberately left intact to preserve the
+original requirement text; use the correction matrix above for current status.
+
 | # | Requirement | Impl | Test |
 |---|-------------|:----:|:----:|
 | **§1 Core Architecture** | | | |
