@@ -93,6 +93,7 @@ namespace OpenRA.Test
 			var group = new ForceGroup("Multi0");
 
 			Assert.That(group.ByType, Is.Empty);
+			Assert.That(group.ActivityCounts, Is.Empty);
 			Assert.That(group.Capabilities, Has.Length.EqualTo(System.Enum.GetValues<FriendlyCapability>().Length));
 			Assert.That(group.Status, Is.EqualTo(ForceStatus.Idle));
 			Assert.That(group.MissionId, Is.Null);

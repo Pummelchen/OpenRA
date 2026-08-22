@@ -169,6 +169,55 @@ namespace OpenRA.Test
 			Assert.That(route.Regions[^1], Is.EqualTo(2));
 		}
 
+		[TestCase(TestName = "Ground, foot, naval, and air routes use explicit movement domains.")]
+		public void ExplicitMovementDomains()
+		{
+			var map = MapWith(Grid());
+			var threats = Threats();
+
+			foreach (var movementClass in new[] { MovementClass.Ground, MovementClass.Foot, MovementClass.Naval, MovementClass.Air })
+			{
+				var route = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, movementClass, RouteWeights.Assault());
+				Assert.That(route.Found, Is.True, $"{movementClass} graph must be independently routable.");
+			}
+		}
+
+		[TestCase(TestName = "Retreat routes use a separate risk profile and expose a corridor description.")]
+		public void RetreatRouteAndCorridor()
+		{
+			var map = MapWith(Grid());
+			var threats = Threats((1, ThreatValues(Combat: 5)));
+			var retreat = CoalitionRoutePlanner.FindRoute(map, threats, 0, 2, MovementClass.Ground, RouteWeights.Retreat());
+
+			Assert.That(retreat.Found, Is.True);
+			Assert.That(retreat.Regions, Does.Not.Contain(1));
+			var corridor = CoalitionMapAnalysis.DescribeCorridor(map, retreat.Regions, MovementClass.Ground);
+			Assert.That(corridor.Features, Has.Length.EqualTo(retreat.Regions.Length - 1));
+		}
+
+		[TestCase(TestName = "Routes are recalculated when dynamic threats change.")]
+		public void RecalculatesAfterThreatChange()
+		{
+			var map = MapWith(Grid());
+			var before = CoalitionRoutePlanner.FindRoute(map, Threats(), 0, 2, MovementClass.Ground, RouteWeights.Assault());
+			var after = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(Combat: 20))), 0, 2,
+				MovementClass.Ground, RouteWeights.Assault());
+
+			Assert.That(before.Regions, Does.Contain(1));
+			Assert.That(after.Regions, Does.Not.Contain(1));
+		}
+
+		[TestCase(TestName = "Enemy reinforcement potential contributes to route cost and selection.")]
+		public void ReinforcementPotential()
+		{
+			var map = MapWith(Grid());
+			var route = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(Reinforcement: 20))), 0, 2,
+				MovementClass.Ground, RouteWeights.Stealth());
+
+			Assert.That(route.Found, Is.True);
+			Assert.That(route.Regions, Does.Not.Contain(1));
+		}
+
 		[TestCase(TestName = "Routes bend around congested active-combat zones.")]
 		public void AvoidsCongestionAndActiveCombat()
 		{
@@ -225,11 +274,12 @@ namespace OpenRA.Test
 			Assert.That(CoalitionRoutePlanner.FindRoute(map, threats, 0, 99, MovementClass.Ground, RouteWeights.Assault()).Found, Is.False);
 		}
 
-		static float[] ThreatValues(float Combat = 0, float AntiAir = 0)
+		static float[] ThreatValues(float Combat = 0, float AntiAir = 0, float Reinforcement = 0)
 		{
 			var values = new float[System.Enum.GetValues<CoalitionCapability>().Length];
 			values[(int)CoalitionCapability.GroundAntiArmor] = Combat;
 			values[(int)CoalitionCapability.AntiAir] = AntiAir;
+			values[(int)CoalitionCapability.Reinforcement] = Reinforcement;
 			return values;
 		}
 	}

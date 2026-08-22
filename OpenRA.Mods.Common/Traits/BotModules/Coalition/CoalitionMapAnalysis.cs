@@ -58,6 +58,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Terrain cells that are bridges.</summary>
 		public readonly HashSet<CPos> BridgeCells;
 
+		/// <summary>Terrain cells that are rivers. Rivers are not bridges and are tracked separately.</summary>
+		public readonly HashSet<CPos> RiverCells;
+
+		/// <summary>Ground regions outside the largest connected land component.</summary>
+		public readonly FrozenSet<int> IslandRegions;
+
+		/// <summary>Regions that border at least one narrow naval crossing.</summary>
+		public readonly FrozenSet<int> NarrowNavalPassageRegions;
+
 		/// <summary>Valuable resource cells per region.</summary>
 		public readonly int[] ResourceCells;
 
@@ -91,7 +100,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			int[][] components, int[] componentCount, HashSet<CPos> bridgeCells, int width, int height,
 			int[] resourceCells, float[] resourceRichness, float[] defensibility,
 			int[] buildableCells = null, float[] expansionValue = null,
-			FrozenSet<int>[] bridgeConnections = null, float[] rallyValue = null, float[] artilleryValue = null)
+			FrozenSet<int>[] bridgeConnections = null, float[] rallyValue = null, float[] artilleryValue = null,
+			HashSet<CPos> riverCells = null)
 		{
 			Regions = regions;
 			Adjacency = adjacency;
@@ -99,6 +109,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Components = components;
 			ComponentCount = componentCount;
 			BridgeCells = bridgeCells;
+			RiverCells = riverCells ?? [];
 			Width = width;
 			Height = height;
 			ResourceCells = resourceCells;
@@ -109,6 +120,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			BridgeConnections = bridgeConnections ?? regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
 			RallyValue = rallyValue ?? new float[regions.Length];
 			ArtilleryValue = artilleryValue ?? new float[regions.Length];
+			IslandRegions = ComputeIslandRegions(components[(int)MovementClass.Ground]).ToFrozenSet();
+			NarrowNavalPassageRegions = Enumerable.Range(0, regions.Length)
+				.Where(i => chokepoints[(int)MovementClass.Naval][i].Count > 0)
+				.ToFrozenSet();
 		}
 
 		/// <summary>True when a region pair is reachable by the given movement class.</summary>
@@ -127,6 +142,30 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int ComponentOf(MovementClass movementClass, int region)
 		{
 			return Components[(int)movementClass][region];
+		}
+
+		/// <summary>Returns regions outside the largest connected ground component.</summary>
+		public static IEnumerable<int> ComputeIslandRegions(int[] groundComponents)
+		{
+			if (groundComponents.Length == 0)
+				return [];
+
+			var mainland = groundComponents
+				.GroupBy(component => component)
+				.OrderByDescending(group => group.Count())
+				.ThenBy(group => group.Key)
+				.First().Key;
+			return Enumerable.Range(0, groundComponents.Length)
+				.Where(region => groundComponents[region] != mainland)
+				.ToArray();
+		}
+
+		/// <summary>Regions meeting a minimum static defensibility score, best first.</summary>
+		public IEnumerable<int> DefensibleRegions(float minimumScore = 0.25f)
+		{
+			return Enumerable.Range(0, Regions.Length)
+				.Where(region => Defensibility[region] >= minimumScore)
+				.OrderByDescending(region => Defensibility[region]);
 		}
 
 		// ------------------------------------------------------------------------------------
@@ -325,8 +364,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var components = new[] { groundComponents.Components, navalComponents.Components, airComponents.Components, footComponents.Components };
 			var componentCount = new[] { groundComponents.Count, navalComponents.Count, airComponents.Count, footComponents.Count };
 
-			// Bridges: terrain cells whose type is a bridge (fixed crossings between land masses).
+			// Bridges and rivers are distinct terrain features. Treating river cells as bridges would
+			// incorrectly make an impassable river look like a fixed crossing to the route planner.
 			var bridgeCells = new HashSet<CPos>();
+			var riverCells = new HashSet<CPos>();
 			for (var y = 0; y < height; y++)
 				for (var x = 0; x < width; x++)
 				{
@@ -335,8 +376,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						continue;
 
 					var type = map.GetTerrainInfo(cell).Type;
-					if (type == "Bridge" || type == "River")
+					if (type == "Bridge")
 						bridgeCells.Add(cell);
+					else if (type == "River")
+						riverCells.Add(cell);
 				}
 
 			// Per-region valuable resource cells and defensibility.
@@ -384,7 +427,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				groundCells, expansionValue,
 				ComputeBridgeConnections(regionArray, bridgeCells, groundPassable, width, height),
 				ComputeRallyValue(regionArray, defensibility, groundCells),
-				ComputeArtilleryValue(regionArray, defensibility, groundGraph.Chokepoints));
+				ComputeArtilleryValue(regionArray, defensibility, groundGraph.Chokepoints), riverCells);
 			Cache[key] = analysis;
 			return analysis;
 		}

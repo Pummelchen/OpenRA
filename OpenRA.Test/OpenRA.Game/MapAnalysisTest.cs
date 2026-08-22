@@ -70,6 +70,14 @@ namespace OpenRA.Test
 			Assert.That(components[0], Is.Not.EqualTo(components[1]));
 		}
 
+		[TestCase(TestName = "Regions outside the largest ground component are classified as islands.")]
+		public void IslandRegions()
+		{
+			var islands = CoalitionMapAnalysis.ComputeIslandRegions(new[] { 0, 0, 0, 1, 2 });
+
+			Assert.That(islands, Is.EquivalentTo(new[] { 3, 4 }));
+		}
+
 		[TestCase(TestName = "A fully impassable region (sea) connects to nothing.")]
 		public void PondDoesNotConnect()
 		{
@@ -164,6 +172,33 @@ namespace OpenRA.Test
 			// Region 1 overlooks two chokepoint exits: the most valuable artillery position.
 			Assert.That(value[1], Is.EqualTo(0.6f).Within(0.001f));
 			Assert.That(value[2], Is.EqualTo(0.2f).Within(0.001f), "No chokepoints to overlook.");
+		}
+
+		[TestCase(TestName = "Naval chokepoints are exposed as narrow naval-passage regions.")]
+		public void NarrowNavalPassages()
+		{
+			var regions = TwoByTwoRegions();
+			var adjacency = Enumerable.Range(0, 4).Select(_ => new List<int>()).ToArray();
+			adjacency[0].Add(1);
+			adjacency[1].Add(0);
+			var open = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var naval = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			naval[0] = new[] { 1 }.ToFrozenSet();
+			naval[1] = new[] { 0 }.ToFrozenSet();
+			var components = new[] { 0, 0, 1, 2 };
+			var map = new CoalitionMapAnalysis(regions,
+				new[] { adjacency, adjacency, adjacency, adjacency },
+				new[] { open, naval, open, open },
+				new[] { components, components, components, components },
+				new[] { 3, 3, 3, 3 }, new HashSet<CPos>(), 10, 10,
+				new int[4], new float[4], new[] { 0.1f, 0.5f, 0.3f, 0.2f },
+				riverCells: new HashSet<CPos> { new CPos(4, 4) });
+
+			Assert.That(map.NarrowNavalPassageRegions, Is.EquivalentTo(new[] { 0, 1 }));
+			Assert.That(map.IslandRegions, Is.EquivalentTo(new[] { 2, 3 }));
+			Assert.That(map.RiverCells, Does.Contain(new CPos(4, 4)));
+			Assert.That(map.BridgeCells, Is.Empty);
+			Assert.That(map.DefensibleRegions(), Is.EqualTo(new[] { 1, 2 }));
 		}
 
 		[TestCase(TestName = "A bridge cell on a region border records a bridge connection.")]

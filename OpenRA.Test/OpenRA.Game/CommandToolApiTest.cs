@@ -99,6 +99,8 @@ namespace OpenRA.Test
 			};
 			forces[0].Counts[(int)UnitClass.Armor] = 10;
 			forces[0].Counts[(int)UnitClass.Infantry] = 2;
+			forces[0].ActivityCounts["AttackMove"] = 8;
+			forces[0].ActivityCounts["Idle"] = 4;
 			forces[1].Counts[(int)UnitClass.Infantry] = 10;
 
 			var intel = new[]
@@ -229,6 +231,7 @@ namespace OpenRA.Test
 			Assert.That(composition.GetProperty("armor").GetInt32(), Is.EqualTo(10));
 			Assert.That(result.GetProperty("total_units").GetInt32(), Is.EqualTo(12));
 			Assert.That(result.GetProperty("strength").GetDouble(), Is.EqualTo(1.0).Within(0.001));
+			Assert.That(result.GetProperty("activities").GetProperty("AttackMove").GetInt32(), Is.EqualTo(8));
 		}
 
 		[TestCase(TestName = "inspect_enemy_intelligence filters by region and reports confidence.")]

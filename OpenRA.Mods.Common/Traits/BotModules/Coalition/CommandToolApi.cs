@@ -249,6 +249,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var byType = new JsonObject();
 			foreach (var kv in force.ByType)
 				byType[kv.Key] = kv.Value;
+			var activities = new JsonObject();
+			foreach (var kv in force.ActivityCounts)
+				activities[kv.Key] = kv.Value;
 
 			return Ok(new JsonObject
 			{
@@ -263,6 +266,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					["structure"] = force.Counts[(int)UnitClass.Structure]
 				},
 				["by_type"] = byType,
+				["activities"] = activities,
 				["capabilities"] = FriendlyCapabilityObject(force.Capabilities),
 				["total_units"] = force.TotalUnits,
 				["strength"] = Round(force.Strength),

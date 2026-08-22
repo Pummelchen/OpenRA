@@ -74,6 +74,7 @@ namespace OpenRA.Mods.Common.Traits
 			public float Readiness { get; set; }
 			public Dictionary<string, int> Composition { get; set; }
 			public Dictionary<string, int> Capabilities { get; set; }
+			public Dictionary<string, int> Activities { get; set; }
 
 			/// <summary>Region index where this force group is concentrated, or -1.</summary>
 			public int Region { get; set; } = -1;
@@ -381,6 +382,7 @@ namespace OpenRA.Mods.Common.Traits
 					Strength = f.Strength,
 					Readiness = f.Readiness,
 					Composition = new Dictionary<string, int>(f.ByType),
+					Activities = new Dictionary<string, int>(f.ActivityCounts),
 					Capabilities = Enumerable.Range(0, f.Capabilities.Length)
 						.Where(c => f.Capabilities[c] > 0)
 						.ToDictionary(c => CommandToolApi.FriendlyCapabilityKeys[c], c => 1),

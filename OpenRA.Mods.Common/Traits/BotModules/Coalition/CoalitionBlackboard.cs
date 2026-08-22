@@ -83,6 +83,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public readonly string Owner;
 		public readonly int[] Counts = new int[Enum.GetValues<UnitClass>().Length];
 		public readonly Dictionary<string, int> ByType = [];
+		public readonly Dictionary<string, int> ActivityCounts = [];
 		public readonly float[] Capabilities = new float[Enum.GetValues<FriendlyCapability>().Length];
 		public int TotalUnits;
 		public float Strength;
@@ -412,6 +413,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				group.Counts[(int)unitClass]++;
 				group.TotalUnits++;
 				group.ByType[a.Info.Name] = group.ByType.GetValueOrDefault(a.Info.Name) + 1;
+				var activity = a.CurrentActivity?.GetType().Name ?? "Idle";
+				group.ActivityCounts[activity] = group.ActivityCounts.GetValueOrDefault(activity) + 1;
 				foreach (var capability in CoalitionForceRegistry.FriendlyCapabilitiesFor(unitClass, a.Info.Name,
 					artilleryTypes, submarineTypes, detectionTypes, transportTypes, scoutTypes, antiAirTypes))
 					CoalitionForceRegistry.Record(capability, group.Capabilities);
