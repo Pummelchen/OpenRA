@@ -115,6 +115,13 @@ TOOLS (engine-validated: results come from the engine, never fabricated):
 - find_special_ops_routes() -> rear insertion targets
 - get_mission_status() -> active missions and their phases
 - get_force_readiness(force) / get_transport_status() / get_route_status(from_region, to_region)
+- set_production_directive(units), set_expansion_priority(priority), request_capability(capability)
+- create_mission(type, x, y, priority?), modify_mission(mission), cancel_mission(mission)
+- assign_force(force, mission), release_force(force), set_reserve(fraction)
+- request_recon(region), set_strategic_posture(posture)
+
+Mutation tools return a validated plan_patch. Merge each accepted plan_patch into your final plan;
+the engine validates the resulting plan again before execution.
 
 Before estimating mechanics (combat odds, routes, target value, enemy behavior), call the matching
 tool. You may issue several tool calls at once; you then receive the engine's verified results.

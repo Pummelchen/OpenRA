@@ -171,6 +171,28 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							return GetTransportStatus(context);
 						case "get_route_status":
 							return GetRouteStatus(context, args);
+						case "set_production_directive":
+							return SetProductionDirective(context, args);
+						case "set_expansion_priority":
+							return SetExpansionPriority(args);
+						case "request_capability":
+							return RequestCapability(args);
+						case "create_mission":
+							return CreateMission(context, args);
+						case "modify_mission":
+							return MissionReferencePatch(context, args, "modify_missions");
+						case "cancel_mission":
+							return MissionReferencePatch(context, args, "cancel_missions");
+						case "assign_force":
+							return AssignForce(context, args);
+						case "release_force":
+							return ReleaseForce(context, args);
+						case "set_reserve":
+							return SetReserve(args);
+						case "request_recon":
+							return RequestRecon(context, args);
+						case "set_strategic_posture":
+							return SetStrategicPosture(args);
 						default:
 							return Error("UNKNOWN_TOOL", $"Unknown tool \"{tool}\".");
 					}
@@ -705,6 +727,153 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["found"] = route.Found,
 				["cost"] = route.Found ? Round(route.Cost) : double.MaxValue,
 				["regions"] = new JsonArray((route.Regions ?? []).Select(r => (JsonNode)r).ToArray())
+			});
+		}
+
+		// Mutation tools return validated command.intent.v1 patches. The HTTP endpoint remains
+		// read-only: accepted patches must be included in the model's final plan, which is validated
+		// again on the game thread before it can affect simulation state.
+		static string SetProductionDirective(ToolContext context, JsonElement args)
+		{
+			var units = StringArray(Require(args, "units"), "units");
+			var rejection = CommandValidator.ValidateProduce(units).FirstOrDefault();
+			if (rejection.Reason != null)
+				throw new ArgumentException(rejection.Reason);
+
+			var buildable = context.Facilities.SelectMany(f => f.Buildable).ToHashSet(StringComparer.OrdinalIgnoreCase);
+			var unknown = CommandValidator.ValidateUnitNames(units, buildable, "production_directive").FirstOrDefault();
+			if (unknown.Reason != null)
+				throw new ArgumentException(unknown.Reason);
+
+			return Patch("production_directive", new JsonArray(units.Select(unit => (JsonNode)unit).ToArray()));
+		}
+
+		static string SetExpansionPriority(JsonElement args)
+		{
+			var priority = Require(args, "priority").GetInt32();
+			var rejection = CommandValidator.ValidateExpansionPriority(priority);
+			if (rejection != null)
+				throw new ArgumentException(rejection);
+			return Patch("expansion_priority", priority);
+		}
+
+		static string RequestCapability(JsonElement args)
+		{
+			var capability = RequireString(args, "capability");
+			var rejection = CommandValidator.ValidateCapability(capability);
+			if (rejection != null)
+				throw new ArgumentException(rejection);
+			return Patch("request_capability", capability);
+		}
+
+		static string CreateMission(ToolContext context, JsonElement args)
+		{
+			var type = RequireString(args, "type");
+			var x = Require(args, "x").GetInt32();
+			var y = Require(args, "y").GetInt32();
+			var priority = args.TryGetProperty("priority", out var priorityElement) ? priorityElement.GetInt32() : 50;
+			return MissionPatch(context, type, x, y, priority);
+		}
+
+		static string MissionPatch(ToolContext context, string type, int x, int y, int priority)
+		{
+			var rejection = CommandValidator.ValidateMissions([(type, x, y, priority)],
+				context.MapAnalysis.Width, context.MapAnalysis.Height).FirstOrDefault();
+			if (rejection.Reason != null)
+				throw new ArgumentException(rejection.Reason);
+
+			return Patch("missions", new JsonArray(new JsonObject
+			{
+				["type"] = type,
+				["x"] = x,
+				["y"] = y,
+				["priority"] = priority
+			}));
+		}
+
+		static string MissionReferencePatch(ToolContext context, JsonElement args, string field)
+		{
+			var mission = ResolveMission(context, RequireString(args, "mission"));
+			return Patch(field, new JsonArray(mission.Type));
+		}
+
+		static string AssignForce(ToolContext context, JsonElement args)
+		{
+			var force = ResolveForce(context, Require(args, "force"), "force");
+			var mission = ResolveMission(context, RequireString(args, "mission"));
+			if (!string.IsNullOrEmpty(force.MissionId)
+				&& !string.Equals(force.MissionId, mission.Id, StringComparison.OrdinalIgnoreCase))
+				throw new ArgumentException($"REJECTED_CONFLICT: force \"{force.Owner}\" is committed to \"{force.MissionId}\"");
+
+			return Patch("assign_force", new JsonArray(new JsonObject
+			{
+				["force_id"] = force.Owner,
+				["mission_id"] = mission.Id
+			}));
+		}
+
+		static string ReleaseForce(ToolContext context, JsonElement args)
+		{
+			var force = ResolveForce(context, Require(args, "force"), "force");
+			return Patch("release_force", new JsonArray(force.Owner));
+		}
+
+		static string SetReserve(JsonElement args)
+		{
+			var fraction = Require(args, "fraction").GetInt32();
+			var rejection = CommandValidator.ValidateReserveFraction(fraction);
+			if (rejection != null)
+				throw new ArgumentException(rejection);
+			return Patch("reserve_fraction", fraction);
+		}
+
+		static string RequestRecon(ToolContext context, JsonElement args)
+		{
+			var region = ResolveRegion(context, Require(args, "region"), "region");
+			var bounds = context.Regions[region].Bounds;
+			return MissionPatch(context, "recon", (bounds.Left + bounds.Right) / 2,
+				(bounds.Top + bounds.Bottom) / 2, 70);
+		}
+
+		static string SetStrategicPosture(JsonElement args)
+		{
+			var posture = RequireString(args, "posture");
+			var rejection = CommandValidator.ValidatePosture(posture);
+			if (rejection != null)
+				throw new ArgumentException(rejection);
+			return Patch("posture", posture);
+		}
+
+		static MissionState ResolveMission(ToolContext context, string reference)
+		{
+			var mission = context.Missions.FirstOrDefault(m =>
+				string.Equals(m.Id, reference, StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(m.Type, reference, StringComparison.OrdinalIgnoreCase));
+			return mission ?? throw new KeyNotFoundException($"Unknown mission \"{reference}\".");
+		}
+
+		static string[] StringArray(JsonElement value, string name)
+		{
+			if (value.ValueKind != JsonValueKind.Array
+				|| value.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+				throw new ArgumentException($"Argument \"{name}\" must be an array of strings.");
+			return value.EnumerateArray().Select(item => item.GetString()).ToArray();
+		}
+
+		static string RequireString(JsonElement args, string name)
+		{
+			var value = Require(args, name);
+			if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
+				throw new ArgumentException($"Argument \"{name}\" must be a non-empty string.");
+			return value.GetString();
+		}
+
+		static string Patch(string field, JsonNode value)
+		{
+			return Ok(new JsonObject
+			{
+				["accepted"] = true,
+				["plan_patch"] = new JsonObject { [field] = value }
 			});
 		}
 

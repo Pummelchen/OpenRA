@@ -102,6 +102,10 @@ namespace OpenRA.Test
 			forces[0].ActivityCounts["AttackMove"] = 8;
 			forces[0].ActivityCounts["Idle"] = 4;
 			forces[1].Counts[(int)UnitClass.Infantry] = 10;
+			var facility = new ProductionFacility("Multi0", "Vehicle", "weap", new CPos(1, 1))
+			{
+				Buildable = ["3tnk", "jeep"]
+			};
 
 			var intel = new[]
 			{
@@ -116,6 +120,11 @@ namespace OpenRA.Test
 				Timestep = 40,
 				Regions = regions,
 				Forces = forces,
+				Facilities = [facility],
+				Missions =
+				[
+					new MissionState { Id = "OP-1", Type = "attack", Status = "executing", Phase = "execution", Target = new CPos(12, 8), Priority = 80 }
+				],
 				EnemyIntel = intel,
 				Events =
 				[
@@ -489,7 +498,10 @@ namespace OpenRA.Test
 				"score_targets", "plan_routes", "get_economy_state", "get_production_state",
 				"compare_force_packages", "estimate_enemy_response", "find_attack_windows",
 				"find_special_ops_routes", "get_mission_status", "get_force_readiness",
-				"get_transport_status", "get_route_status"
+				"get_transport_status", "get_route_status", "set_production_directive",
+				"set_expansion_priority", "request_capability", "create_mission", "modify_mission",
+				"cancel_mission", "assign_force", "release_force", "set_reserve", "request_recon",
+				"set_strategic_posture"
 			};
 
 			foreach (var tool in tools)
@@ -503,6 +515,59 @@ namespace OpenRA.Test
 				else
 					Assert.That(root.TryGetProperty("error", out var err) && err.ValueKind == System.Text.Json.JsonValueKind.String,
 						Is.True, $"{tool} failure must carry a machine-readable error string.");
+			}
+		}
+
+		[TestCase(TestName = "Mutation tools return engine-validated command intent patches.")]
+		public void MutationToolsReturnValidatedPatches()
+		{
+			var context = Context();
+			var calls = new (string Tool, string Arguments, string Field)[]
+			{
+				("set_production_directive", "{\"units\":[\"3tnk\"]}", "production_directive"),
+				("set_expansion_priority", "{\"priority\":1}", "expansion_priority"),
+				("request_capability", "{\"capability\":\"anti_air\"}", "request_capability"),
+				("create_mission", "{\"type\":\"raid\",\"x\":2,\"y\":2,\"priority\":60}", "missions"),
+				("modify_mission", "{\"mission\":\"OP-1\"}", "modify_missions"),
+				("cancel_mission", "{\"mission\":\"OP-1\"}", "cancel_missions"),
+				("assign_force", "{\"force\":\"Multi0\",\"mission\":\"OP-1\"}", "assign_force"),
+				("release_force", "{\"force\":\"Multi1\"}", "release_force"),
+				("set_reserve", "{\"fraction\":4}", "reserve_fraction"),
+				("request_recon", "{\"region\":1}", "missions"),
+				("set_strategic_posture", "{\"posture\":\"defend\"}", "posture")
+			};
+
+			foreach (var (tool, arguments, field) in calls)
+			{
+				var root = Result(Call(context, tool, arguments));
+				Assert.That(root.GetProperty("ok").GetBoolean(), Is.True, tool);
+				var result = root.GetProperty("result");
+				Assert.That(result.GetProperty("accepted").GetBoolean(), Is.True, tool);
+				Assert.That(result.GetProperty("plan_patch").TryGetProperty(field, out _), Is.True, tool);
+			}
+		}
+
+		[TestCase(TestName = "Mutation tools reject illegal units, missions, capabilities, reserves, and force conflicts.")]
+		public void MutationToolsRejectInvalidCommands()
+		{
+			var context = Context();
+			context.Forces[0].MissionId = "OTHER";
+			var calls = new (string Tool, string Arguments)[]
+			{
+				("set_production_directive", "{\"units\":[\"not-a-unit\"]}"),
+				("set_expansion_priority", "{\"priority\":5}"),
+				("request_capability", "{\"capability\":\"magic\"}"),
+				("create_mission", "{\"type\":\"raid\",\"x\":999,\"y\":2}"),
+				("assign_force", "{\"force\":\"Multi0\",\"mission\":\"OP-1\"}"),
+				("set_reserve", "{\"fraction\":99}"),
+				("set_strategic_posture", "{\"posture\":\"panic\"}")
+			};
+
+			foreach (var (tool, arguments) in calls)
+			{
+				var root = Result(Call(context, tool, arguments));
+				Assert.That(root.GetProperty("ok").GetBoolean(), Is.False, tool);
+				Assert.That(root.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"), tool);
 			}
 		}
 	}
