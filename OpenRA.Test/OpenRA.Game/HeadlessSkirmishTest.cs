@@ -25,6 +25,8 @@ namespace OpenRA.Test
 		// Platform.OverrideEngineDir may only be called once per process, so the mod data and map
 		// are loaded once and shared by every test in the fixture.
 		static (ModData ModData, Map Map) loaded;
+		static bool loadAttempted;
+		static string unavailableReason;
 
 		[Test(Description = "At most two teams and 8 bots per team are accepted; these checks run before any map work.")]
 		public void TeamCapsEnforced()
@@ -513,6 +515,13 @@ namespace OpenRA.Test
 		{
 			if (loaded.ModData != null)
 				return loaded;
+			if (loadAttempted && unavailableReason != null)
+			{
+				Assert.Ignore(unavailableReason);
+				return (null, null);
+			}
+
+			loadAttempted = true;
 
 			// The test assembly lives in <repo>/bin; the repository root holds the mods directory.
 			var engineDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
@@ -528,6 +537,14 @@ namespace OpenRA.Test
 
 			var mods = new InstalledMods([Path.Combine(Platform.EngineDir, "mods")], []);
 			var modData = new ModData(mods["ra"], mods);
+			if (!modData.DefaultFileSystem.Exists("ss.shp"))
+			{
+				unavailableReason = "RA game content is not installed (ss.shp is unavailable); "
+					+ "content-dependent headless scenarios are skipped.";
+				Assert.Ignore(unavailableReason);
+				return (null, null);
+			}
+
 			Game.ModData = modData;
 			modData.MapCache.LoadMaps(modData);
 			try
