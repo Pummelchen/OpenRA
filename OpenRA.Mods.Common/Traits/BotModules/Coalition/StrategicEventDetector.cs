@@ -42,9 +42,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var previous = (EnemyRegion: lastEnemyRegion, EnemyStructures: lastEnemyStructureCount,
 				OwnStructures: lastOwnStructureCount, EnemyIntel: lastEnemyIntelCount,
 				HighValueSeen: lastHighValueSeen);
-			var previousOperations = (ActiveAttacks: lastActiveAttackCount, FailedMissions: lastFailedMissionCount,
-				ReadyTransports: lastReadyTransportCount, CompletedMissions: lastCompletedMissionCount,
-				RouteSignature: lastRouteSignature, CoalitionCash: lastCoalitionCash);
+			var previousActiveAttacks = lastActiveAttackCount;
+			var previousFailedMissions = lastFailedMissionCount;
+			var previousReadyTransports = lastReadyTransportCount;
+			var previousCompletedMissions = lastCompletedMissionCount;
+			var previousRouteSignature = lastRouteSignature;
+			var previousCoalitionCash = lastCoalitionCash;
 			lastEnemyRegion = enemyRegion;
 			lastEnemyStructureCount = enemyStructureCount;
 			lastOwnStructureCount = ownStructureCount;
@@ -72,24 +75,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (highValueSeen && !previous.HighValueSeen)
 				return "high-value enemy structure discovered";
 
-			if (previousOperations.ActiveAttacks >= 0 && activeAttackCount > previousOperations.ActiveAttacks)
+			if (previousActiveAttacks >= 0 && activeAttackCount > previousActiveAttacks)
 				return "major allied attack started";
 
-			if (previousOperations.FailedMissions >= 0 && failedMissionCount > previousOperations.FailedMissions)
+			if (previousFailedMissions >= 0 && failedMissionCount > previousFailedMissions)
 				return "major attack failed";
 
-			if (previousOperations.ReadyTransports >= 0 && readyTransportCount > previousOperations.ReadyTransports)
+			if (previousReadyTransports >= 0 && readyTransportCount > previousReadyTransports)
 				return "transport ready";
 
-			if (previousOperations.CompletedMissions >= 0 && completedMissionCount > previousOperations.CompletedMissions)
+			if (previousCompletedMissions >= 0 && completedMissionCount > previousCompletedMissions)
 				return "mission completed";
 
-			if (previousOperations.RouteSignature != int.MinValue && routeSignature != previousOperations.RouteSignature)
+			if (previousRouteSignature != int.MinValue && routeSignature != previousRouteSignature)
 				return "major route or bridge changed";
 
-			if (previousOperations.CoalitionCash >= 0
-				&& System.Math.Abs(coalitionCash - previousOperations.CoalitionCash)
-					>= System.Math.Max(2000, previousOperations.CoalitionCash / 4))
+			if (previousCoalitionCash >= 0
+				&& System.Math.Abs(coalitionCash - previousCoalitionCash)
+					>= System.Math.Max(2000, previousCoalitionCash / 4))
 				return "major economy change";
 
 			return null;

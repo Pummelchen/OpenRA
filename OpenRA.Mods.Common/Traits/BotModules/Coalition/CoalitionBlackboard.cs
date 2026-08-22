@@ -295,6 +295,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The region index of the coalition's average base position, or -1.</summary>
 		public int HomeRegion = -1;
 
+		/// <summary>The exact center cell of this commander's owned structures.</summary>
+		public CPos HomeCell;
+
 		/// <summary>The region index of the best-known enemy concentration, or -1.</summary>
 		public int EnemyRegion = -1;
 
@@ -901,7 +904,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		void ComputeHomeAndEnemyRegions()
 		{
-			HomeRegion = RegionOf(CenterOf(Player)).Index;
+			HomeCell = CenterOf(Player);
+			HomeRegion = RegionOf(HomeCell).Index;
 			var enemyStructures = EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
 			if (enemyStructures.Length > 0)
 			{

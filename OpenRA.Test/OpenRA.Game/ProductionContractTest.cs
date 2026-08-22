@@ -11,8 +11,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using NUnit.Framework;
+using OpenRA.Mods.Common.Traits;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Primitives;
 
@@ -21,21 +21,21 @@ namespace OpenRA.Test
 	[TestFixture]
 	sealed class ProductionContractTest
 	{
-		static readonly string[] AntiAir = new[] { "mig", "v2rl" };
-		static readonly string[] AntiArmor = new[] { "4tnk", "ttnk" };
-		static readonly string[] AntiInfantry = new[] { "ftrk", "jeep" };
-		static readonly string[] Naval = new[] { "dd", "ca" };
+		static readonly string[] AntiAir = ["mig", "v2rl"];
+		static readonly string[] AntiArmor = ["4tnk", "ttnk"];
+		static readonly string[] AntiInfantry = ["ftrk", "jeep"];
+		static readonly string[] Naval = ["dd", "ca"];
 
 		static (CoalitionCapability Capability, string[] CounterUnits)[] Contracts()
 		{
-			return new (CoalitionCapability Capability, string[] CounterUnits)[]
-			{
+			return
+			[
 				(CoalitionCapability.AntiAir, AntiAir),
 				(CoalitionCapability.GroundAntiArmor, AntiArmor),
 				(CoalitionCapability.GroundAntiInfantry, AntiInfantry),
 				(CoalitionCapability.Naval, Naval),
 				(CoalitionCapability.Submarine, Naval)
-			};
+			];
 		}
 
 		static float[] Profile(params (CoalitionCapability Capability, float Threat)[] threats)
@@ -161,9 +161,9 @@ namespace OpenRA.Test
 			CoalitionForceRegistry.Record(FriendlyCapability.Transport, ally.Capabilities);
 			CoalitionForceRegistry.Record(FriendlyCapability.SpecialOperations, ally.Capabilities);
 
-			Assert.That(ProductionContract.IsSatisfied("transport", new[] { ally }), Is.True);
-			Assert.That(ProductionContract.IsSatisfied("special_operations", new[] { ally }), Is.True);
-			Assert.That(ProductionContract.IsSatisfied("air_superiority", new[] { ally }), Is.False);
+			Assert.That(ProductionContract.IsSatisfied("transport", [ally]), Is.True);
+			Assert.That(ProductionContract.IsSatisfied("special_operations", [ally]), Is.True);
+			Assert.That(ProductionContract.IsSatisfied("air_superiority", [ally]), Is.False);
 		}
 
 		[TestCase(TestName = "Destroyed production infrastructure triggers the first valid emergency replacement.")]
@@ -181,6 +181,93 @@ namespace OpenRA.Test
 				existing.Contains, queued.Contains, buildable.Contains), Is.Null);
 			Assert.That(ProductionContract.SelectEmergencyReplacement(false, critical,
 				_ => false, _ => false, _ => true), Is.Null);
+		}
+
+		[TestCase(TestName = "Technology investment waits for a rush-safe field army.")]
+		public void PrerequisiteInvestmentGate()
+		{
+			Assert.That(StrategicBrainBotModule.MayInvestInPrerequisite(9, 10), Is.False);
+			Assert.That(StrategicBrainBotModule.MayInvestInPrerequisite(10, 10), Is.True);
+			Assert.That(StrategicBrainBotModule.MayInvestInPrerequisite(0, 0), Is.True);
+		}
+
+		[TestCase(TestName = "Opening reconnaissance is bounded and stops after locating the enemy base.")]
+		public void ScoutingGate()
+		{
+			Assert.That(StrategicBrainBotModule.ShouldScout(false, 0, 4), Is.True);
+			Assert.That(StrategicBrainBotModule.ShouldScout(false, 4, 4), Is.False);
+			Assert.That(StrategicBrainBotModule.ShouldScout(true, 0, 4), Is.False);
+			Assert.That(StrategicBrainBotModule.ShouldScout(false, 0, 0), Is.False);
+			Assert.That(StrategicBrainBotModule.ShouldScout(false, 0, 4, 4), Is.False,
+				"Dead scouts must not reopen an unlimited deployment slot.");
+			Assert.That(StrategicBrainBotModule.ScoutSeparationScore(new CPos(9, 0), [], new CPos(0, 0)), Is.EqualTo(81));
+			Assert.That(StrategicBrainBotModule.ScoutSeparationScore(new CPos(9, 0),
+				[new CPos(8, 0), new CPos(0, 0)], new CPos(4, 4)), Is.EqualTo(1));
+		}
+
+		[TestCase(TestName = "Reserve commitment requires a located base and broad reconnaissance.")]
+		public void ReserveCommitmentGate()
+		{
+			Assert.That(StrategicBrainBotModule.MayCommitObservedAdvantage(false, 1f, 3, 10, 0.6f), Is.False);
+			Assert.That(StrategicBrainBotModule.MayCommitObservedAdvantage(true, 0.69f, 3, 10, 0.6f), Is.False);
+			Assert.That(StrategicBrainBotModule.MayCommitObservedAdvantage(true, 0.7f, 6, 10, 0.6f), Is.True);
+			Assert.That(StrategicBrainBotModule.MayCommitObservedAdvantage(true, 0.7f, 7, 10, 0.6f), Is.False);
+		}
+
+		[TestCase(TestName = "Strategic production accepts standard harvester and MCV requests.")]
+		public void StandardProductionRequestIntegration()
+		{
+			Assert.That(typeof(IBotRequestUnitProduction).IsAssignableFrom(typeof(StrategicBrainBotModule)), Is.True);
+		}
+
+		[TestCase(TestName = "Operational roles cannot override the shared coalition strategy.")]
+		public void TeamRoleDoesNotInventAttack()
+		{
+			Assert.That(StrategicBrainBotModule.ResolveTeamStrategy(false, "main", "build"), Is.EqualTo("build"));
+			Assert.That(StrategicBrainBotModule.ResolveTeamStrategy(false, "escort", "build"), Is.EqualTo("build"));
+			Assert.That(StrategicBrainBotModule.ResolveTeamStrategy(false, "main", "attack"), Is.EqualTo("attack"));
+			Assert.That(StrategicBrainBotModule.ResolveTeamStrategy(false, "defend", "attack"), Is.EqualTo("defend"));
+			Assert.That(StrategicBrainBotModule.ResolveTeamStrategy(true, "main", "attack"), Is.EqualTo("defend"));
+		}
+
+		[TestCase(TestName = "Fair-fog field interception requires material observed contact and parity.")]
+		public void ObservedForceInterceptionGate()
+		{
+			Assert.That(CoalitionCommandCenterBotModule.ShouldInterceptObservedForce(1, 1f, 20, 24), Is.True);
+			Assert.That(CoalitionCommandCenterBotModule.ShouldInterceptObservedForce(0, 1f, 20, 24), Is.False);
+			Assert.That(CoalitionCommandCenterBotModule.ShouldInterceptObservedForce(1, 0.2f, 20, 24), Is.False,
+				"A lone scout is not a material field army.");
+			Assert.That(CoalitionCommandCenterBotModule.ShouldInterceptObservedForce(1, 1.01f, 20, 24), Is.False);
+			Assert.That(CoalitionCommandCenterBotModule.ShouldInterceptObservedForce(1, 0f, 20, 24), Is.False,
+				"Unknown enemy strength must not be treated as a free advantage.");
+		}
+
+		[TestCase(100, 100, 20, 40, 60, 70)]
+		[TestCase(20, 40, 20, 40, 20, 40)]
+		public void FieldInterceptionConcentratesTowardHome(int cx, int cy, int hx, int hy,
+			int expectedX, int expectedY)
+		{
+			Assert.That(CoalitionCommandCenterBotModule.InterceptionCell(new CPos(cx, cy), new CPos(hx, hy)),
+				Is.EqualTo(new CPos(expectedX, expectedY)));
+		}
+
+		[TestCase(300, 0, 300, true)]
+		[TestCase(300, 20, 300, false)]
+		[TestCase(320, 20, 300, true)]
+		[TestCase(20, 20, 0, false)]
+		public void PersistentAttackPlansDebounceWaveOrders(int currentTick, int lastWaveTick, int interval, bool expected)
+		{
+			Assert.That(StrategicBrainBotModule.MayIssueWave(currentTick, lastWaveTick, interval), Is.EqualTo(expected));
+		}
+
+		[TestCase(19, 109, 109, 47, 25, 103)]
+		[TestCase(19, 47, 109, 47, 25, 47)]
+		[TestCase(19, 47, 109, 47, 19, 47, 0)]
+		public void SpawnReconUsesUnoccupiedHomeFacingApproach(int sx, int sy, int hx, int hy,
+			int expectedX, int expectedY, int offset = 6)
+		{
+			Assert.That(StrategicBrainBotModule.SpawnApproachCell(new CPos(sx, sy), new CPos(hx, hy), offset),
+				Is.EqualTo(new CPos(expectedX, expectedY)));
 		}
 	}
 }

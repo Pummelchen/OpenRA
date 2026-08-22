@@ -11,7 +11,6 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Linq;
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
@@ -114,8 +113,8 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Cohesion is high for a tight force and falls as it scatters.")]
 		public void Cohesion()
 		{
-			var tight = new List<WPos> { new WPos(0, 0, 0), new WPos(1024, 0, 0), new WPos(0, 1024, 0) };
-			var loose = new List<WPos> { new WPos(0, 0, 0), new WPos(61440, 0, 0), new WPos(0, 61440, 0) };
+			var tight = new List<WPos> { new(0, 0, 0), new(1024, 0, 0), new(0, 1024, 0) };
+			var loose = new List<WPos> { new(0, 0, 0), new(61440, 0, 0), new(0, 61440, 0) };
 
 			Assert.That(CoalitionBlackboard.ComputeCohesion(tight), Is.GreaterThan(0.9f));
 			Assert.That(CoalitionBlackboard.ComputeCohesion(loose), Is.LessThan(0.6f));

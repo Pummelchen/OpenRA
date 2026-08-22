@@ -136,6 +136,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				Emit(FriendlyCapability.Artillery);
 				Emit(FriendlyCapability.AntiStructure);
 			}
+
 			if (submarineTypes.Contains(type))
 				Emit(FriendlyCapability.Naval);
 			if (detectionTypes.Contains(type))
@@ -147,11 +148,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				Emit(FriendlyCapability.Recon);
 				Emit(FriendlyCapability.FastRaiding);
 			}
+
 			if (antiAirTypes.Contains(type))
 			{
 				Emit(FriendlyCapability.AntiAir);
 				Emit(FriendlyCapability.BaseDefense);
 			}
+
 			if (specialTypes?.Contains(type) == true)
 				Emit(FriendlyCapability.SpecialOperations);
 

@@ -19,13 +19,12 @@ namespace OpenRA.Test
 	{
 		// Tests for newly added mission types, LLM tool validation, telemetry metrics,
 		// per-front postures, and the StrategicPosture.None value.
-
 		[TestCase(TestName = "New mission types exist in the enum.")]
 		public void NewMissionTypesExist()
 		{
-			Assert.That(System.Enum.IsDefined<MissionType>(MissionType.Pincer), Is.True);
-			Assert.That(System.Enum.IsDefined<MissionType>(MissionType.NavalBlockade), Is.True);
-			Assert.That(System.Enum.IsDefined<MissionType>(MissionType.FakeBuildup), Is.True);
+			Assert.That(System.Enum.IsDefined(MissionType.Pincer), Is.True);
+			Assert.That(System.Enum.IsDefined(MissionType.NavalBlockade), Is.True);
+			Assert.That(System.Enum.IsDefined(MissionType.FakeBuildup), Is.True);
 		}
 
 		[TestCase(TestName = "Pincer and NavalBlockade are offensive.")]
@@ -164,9 +163,11 @@ namespace OpenRA.Test
 			var metrics = new CoalitionMatchMetrics();
 			metrics.RecordSyncError(1000, 5);
 			metrics.RecordSyncError(2000, 10);
+
 			// No direct accessor — verify via summary after sampling
 			metrics.Sample(100, 50, 0.1f, 0.9f, 3000);
 			var summary = metrics.Summary();
+
 			// Summary doesn't include sync errors directly, but the recording should not throw
 			Assert.That(summary, Is.Not.Null);
 		}
@@ -224,46 +225,48 @@ namespace OpenRA.Test
 		[TestCase(TestName = "StrategicPosture.None exists.")]
 		public void StrategicPostureNoneExists()
 		{
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.None), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.None), Is.True);
 		}
 
 		[TestCase(TestName = "All original strategic postures still exist.")]
 		public void StrategicPosturesComplete()
 		{
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Opening), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Expansion), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Pressure), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Containment), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Attrition), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Breakthrough), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Siege), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Raiding), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Defensive), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Counterattack), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Recovery), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.Desperation), Is.True);
-			Assert.That(System.Enum.IsDefined<StrategicPosture>(StrategicPosture.AllIn), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Opening), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Expansion), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Pressure), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Containment), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Attrition), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Breakthrough), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Siege), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Raiding), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Defensive), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Counterattack), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Recovery), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.Desperation), Is.True);
+			Assert.That(System.Enum.IsDefined(StrategicPosture.AllIn), Is.True);
 		}
 
 		[TestCase(TestName = "CoalitionRegion default LocalPosture is None.")]
 		public void CoalitionRegionDefaultPosture()
 		{
-			var region = new CoalitionRegion(0, new OpenRA.Primitives.Rectangle(0, 0, 10, 10));
+			var region = new CoalitionRegion(0, new Primitives.Rectangle(0, 0, 10, 10));
 			Assert.That(region.LocalPosture, Is.EqualTo(StrategicPosture.None));
 		}
 
 		[TestCase(TestName = "CoalitionRegion LocalPosture can be set.")]
 		public void CoalitionRegionSetPosture()
 		{
-			var region = new CoalitionRegion(0, new OpenRA.Primitives.Rectangle(0, 0, 10, 10));
-			region.LocalPosture = StrategicPosture.Defensive;
+			var region = new CoalitionRegion(0, new Primitives.Rectangle(0, 0, 10, 10))
+			{
+				LocalPosture = StrategicPosture.Defensive
+			};
 			Assert.That(region.LocalPosture, Is.EqualTo(StrategicPosture.Defensive));
 		}
 
 		[TestCase(TestName = "MissionStatus.Cancelled exists.")]
 		public void MissionStatusCancelledExists()
 		{
-			Assert.That(System.Enum.IsDefined<MissionStatus>(MissionStatus.Cancelled), Is.True);
+			Assert.That(System.Enum.IsDefined(MissionStatus.Cancelled), Is.True);
 		}
 
 		[TestCase(TestName = "KnownMissionTypes includes new mission types.")]
@@ -314,7 +317,7 @@ namespace OpenRA.Test
 		public void ValidateUnitNamesValid()
 		{
 			var buildable = new System.Collections.Generic.HashSet<string> { "e1", "e2", "tank" };
-			var result = CommandValidator.ValidateUnitNames(new[] { "e1", "tank" }, buildable, "production_directive");
+			var result = CommandValidator.ValidateUnitNames(["e1", "tank"], buildable, "production_directive");
 			Assert.That(result.Count, Is.EqualTo(0));
 		}
 
@@ -322,7 +325,7 @@ namespace OpenRA.Test
 		public void ValidateUnitNamesInvalid()
 		{
 			var buildable = new System.Collections.Generic.HashSet<string> { "e1", "e2" };
-			var result = CommandValidator.ValidateUnitNames(new[] { "e1", "ghost", "", null, "e2" }, buildable, "production_directive");
+			var result = CommandValidator.ValidateUnitNames(["e1", "ghost", "", null, "e2"], buildable, "production_directive");
 			Assert.That(result.Count, Is.EqualTo(1));
 			Assert.That(result[0].Index, Is.EqualTo(1));
 			Assert.That(result[0].Reason, Does.Contain("REJECTED_UNKNOWN_UNIT"));

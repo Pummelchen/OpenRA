@@ -48,10 +48,10 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Confidence clamps to 1 at 20+ observations.")]
 		public void ConfidenceClamp()
 		{
-			var low = 5f / 20f;
-			var high = 40f / 20f;
-			Assert.That(low, Is.EqualTo(0.25f).Within(0.001f));
-			Assert.That(high, Is.EqualTo(2f));
+			const float Low = 5f / 20f;
+			const float High = 40f / 20f;
+			Assert.That(Low, Is.EqualTo(0.25f).Within(0.001f));
+			Assert.That(High, Is.EqualTo(2f));
 		}
 
 		[TestCase(TestName = "Initial model state is unknown and unconfident.")]

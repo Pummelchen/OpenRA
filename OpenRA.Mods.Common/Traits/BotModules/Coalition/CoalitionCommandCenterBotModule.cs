@@ -50,7 +50,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public readonly FrozenSet<string> SpecialTypes = [];
 
 		[Desc("Units the coalition prefers to produce (deterministic commander).")]
-		public readonly FrozenSet<string> ArmyPriority = [];
+		public readonly string[] ArmyPriority = [];
 
 		[Desc("Counter units prioritized when enemy air is observed.")]
 		public readonly FrozenSet<string> AntiAirUnits = [];
@@ -169,7 +169,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Player player;
 		World world;
 		StrategicBrainBotModule brain;
-		CoalitionBlackboard blackboard;
 		LlmIntent llmIntent;
 		int lastBlackboardTick;
 		int lastCommandTick;
@@ -185,8 +184,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// BlackboardInterval, so learned values must live here and be copied into each fresh model.
 		int responseTimeSum;
 		int responseTimeSamples;
-		int lastWaveTick = int.MinValue;
-		int lastFeintTick = int.MinValue;
 		int raidContactTicks;
 		int raidResponseSamples;
 		int raidResponseSuccesses;
@@ -213,10 +210,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastControllerReplanTick = int.MinValue;
 
 		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
-		public CoalitionBlackboard Blackboard => blackboard;
+		public CoalitionBlackboard Blackboard { get; private set; }
 
 		/// <summary>The tick of the most recent coalition attack wave, for response-time measurement.</summary>
-		public int LastWaveTick => lastWaveTick;
+		public int LastWaveTick { get; private set; } = int.MinValue;
 
 		/// <summary>
 		/// Records an enemy reaction to a coalition attack: the delay between our wave launch and
@@ -224,10 +221,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		public void RecordEnemyResponse(int currentTick)
 		{
-			if (lastWaveTick < 0)
+			if (LastWaveTick < 0)
 				return;
 
-			var delayTicks = currentTick - lastWaveTick;
+			var delayTicks = currentTick - LastWaveTick;
 			if (delayTicks < 0)
 				return;
 
@@ -238,16 +235,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Marks the coalition attack wave launch tick, resetting the response timer.</summary>
 		public void MarkWaveLaunch(int tick)
 		{
-			lastWaveTick = tick;
+			LastWaveTick = tick;
 		}
 
 		/// <summary>The tick of the most recent feint, for measuring whether it opened a window (req 627).</summary>
-		public int LastFeintTick => lastFeintTick;
+		public int LastFeintTick { get; private set; } = int.MinValue;
 
 		/// <summary>Marks a feint launch tick (req 627).</summary>
 		public void MarkFeintLaunch(int tick)
 		{
-			lastFeintTick = tick;
+			LastFeintTick = tick;
 		}
 
 		/// <summary>Records an MCV deployment/expansion for telemetry (req 608).</summary>
@@ -268,7 +265,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return;
 
 			lastControllerReplanTick = world.WorldTick;
-			blackboard?.AddEvent("controller_replan", null, reason);
+			Blackboard?.AddEvent("controller_replan", null, reason);
 			lastCommandTick = world.WorldTick - info.CommandInterval;
 			CoalitionTelemetry.Log(world, $"Controller requested strategic replan: {reason}");
 		}
@@ -341,6 +338,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return previous != current;
 		}
 
+		/// <summary>
+		/// Authorizes a fair-fog field interception only for a material, currently observed force that
+		/// the coalition can meet at parity. Unknown enemy strength never qualifies as an advantage.
+		/// </summary>
+		public static bool ShouldInterceptObservedForce(int observedMobile, float enemyToFriendlyRatio,
+			int coalitionArmy, int coordinatedMinimum)
+		{
+			var materialContact = Math.Max(1, coordinatedMinimum / 4);
+			var estimatedEnemyArmy = enemyToFriendlyRatio * coalitionArmy;
+			return observedMobile > 0 && estimatedEnemyArmy >= materialContact && coalitionArmy >= materialContact
+				&& enemyToFriendlyRatio > 0f && enemyToFriendlyRatio <= 1f;
+		}
+
+		/// <summary>Concentrates a contact interception midway toward home instead of charging the enemy front.</summary>
+		public static CPos InterceptionCell(CPos contact, CPos home)
+		{
+			return contact + (home - contact) / 2;
+		}
+
 		public CoalitionCommandCenterBotModule(CoalitionCommandCenterBotModuleInfo info, ActorInitializer init)
 			: base(info)
 		{
@@ -364,21 +380,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				// Feed the durable intel tracker with everything the coalition can see this tick (or
 				// everything, in omniscient mode) and age it into the honesty ladder. The aged list is
 				// seeded into the fresh blackboard so last-known/inferred intel survives the rebuild.
-				intelTracker ??= new CoalitionIntelTracker(info.SightingMemoryTicks, (int)world.Timestep);
+				intelTracker ??= new CoalitionIntelTracker(info.SightingMemoryTicks, world.Timestep);
 				var seedIntel = ObserveEnemies(tick);
 
-				blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
+				Blackboard = new CoalitionBlackboard(world, player, TeamPlayers(), Classify,
 					info.WaterTerrainTypes, info.BigWaterMinimumCells, info.ValuableResourceTypes,
 					info.ArtilleryTypes, info.SubmarineTypes, info.DetectionTypes,
 					info.SupportPowerStructures, info.ProductionStructures,
-					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes, info.AntiAirUnits, info.SpecialTypes,
-					seedIntel, info.IsOmniscient);
-
-				// The deception record is durable across blackboard rebuilds: it lives on the mission
-				// manager and is copied into every fresh model for the planner and the LLM snapshot.
-				blackboard.DeceptionAttempts = missions.DeceptionAttempts;
-				blackboard.DeceptionSuccesses = missions.DeceptionSuccesses;
-				blackboard.DeceptionEnemiesDrawn = missions.DeceptionEnemiesDrawn;
+					brain?.Info.TransportTypes, brain?.Info.ScoutUnitTypes?.ToFrozenSet(), info.AntiAirUnits, info.SpecialTypes,
+					seedIntel, info.IsOmniscient)
+				{
+					// The deception record is durable across blackboard rebuilds: it lives on the mission
+					// manager and is copied into every fresh model for the planner and the LLM snapshot.
+					DeceptionAttempts = missions.DeceptionAttempts,
+					DeceptionSuccesses = missions.DeceptionSuccesses,
+					DeceptionEnemiesDrawn = missions.DeceptionEnemiesDrawn
+				};
 				UpdateForceCasualties();
 				UpdateOpponentModel();
 
@@ -397,7 +414,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				}
 			}
 
-			if (tick - lastCommandTick >= info.CommandInterval && blackboard != null)
+			if (tick - lastCommandTick >= info.CommandInterval && Blackboard != null)
 			{
 				lastCommandTick = tick;
 				RunCommand();
@@ -415,10 +432,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		string ReviewTrigger()
 		{
-			var enemyStructures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
+			var enemyStructures = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
 			var ownStructures = world.Actors.Count(a =>
 				a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.HasTraitInfo<BuildingInfo>());
-			var highValueSeen = blackboard.EnemyIntel.Any(i =>
+			var highValueSeen = Blackboard.EnemyIntel.Any(i =>
 				TargetEvaluator.TechnologyValue(i.Type) > 0 || TargetEvaluator.EconomicValue(i.Type) > 0);
 
 			var activeAttacks = missions.Missions.Count(m => MissionManager.IsOffensive(m.Type)
@@ -431,23 +448,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					if (bridge.Valid)
 						routeSignature = routeSignature * 31 + (int)bridge.DamageState;
 
-			var detected = eventDetector.Detect(blackboard.EnemyRegion, enemyStructures, ownStructures,
-				blackboard.EnemyIntel.Count, highValueSeen, activeAttacks, failedMissions,
-				blackboard.Transports.Count, completedMissions, routeSignature, blackboard.CoalitionCash);
+			var detected = eventDetector.Detect(Blackboard.EnemyRegion, enemyStructures, ownStructures,
+				Blackboard.EnemyIntel.Count, highValueSeen, activeAttacks, failedMissions,
+				Blackboard.Transports.Count, completedMissions, routeSignature, Blackboard.CoalitionCash);
 			if (detected != null)
 				return detected;
 
 			// A ready strategic superweapon wakes the commander to plan a support-power strike.
-			if (blackboard.HasReadySuperweapon && !lastSuperweaponReady)
+			if (Blackboard.HasReadySuperweapon && !lastSuperweaponReady)
 			{
 				lastSuperweaponReady = true;
 				return "support power ready";
 			}
 
-			lastSuperweaponReady = blackboard.HasReadySuperweapon;
+			lastSuperweaponReady = Blackboard.HasReadySuperweapon;
 
 			// A newly available special asset (Tanya, spy, engineer) wakes special-operations planning.
-			var specialCount = blackboard.SpecialAssets.Count;
+			var specialCount = Blackboard.SpecialAssets.Count;
 			if (specialCount > lastSpecialAssetCount)
 			{
 				lastSpecialAssetCount = specialCount;
@@ -489,23 +506,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void RunCommand()
 		{
-			var coalitionArmy = blackboard.CoalitionArmyStrength;
-			var enemyArmy = blackboard.EnemyArmyStrength;
+			var coalitionArmy = Blackboard.CoalitionArmyStrength;
+			var enemyArmy = Blackboard.EnemyArmyStrength;
 			var ratio = coalitionArmy <= 0 ? 0 : enemyArmy / coalitionArmy;
 
 			// Advance the mission lifecycle.
-			missions.Update(blackboard, coalitionArmy, enemyArmy);
+			missions.Update(Blackboard, coalitionArmy, enemyArmy);
 
 			// Select posture before scoring targets or creating missions so every decision in this
 			// review uses one coherent policy rather than the previous review's stance.
-			var enemyStaticDefense = blackboard.EnemyRegion >= 0
-				? blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense]
+			var enemyStaticDefense = Blackboard.EnemyRegion >= 0
+				? Blackboard.Regions[Blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense]
 				: 0f;
-			var enemyEconomyStrong = blackboard.EnemyIntel.Any(i =>
+			var enemyEconomyStrong = Blackboard.EnemyIntel.Any(i =>
 				i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
-			var expansionOpportunity = blackboard.MapAnalysis.ExpansionValue.Any(v => v >= 0.6f);
+			var expansionOpportunity = Blackboard.MapAnalysis.ExpansionValue.Any(v => v >= 0.6f);
 			var recentlyDefended = strategicPosture == StrategicPosture.Defensive && ratio < 1f;
-			var casualtyFraction = blackboard.Forces.Count == 0 ? 0f : blackboard.Forces.Max(f => f.CasualtyFraction);
+			var casualtyFraction = Blackboard.Forces.Count == 0 ? 0f : Blackboard.Forces.Max(f => f.CasualtyFraction);
 			var newPosture = PostureSelection.Select(ratio, enemyStaticDefense,
 				(int)coalitionArmy, enemyEconomyStrong, expansionOpportunity, recentlyDefended, casualtyFraction);
 			if (newPosture != strategicPosture)
@@ -522,7 +539,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// with better tactics and reserve commitment); defend only when clearly outnumbered.
 			var (wantAttack, wantDefend, wantBuild) = CommandValidator.ResolveCommanderIntent(llmIntent?.Posture, ratio);
 
-			if (wantAttack && blackboard.EnemyRegion >= 0)
+			if (wantAttack && Blackboard.EnemyRegion >= 0)
 			{
 				// Main effort: concentrate the coalition on the single highest-value objective so
 				// effort is not spread evenly across all fronts.
@@ -530,21 +547,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (scored != mainEffort)
 				{
 					mainEffort = scored;
-					blackboard.AddEvent("main_effort", scored, scored != null ? "concentrate on highest-value objective" : "no main effort");
+					Blackboard.AddEvent("main_effort", scored, scored != null ? "concentrate on highest-value objective" : "no main effort");
 					CoalitionTelemetry.Log(world, scored != null ? $"Main effort set to {scored.Value}" : "Main effort cleared: no scored target");
 				}
 
-				var target = scored ?? RegionCenter(blackboard.EnemyRegion);
+				var target = scored ?? RegionCenter(Blackboard.EnemyRegion);
 
 				// A decisive edge turns the main effort into a breakthrough; a fair fight stays a
 				// conventional attack. A heavily fortified enemy is besieged instead.
 				var attackType = ratio < 0.5f ? MissionType.Breakthrough : MissionType.Attack;
-				if (blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
+				if (Blackboard.Regions[Blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
 					attackType = MissionType.Siege;
 				EnsureMission(attackType, 90, target, "Destroy enemy concentration");
 			}
 			else
 				mainEffort = null;
+
+			// Fair-fog contact battle: locating an enemy base can take several minutes on a large map,
+			// but an observed mobile army is a valid operational target. When the coalition can meet
+			// that force at parity, authorize a centralized counterattack instead of making each local
+			// role improvise or waiting until the force reaches the base.
+			var observedMobile = Blackboard.EnemyIntel.Where(i =>
+				i.Status == IntelStatus.Observed && i.Class != UnitClass.Structure).ToArray();
+			if (Blackboard.EnemyRegion < 0 && ShouldInterceptObservedForce(
+				observedMobile.Length, ratio, (int)coalitionArmy,
+				brain?.Info.CoordinatedAttackMinimum ?? 24))
+			{
+				var contact = new CPos(
+					(int)observedMobile.Average(i => i.LastSeenCell.X),
+					(int)observedMobile.Average(i => i.LastSeenCell.Y));
+				var intercept = InterceptionCell(contact, Blackboard.HomeCell);
+				EnsureMission(MissionType.Counterattack, 85, intercept, "Intercept observed enemy field army");
+			}
+
+			var urgentCounterattack = missions.Missions.Any(m => m.Type == MissionType.Counterattack
+				&& m.Status is MissionStatus.Ready or MissionStatus.Executing);
 
 			// Additional offensive missions driven by intel: raids on economy/production, air and
 			// support-power strikes, chokepoint seizure, and a flank to divide the defense. A "build"
@@ -553,11 +590,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CreateOffensiveMissions(ratio);
 
 			if (wantDefend)
-				EnsureMission(MissionType.Defend, 80, RegionCenter(blackboard.HomeRegion), "Hold the base");
+				EnsureMission(MissionType.Defend, 80, Blackboard.HomeCell, "Hold the base");
+			else
+				CancelActiveMissions(MissionType.Defend, "force balance recovered");
 
 			// Reconnaissance: if the enemy position is unknown, probe the least-explored nearby region;
 			// once it is known, run value-of-information-driven recon (deep, expansion search, defense probe).
-			if (blackboard.EnemyRegion < 0)
+			if (Blackboard.EnemyRegion < 0)
 			{
 				var reconTarget = LeastExploredRegionNear();
 				if (reconTarget != null)
@@ -573,7 +612,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// delaying action, air/naval/route recon, and decoy transport. These extend the deterministic
 			// commander with the remaining mission types that were previously enum-only or missing.
 			// A "build" posture defers these proactive strikes while the coalition expands its economy.
-			if (!wantBuild && posturePolicy.SecondaryOperationBudget >= 0.1f)
+			if (!wantBuild && !urgentCounterattack && posturePolicy.SecondaryOperationBudget >= 0.1f)
 				CreateAdvancedMissions(ratio);
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
@@ -593,13 +632,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Bait: an over-responsive enemy is lured by a small exposed force into an ambush position
 			// halfway to our base, where the main army waits to pounce.
 			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
-				&& (blackboard.Opponent.ShouldExploit(blackboard.Opponent.MovesWholeArmyToDefend)
-					|| blackboard.Opponent.ShouldExploit(blackboard.Opponent.RespondsStronglyToRaids))
+				&& (Blackboard.Opponent.ShouldExploit(Blackboard.Opponent.MovesWholeArmyToDefend)
+					|| Blackboard.Opponent.ShouldExploit(Blackboard.Opponent.RespondsStronglyToRaids))
 				&& !missions.Missions.Any(m => m.Type == MissionType.Bait)
 				&& !DeceptionSaturated())
 			{
-				var home = RegionCenter(blackboard.HomeRegion);
-				var enemy = RegionCenter(blackboard.EnemyRegion);
+				var home = (CPos?)Blackboard.HomeCell;
+				var enemy = RegionCenter(Blackboard.EnemyRegion);
 				if (home != null && enemy != null)
 					EnsureMission(MissionType.Bait, 55, home.Value + (enemy.Value - home.Value) / 2, "Lure the enemy into an ambush");
 			}
@@ -712,11 +751,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// boost (already validated and cleaned by ApplyLlmIntent).
 			var produceJson = MergeProduce(BuildProduceJson(), llmIntent?.Produce);
 			foreach (var capability in posturePolicy.ProductionCapabilities)
-				if (!ProductionContract.IsSatisfied(capability, blackboard.Forces))
+				if (!ProductionContract.IsSatisfied(capability, Blackboard.Forces))
 					produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(capability));
 
 			foreach (var requirement in CurrentProductionRequirements())
-				if (!ProductionContract.IsSatisfied(requirement, blackboard.Forces))
+				if (!ProductionContract.IsSatisfied(requirement, Blackboard.Forces))
 					produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(requirement));
 
 			// LLM capability directive: translate the requested capability into the matching
@@ -758,20 +797,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var attackTick = -1;
 			if (attack != null)
 			{
-				attackTick = attack.CreatedTick + 400 + attack.PlannedRegions.Length * 40;
+				attackTick = attack.Type == MissionType.Counterattack
+					? world.WorldTick : attack.CreatedTick + 400 + attack.PlannedRegions.Length * 40;
 				if (missions.Missions.Any(m => m.Type == MissionType.Feint) && missions.DeceptionSuccesses == 0)
 					attackTick += 200;
 			}
 
-			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
+			var directiveJson = missions.BuildDirectiveJson(Blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
 
 			// Posture controls expansion timing and combat risk; a validated LLM expansion choice can
 			// override the posture for this review. Reserve commitment is explicit for all-in stances.
 			var expansionPriority = llmIntent?.ExpansionPriority is 1 or -1
 				? llmIntent.ExpansionPriority : posturePolicy.ExpansionPriority;
 			var supportPowerTick = attackTick >= 0 ? Math.Max(world.WorldTick, attackTick - 40) : world.WorldTick;
+			var commitReserve = posturePolicy.CommitReserve || attack?.Type == MissionType.Counterattack;
 			var postureDirective = FormattableString.Invariant(
-				$",\"expansionPriority\":{expansionPriority},\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00},\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()},\"attackPhase\":\"{attack?.Phase.ToString().ToLowerInvariant() ?? "none"}\",\"supportPowerTick\":{supportPowerTick}");
+				$",\"expansionPriority\":{expansionPriority},\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00},\"commitReserve\":{commitReserve.ToString().ToLowerInvariant()},\"attackPhase\":\"{attack?.Phase.ToString().ToLowerInvariant() ?? "none"}\",\"supportPowerTick\":{supportPowerTick}");
 			if (recentExpansionCell != null && world.WorldTick - recentExpansionTick <= 600)
 				postureDirective += $",\"expansionGuard\":{{\"x\":{recentExpansionCell.Value.X},\"y\":{recentExpansionCell.Value.Y}}}";
 			directiveJson = directiveJson.Insert(directiveJson.Length - 1, postureDirective);
@@ -786,8 +827,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (lastPosture != strategy)
 			{
 				lastPosture = strategy;
-				blackboard.AddEvent("posture_change", null, strategy);
-				CoalitionTelemetry.Log(world, $"Posture {strategy}; coalition {blackboard.CoalitionArmyStrength:0} vs enemy {blackboard.EnemyArmyStrength:0}");
+				Blackboard.AddEvent("posture_change", null, strategy);
+				CoalitionTelemetry.Log(world, $"Posture {strategy}; coalition {Blackboard.CoalitionArmyStrength:0} vs enemy {Blackboard.EnemyArmyStrength:0}");
 			}
 
 			// Per-front postures (req 341): every region independently overrides the global posture
@@ -805,11 +846,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void SetLocalPostures()
 		{
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				var region = blackboard.Regions[i];
+				var region = Blackboard.Regions[i];
 				var localPosture = PostureSelection.SelectLocal(region.FriendlyControl, region.EnemyPressure,
-					blackboard.MapAnalysis.ExpansionValue[i]);
+					Blackboard.MapAnalysis.ExpansionValue[i]);
 				if (region.LocalPosture != localPosture)
 				{
 					region.LocalPosture = localPosture;
@@ -835,8 +876,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Use the same strength the commander actually decides on (CoalitionArmyStrength, no health
 			// discount) rather than ForcePower (health-discounted), so the predicted win ratio agrees
 			// with the attack/defend/abort decisions.
-			var friendlyValue = blackboard.CoalitionArmyStrength;
-			var enemyValue = blackboard.EnemyArmyStrength;
+			var friendlyValue = Blackboard.CoalitionArmyStrength;
+			var enemyValue = Blackboard.EnemyArmyStrength;
 			var idle = combatUnits.Length == 0 ? 1f : combatUnits.Count(a => a.IsIdle) * 1f / combatUnits.Length;
 
 			// Cohesion: how tightly the army clusters around its center (1 = perfectly together).
@@ -851,16 +892,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			else if (combatUnits.Length == 1)
 				cohesion = 1f;
 
-			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
-			var productionIdle = blackboard.Facilities.Count == 0 ? 1f
-				: blackboard.Facilities.Count(f => f.Current == null) * 1f / blackboard.Facilities.Count;
+			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, Blackboard.CoalitionCash);
+			var productionIdle = Blackboard.Facilities.Count == 0 ? 1f
+				: Blackboard.Facilities.Count(f => f.Current == null) * 1f / Blackboard.Facilities.Count;
 			var reserveFraction = brain?.CurrentReserveFraction
 				?? PostureSelection.PolicyFor(strategicPosture).ReserveFraction;
 			matchMetrics.SampleOperations(productionIdle, reserveFraction <= 0 ? 0f : 1f / reserveFraction);
 
 			// Economic damage tracking: sample refinery counts for both sides.
 			var friendlyRefineries = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName) && a.Info.HasTraitInfo<RefineryInfo>());
-			var enemyRefineries = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
+			var enemyRefineries = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
 			matchMetrics.SampleEconomy(friendlyRefineries, enemyRefineries);
 
 			// Expansion detection (req 608): record the tick when a new construction yard appears.
@@ -883,7 +924,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					matchMetrics.RecordExpansion(world.WorldTick);
 					recentExpansionCell = cell;
 					recentExpansionTick = world.WorldTick;
-					blackboard.AddEvent("expansion_built", cell, "protect new construction yard");
+					Blackboard.AddEvent("expansion_built", cell, "protect new construction yard");
 				}
 
 				knownConyardCells.Clear();
@@ -894,10 +935,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
 
 			// Excess resource floating: a growing, unspent cash pile means production is not keeping up.
-			if (blackboard.CoalitionCash > 12000 && (lastFloatingTick == int.MinValue || world.WorldTick - lastFloatingTick >= 6000))
+			if (Blackboard.CoalitionCash > 12000 && (lastFloatingTick == int.MinValue || world.WorldTick - lastFloatingTick >= 6000))
 			{
 				lastFloatingTick = world.WorldTick;
-				CoalitionTelemetry.Log(world, $"Excess cash floating: {blackboard.CoalitionCash}");
+				CoalitionTelemetry.Log(world, $"Excess cash floating: {Blackboard.CoalitionCash}");
 			}
 
 			if (lastMetricsSummaryTick == int.MinValue || world.WorldTick - lastMetricsSummaryTick >= 6000)
@@ -970,7 +1011,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void UpdateForceCasualties()
 		{
-			foreach (var force in blackboard.Forces)
+			foreach (var force in Blackboard.Forces)
 			{
 				var peak = peakForceUnits.GetValueOrDefault(force.Owner);
 				if (force.TotalUnits > peak)
@@ -983,35 +1024,35 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Updates the opponent model from observed enemy composition and deployment patterns.</summary>
 		void UpdateOpponentModel()
 		{
-			var total = blackboard.EnemyIntel.Count;
+			var total = Blackboard.EnemyIntel.Count;
 			if (total == 0)
 				return;
 
-			var opponent = blackboard.Opponent;
-			opponent.ArmorBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Armor) * 1f / total;
-			opponent.AirBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Air) * 1f / total;
-			opponent.InfantryBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Infantry) * 1f / total;
-			opponent.NavalBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Naval) * 1f / total;
-			opponent.StaticDefenseBias = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure) * 1f / total;
+			var opponent = Blackboard.Opponent;
+			opponent.ArmorBias = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Armor) * 1f / total;
+			opponent.AirBias = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Air) * 1f / total;
+			opponent.InfantryBias = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Infantry) * 1f / total;
+			opponent.NavalBias = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Naval) * 1f / total;
+			opponent.StaticDefenseBias = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure) * 1f / total;
 
 			// If many enemy sightings sit away from their base region, the enemy tends to commit its
 			// whole army to defending - a signal that feints will draw forces away from the main push.
-			opponent.MovesWholeArmyToDefend = blackboard.EnemyRegion >= 0
-				&& blackboard.EnemyIntel.Count(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion) * 2 > total;
+			opponent.MovesWholeArmyToDefend = Blackboard.EnemyRegion >= 0
+				&& Blackboard.EnemyIntel.Count(i => Blackboard.RegionOf(i.LastSeenCell).Index != Blackboard.EnemyRegion) * 2 > total;
 
 			// Preferred attack lane: the region most often hosting enemy sightings away from the base.
 			// Tracks where the enemy tends to mass, so our defense can cover the likely axis.
 			var laneCounts = new Dictionary<int, int>();
-			foreach (var intel in blackboard.EnemyIntel)
+			foreach (var intel in Blackboard.EnemyIntel)
 			{
-				var region = blackboard.RegionOf(intel.LastSeenCell).Index;
+				var region = Blackboard.RegionOf(intel.LastSeenCell).Index;
 				laneCounts[region] = laneCounts.GetValueOrDefault(region) + 1;
 			}
 
 			var bestLane = -1;
 			var bestLaneCount = 0;
 			foreach (var kv in laneCounts)
-				if (kv.Key != blackboard.HomeRegion && kv.Value > bestLaneCount)
+				if (kv.Key != Blackboard.HomeRegion && kv.Value > bestLaneCount)
 				{
 					bestLane = kv.Key;
 					bestLaneCount = kv.Value;
@@ -1021,14 +1062,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			// Playstyle from the scouted shape: an army that outnumbers its own structures is pressing
 			// (rush), structures without a matching army are turtling.
-			var structures = blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
+			var structures = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure);
 			opponent.ExpansionCount = structures;
 			var army = total - structures;
 			opponent.Playstyle = OpponentModel.DerivePlaystyle(army, structures);
 
 			// Predicted build from the most advanced scouted structure.
 			var build = "unknown";
-			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			foreach (var intel in Blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
 				var direction = OpponentModel.DerivePredictedBuild(intel.Type);
 				if (direction != null)
@@ -1054,9 +1095,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			opponent.RaidResponseSamples = raidResponseSamples;
 			opponent.RaidResponseRate = raidResponseSamples == 0 ? 0f : raidResponseSuccesses * 1f / raidResponseSamples;
 			opponent.RespondsStronglyToFeints = missions.DeceptionAttempts >= 2
-				&& blackboard.DeceptionEffectiveness >= 0.5f;
+				&& Blackboard.DeceptionEffectiveness >= 0.5f;
 			opponent.FeintResponseSamples = missions.DeceptionAttempts;
-			opponent.FeintResponseRate = blackboard.DeceptionEffectiveness;
+			opponent.FeintResponseRate = Blackboard.DeceptionEffectiveness;
 			opponent.ExpansionSamples = matchMetrics.ExpansionTimings.Count;
 			opponent.AverageExpansionTick = opponent.ExpansionSamples == 0 ? 0f
 				: (float)matchMetrics.ExpansionTimings.Average();
@@ -1097,15 +1138,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			CPos? best = null;
 			var bestScore = float.MinValue;
-			var homeRegion = blackboard.HomeRegion;
-			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			var homeRegion = Blackboard.HomeRegion;
+			foreach (var intel in Blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
 				// Special insertions travel by stealth profile: the route cost already weights
 				// vision exposure, detection, and chokepoint risk, so unreachable targets are
 				// skipped rather than sending Tanya on a one-way trip into the sea.
-				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
+				var targetRegion = Blackboard.RegionOf(intel.LastSeenCell).Index;
 				var route = CoalitionRoutePlanner.FindRoute(
-					blackboard.MapAnalysis, blackboard.ThreatField(), homeRegion, targetRegion,
+					Blackboard.MapAnalysis, Blackboard.ThreatField(), homeRegion, targetRegion,
 					MovementClass.Ground, RouteWeights.Stealth());
 				if (!route.Found)
 					continue;
@@ -1121,7 +1162,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var value = TargetEvaluator.EconomicValue(intel.Type)
 					+ TargetEvaluator.ProductionValue(intel.Type)
 					+ TargetEvaluator.TechnologyValue(intel.Type);
-				var region = blackboard.Regions[targetRegion];
+				var region = Blackboard.Regions[targetRegion];
 				var risk = region.Threats[(int)CoalitionCapability.StaticDefense]
 					+ region.Threats[(int)CoalitionCapability.VisionExposure]
 					+ route.Cost * 0.5f;
@@ -1158,13 +1199,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			CPos? best = null;
 			var bestScore = float.MinValue;
-			var homeRegion = blackboard.HomeRegion;
+			var homeRegion = Blackboard.HomeRegion;
 			var weights = PostureSelection.TargetWeightsFor(strategicPosture);
-			foreach (var intel in blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
+			foreach (var intel in Blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure))
 			{
-				var targetRegion = blackboard.RegionOf(intel.LastSeenCell).Index;
+				var targetRegion = Blackboard.RegionOf(intel.LastSeenCell).Index;
 				var route = CoalitionRoutePlanner.FindRoute(
-					blackboard.MapAnalysis, blackboard.ThreatField(), homeRegion, targetRegion,
+					Blackboard.MapAnalysis, Blackboard.ThreatField(), homeRegion, targetRegion,
 					MovementClass.Ground, RouteWeights.Assault());
 				if (!route.Found)
 					continue;
@@ -1172,14 +1213,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var type = intel.Type;
 				var (economy, production, technology) = TargetEvaluator.Classify(type);
 				var uncertainty = intel.Confidence < 0.5f ? 1f : 0.3f;
-				var reinforcementRisk = blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.Reinforcement];
-				var counterattackRisk = blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.GroundAntiArmor];
+				var reinforcementRisk = Blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.Reinforcement];
+				var counterattackRisk = Blackboard.Regions[targetRegion].Threats[(int)CoalitionCapability.GroundAntiArmor];
 
 				var breakdown = TargetEvaluator.Score(
 					type, economy, production, technology, targetRegion, route.Cost,
 					friendlyLossRisk: 0.2f, enemyReinforcementRisk: reinforcementRisk,
 					enemyCounterattackRisk: counterattackRisk, uncertainty: uncertainty,
-					blackboard.MapAnalysis, MovementClass.Ground, weights);
+					Blackboard.MapAnalysis, MovementClass.Ground, weights);
 
 				var score = breakdown.Total;
 				if (score > bestScore)
@@ -1310,8 +1351,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return;
 			}
 
-			missions.CreateMission(type, priority, target, objective, createdTick: world.WorldTick);
-			blackboard.AddEvent("mission_created", target, $"{type}:{objective}");
+			var created = missions.CreateMission(type, priority, target, objective, createdTick: world.WorldTick);
+			Blackboard.AddEvent("mission_created", target, $"{type}:{objective}");
+			CoalitionTelemetry.Log(world, $"Mission {created.Id} ({type}) created: {objective}");
 		}
 
 		/// <summary>
@@ -1324,7 +1366,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		string BuildProduceJson()
 		{
-			var profile = ProductionContract.Aggregate(blackboard.Regions);
+			var profile = ProductionContract.Aggregate(Blackboard.Regions);
 			var contracts = new (CoalitionCapability Capability, string[] CounterUnits)[]
 			{
 				(CoalitionCapability.AntiAir, info.AntiAirUnits.ToArray()),
@@ -1349,12 +1391,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				fielded[a.Info.Name] = fielded.GetValueOrDefault(a.Info.Name) + 1;
 			}
 
-			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), blackboard.HasBigWater,
+			var units = ProductionContract.Resolve(profile, contracts, t => fielded.GetValueOrDefault(t), Blackboard.HasBigWater,
 				ProductionContract.CapabilityWeightScale);
 
 			// Recon requirement: with the enemy position unknown, produce scouts to locate them.
-			if (blackboard.EnemyRegion < 0 && brain?.Info.ScoutUnitTypes is { Count: > 0 } scoutTypes)
-				units = units == null ? scoutTypes.ToArray() : scoutTypes.Concat(units).Distinct().ToArray();
+			if (Blackboard.EnemyRegion < 0 && brain?.Info.ScoutUnitTypes is { Length: > 0 } scoutTypes)
+			{
+				var fieldedScouts = scoutTypes.Sum(t => fielded.GetValueOrDefault(t));
+				if (fieldedScouts < brain.Info.ScoutSquadSize)
+					units = units == null ? scoutTypes : scoutTypes.Concat(units).Distinct().ToArray();
+			}
 
 			if (units == null || units.Length == 0)
 				return null;
@@ -1368,7 +1414,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// order ahead of the deterministic contract; invalid unit names are filtered by the brain
 		/// when it matches them against buildable items.
 		/// </summary>
-		string MergeProduce(string produceJson, string[] llmProduce)
+		static string MergeProduce(string produceJson, string[] llmProduce)
 		{
 			if (llmProduce == null || llmProduce.Length == 0)
 				return produceJson;
@@ -1413,10 +1459,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				"air_superiority" => brain?.Info.AirUnitTypes?.ToArray(),
 				"transport" => brain?.Info.TransportTypes?.ToArray(),
 				"special_operations" => info.SpecialTypes.ToArray(),
-				"base_defense" => info.AntiAirUnits
-					.Concat(info.AntiArmorUnits)
-					.Concat(info.AntiInfantryUnits)
-					.ToArray(),
+
+				// Before enemy composition is known, base defense means a balanced field army. Observed
+				// capability threats are merged separately by BuildProduceJson and add exact counters.
+				"base_defense" => info.ArmyPriority.ToArray(),
 				_ => null
 			};
 		}
@@ -1426,8 +1472,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			var active = missions.Missions.Where(m => m.Status is MissionStatus.Ready or MissionStatus.Executing).ToArray();
 			return ProductionContract.DetermineRequirements(
-				blackboard.EnemyRegion < 0 || active.Any(m => MissionManager.IsRecon(m.Type)),
-				blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air),
+				Blackboard.EnemyRegion < 0 || active.Any(m => MissionManager.IsRecon(m.Type)),
+				Blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air),
 				active.Any(m => m.PlannedRegions.Length >= 3),
 				active.Any(m => m.Type is MissionType.Raid or MissionType.Harassment
 					or MissionType.EconomyRaid or MissionType.ProductionRaid),
@@ -1435,7 +1481,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				active.Any(m => m.Type == MissionType.SpecialOps),
 				active.Any(m => m.Type is MissionType.NavalStrike or MissionType.NavalBlockade
 					or MissionType.NavalScreen or MissionType.NavalRecon),
-				blackboard.HasBigWater);
+				Blackboard.HasBigWater);
 		}
 
 		/// <summary>
@@ -1443,13 +1489,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		string AssignRole()
 		{
-			var mine = blackboard.Forces.FirstOrDefault(f => f.Owner == player.InternalName);
-			if (mine == null || blackboard.Forces.Count == 0)
+			var mine = Blackboard.Forces.FirstOrDefault(f => f.Owner == player.InternalName);
+			if (mine == null || Blackboard.Forces.Count == 0)
 				return null;
 
 			var cash = TeamPlayers().ToDictionary(p => p.InternalName,
 				p => p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0);
-			var roles = CoalitionForceRegistry.AssignRoles(blackboard.Forces, cash, blackboard.HasBigWater);
+			var roles = CoalitionForceRegistry.AssignRoles(Blackboard.Forces, cash, Blackboard.HasBigWater);
 			var role = roles.GetValueOrDefault(mine.Owner, "escort");
 
 			return "{\"" + player.InternalName + "\":\"" + role + "\"}";
@@ -1467,11 +1513,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (mission.Status != MissionStatus.Executing && mission.Status != MissionStatus.Ready)
 					arbiter.ReleaseMission(mission.Id);
 
-			var ordered = blackboard.Forces.OrderByDescending(f => f.TotalUnits).ToArray();
+			var ordered = Blackboard.Forces.OrderByDescending(f => f.TotalUnits).ToArray();
 			var main = ordered.FirstOrDefault();
 			var secondary = ordered.Skip(1).FirstOrDefault();
-			var transportOwner = blackboard.Transports.FirstOrDefault()?.Owner
-				?? blackboard.SpecialAssets.FirstOrDefault()?.Owner;
+			var transportOwner = Blackboard.Transports.FirstOrDefault()?.Owner
+				?? Blackboard.SpecialAssets.FirstOrDefault()?.Owner;
 
 			foreach (var mission in missions.Missions.Where(m => m.Status == MissionStatus.Executing || m.Status == MissionStatus.Ready))
 			{
@@ -1483,8 +1529,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer
 						or MissionType.Feint or MissionType.Bait or MissionType.FakeBuildup => secondary ?? main,
 					MissionType.Transport or MissionType.SpecialOps or MissionType.DecoyTransport
-						=> blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
-					MissionType.NavalBlockade => blackboard.Forces.FirstOrDefault(f => f.Counts[(int)UnitClass.Naval] > 0) ?? main,
+						=> Blackboard.Forces.FirstOrDefault(f => f.Owner == transportOwner) ?? main,
+					MissionType.Recon or MissionType.DeepRecon or MissionType.AirRecon or MissionType.NavalRecon
+						or MissionType.RouteRecon or MissionType.ExpansionSearch or MissionType.DefenseProbe => secondary ?? main,
+					MissionType.NavalBlockade => Blackboard.Forces.FirstOrDefault(f => f.Counts[(int)UnitClass.Naval] > 0) ?? main,
 					MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella or MissionType.NavalScreen
 						or MissionType.DelayingAction or MissionType.Evacuation or MissionType.Escort => main,
 					_ => null
@@ -1503,7 +1551,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Copy ownership back onto the fresh force groups.
-			foreach (var force in blackboard.Forces)
+			foreach (var force in Blackboard.Forces)
 			{
 				force.MissionId = arbiter.MissionOf(force.Owner);
 				force.Role = arbiter.RoleOf(force.Owner);
@@ -1564,7 +1612,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			// Copy the resulting ownership back onto the blackboard force groups so the next command
 			// sees the LLM-directed assignments.
-			foreach (var force in blackboard.Forces)
+			foreach (var force in Blackboard.Forces)
 			{
 				force.MissionId = arbiter.MissionOf(force.Owner);
 				force.Role = arbiter.RoleOf(force.Owner);
@@ -1580,7 +1628,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var id = forceId.Trim();
 			if (id.StartsWith("FORCE_", StringComparison.OrdinalIgnoreCase))
 				id = id["FORCE_".Length..];
-			return blackboard.Forces.FirstOrDefault(f => string.Equals(f.Owner, id, StringComparison.OrdinalIgnoreCase));
+			return Blackboard.Forces.FirstOrDefault(f => string.Equals(f.Owner, id, StringComparison.OrdinalIgnoreCase));
 		}
 
 		/// <summary>Resolves an LLM mission reference to a live, active mission. Accepts either the
@@ -1606,23 +1654,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Fills the mission's staging region and planned route from the blackboard's map analysis.</summary>
 		void EnrichMission(CoalitionMission mission)
 		{
-			if (mission.Target != null && blackboard.HomeRegion >= 0)
+			if (mission.Target != null && Blackboard.HomeRegion >= 0)
 			{
-				var targetRegion = blackboard.RegionOf(mission.Target.Value).Index;
-				var route = CoalitionRoutePlanner.FindRoute(blackboard.MapAnalysis, blackboard.ThreatField(),
-					blackboard.HomeRegion, targetRegion, MovementClass.Ground, RouteWeights.Assault());
+				var targetRegion = Blackboard.RegionOf(mission.Target.Value).Index;
+				var route = CoalitionRoutePlanner.FindRoute(Blackboard.MapAnalysis, Blackboard.ThreatField(),
+					Blackboard.HomeRegion, targetRegion, MovementClass.Ground, RouteWeights.Assault());
 				mission.PlannedRegions = route.Found ? route.Regions : [];
 			}
 
-			var best = blackboard.HomeRegion;
+			var best = Blackboard.HomeRegion;
 			var bestRally = float.MinValue;
-			foreach (var region in blackboard.Regions)
+			foreach (var region in Blackboard.Regions)
 			{
 				if (!ReachableFromHome(region.Index))
 					continue;
-				if (blackboard.MapAnalysis.RallyValue[region.Index] > bestRally)
+				if (Blackboard.MapAnalysis.RallyValue[region.Index] > bestRally)
 				{
-					bestRally = blackboard.MapAnalysis.RallyValue[region.Index];
+					bestRally = Blackboard.MapAnalysis.RallyValue[region.Index];
 					best = region.Index;
 				}
 			}
@@ -1679,7 +1727,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		string BuildForceJson()
 		{
 			var counts = new int[6];
-			foreach (var force in blackboard.Forces)
+			foreach (var force in Blackboard.Forces)
 				for (var c = 0; c < 4; c++)
 					counts[c] += force.Counts[c];
 
@@ -1690,11 +1738,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Coalition reserve: the sum of each force's held-back reserve (the army the coalition
 			// keeps uncommitted), so the brain and the LLM see how much is in reserve.
 			var reserveFraction = Math.Max(1, brain?.Info.ScaledReserveFraction() ?? 4);
-			var reserve = blackboard.Forces.Sum(f => f.TotalUnits / reserveFraction);
+			var reserve = Blackboard.Forces.Sum(f => f.TotalUnits / reserveFraction);
 
 			// "water" tells the brain whether a big explored water body exists. Without it the mixed-arms
 			// gate must not demand a naval arm, and naval production is skipped.
-			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval},\"land\":{land},\"reserve\":{reserve},\"water\":{(blackboard.HasBigWater ? "true" : "false")}}}";
+			return $"{{\"army\":{air + naval + land},\"air\":{air},\"naval\":{naval}," +
+				$"\"land\":{land},\"reserve\":{reserve}," +
+				$"\"water\":{(Blackboard.HasBigWater ? "true" : "false")}}}";
 		}
 
 		/// <summary>
@@ -1704,19 +1754,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		public ToolContext BuildToolContext()
 		{
-			if (blackboard == null)
+			if (Blackboard == null)
 				return null;
 
 			var members = TeamPlayers();
 			return new ToolContext
 			{
-				Tick = blackboard.Tick,
-				Timestep = (int)world.Timestep,
-				Regions = blackboard.Regions,
-				Forces = blackboard.Forces.ToArray(),
-				SpecialAssets = blackboard.SpecialAssets.ToArray(),
-				Transports = blackboard.Transports.ToArray(),
-				Facilities = blackboard.Facilities.ToArray(),
+				Tick = Blackboard.Tick,
+				Timestep = world.Timestep,
+				Regions = Blackboard.Regions,
+				Forces = Blackboard.Forces.ToArray(),
+				SpecialAssets = Blackboard.SpecialAssets.ToArray(),
+				Transports = Blackboard.Transports.ToArray(),
+				Facilities = Blackboard.Facilities.ToArray(),
 				Missions = missions.Missions.Select(m => new MissionState
 				{
 					Id = m.Id,
@@ -1729,27 +1779,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					Progress = m.Progress,
 					OutcomeReason = m.OutcomeReason
 				}).ToArray(),
-				EnemyIntel = blackboard.EnemyIntel.ToArray(),
-				Events = blackboard.Events.ToArray(),
-				Opponent = blackboard.Opponent,
-				CoalitionCash = blackboard.CoalitionCash,
+				EnemyIntel = Blackboard.EnemyIntel.ToArray(),
+				Events = Blackboard.Events.ToArray(),
+				Opponent = Blackboard.Opponent,
+				CoalitionCash = Blackboard.CoalitionCash,
 				MemberCash = members.ToDictionary(p => p.InternalName,
 					p => p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0),
-				HomeRegion = blackboard.HomeRegion,
-				EnemyRegion = blackboard.EnemyRegion,
-				CoalitionArmyStrength = blackboard.CoalitionArmyStrength,
-				EnemyArmyStrength = blackboard.EnemyArmyStrength,
-				EnemyArmyCount = (int)blackboard.EnemyArmyCount,
-				DeceptionEffectiveness = blackboard.DeceptionEffectiveness,
-				DeceptionEnemiesDrawn = blackboard.DeceptionEnemiesDrawn,
-				PowerProvided = blackboard.PowerProvided,
-				PowerDrained = blackboard.PowerDrained,
-				RefineryCount = blackboard.RefineryCount,
-				HarvesterCount = blackboard.HarvesterCount,
-				ActiveHarvesterCount = blackboard.ActiveHarvesterCount,
-				ResourceCellsRemaining = blackboard.ResourceCellsRemaining,
-				MapAnalysis = blackboard.MapAnalysis,
-				ThreatField = blackboard.ThreatField(),
+				HomeRegion = Blackboard.HomeRegion,
+				EnemyRegion = Blackboard.EnemyRegion,
+				CoalitionArmyStrength = Blackboard.CoalitionArmyStrength,
+				EnemyArmyStrength = Blackboard.EnemyArmyStrength,
+				EnemyArmyCount = (int)Blackboard.EnemyArmyCount,
+				DeceptionEffectiveness = Blackboard.DeceptionEffectiveness,
+				DeceptionEnemiesDrawn = Blackboard.DeceptionEnemiesDrawn,
+				PowerProvided = Blackboard.PowerProvided,
+				PowerDrained = Blackboard.PowerDrained,
+				RefineryCount = Blackboard.RefineryCount,
+				HarvesterCount = Blackboard.HarvesterCount,
+				ActiveHarvesterCount = Blackboard.ActiveHarvesterCount,
+				ResourceCellsRemaining = Blackboard.ResourceCellsRemaining,
+				MapAnalysis = Blackboard.MapAnalysis,
+				ThreatField = Blackboard.ThreatField(),
 				ProductionRequirements = CurrentProductionRequirements()
 			};
 		}
@@ -1759,18 +1809,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			CoalitionRegion best = null;
 			var bestCoverage = 1f;
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			var bestDistance = -1;
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
 				// Skip regions the coalition cannot reach on the ground: reconning an island or a
 				// sea body the army can never enter wastes scouts and produces unusable intel.
-				if (!ReachableFromHome(i))
+				if (i == Blackboard.HomeRegion || !ReachableFromHome(i))
 					continue;
 
-				var coverage = blackboard.Regions[i].FriendlyControl;
-				if (coverage < bestCoverage)
+				var coverage = Blackboard.Regions[i].FriendlyControl;
+				var center = RegionCenter(i);
+				var distance = center == null ? -1 : (center.Value - Blackboard.HomeCell).LengthSquared;
+				if (coverage < bestCoverage || (coverage == bestCoverage && distance > bestDistance))
 				{
-					best = blackboard.Regions[i];
+					best = Blackboard.Regions[i];
 					bestCoverage = coverage;
+					bestDistance = distance;
 				}
 			}
 
@@ -1785,19 +1839,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		CPos? FeintRegionTarget()
 		{
 			var attack = missions.Missions.FirstOrDefault(m => m.Type == MissionType.Attack && m.Target != null);
-			var attackRegion = attack?.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			var attackRegion = attack?.Target != null ? Blackboard.RegionOf(attack.Target.Value).Index : -1;
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				if (blackboard.Regions[i].EnemyPressure <= 0)
+				if (Blackboard.Regions[i].EnemyPressure <= 0)
 					continue;
 
-				if (attackRegion >= 0 && blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, attackRegion, i))
+				if (attackRegion >= 0 && Blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, attackRegion, i))
 					return RegionCenter(i);
 			}
 
 			// Fall back to any enemy-facing region distinct from the main target.
-			for (var i = 0; i < blackboard.Regions.Length; i++)
-				if (blackboard.Regions[i].EnemyPressure > 0 && i != attackRegion)
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
+				if (Blackboard.Regions[i].EnemyPressure > 0 && i != attackRegion)
 					return RegionCenter(i);
 
 			return null;
@@ -1810,8 +1864,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		int FeintPriority()
 		{
-			var effectiveness = missions.DeceptionAttempts == 0 ? 0.5f : blackboard.DeceptionEffectiveness;
-			var basePriority = blackboard.Opponent.ShouldExploit(blackboard.Opponent.MovesWholeArmyToDefend) ? 75 : 60;
+			var effectiveness = missions.DeceptionAttempts == 0 ? 0.5f : Blackboard.DeceptionEffectiveness;
+			var basePriority = Blackboard.Opponent.ShouldExploit(Blackboard.Opponent.MovesWholeArmyToDefend) ? 75 : 60;
 			return (int)(basePriority + 15 * (2 * effectiveness - 1));
 		}
 
@@ -1827,10 +1881,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void CreateOffensiveMissions(float ratio)
 		{
-			if (blackboard.EnemyRegion < 0)
+			if (Blackboard.EnemyRegion < 0)
 				return;
 
-			var structures = blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
+			var structures = Blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
 			if (structures.Length == 0)
 				return;
 
@@ -1842,8 +1896,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (production.Length > 0 && ratio < 1.0f && !missions.Missions.Any(m => m.Type == MissionType.ProductionRaid))
 				EnsureMission(MissionType.ProductionRaid, 65, HighestScored(production, i => TargetEvaluator.ProductionValue(i.Type)), "Raid enemy production");
 
-			var enemyAA = blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.AntiAir];
-			var hasAir = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
+			var enemyAA = Blackboard.Regions[Blackboard.EnemyRegion].Threats[(int)CoalitionCapability.AntiAir];
+			var hasAir = Blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
 			var highValue = BestScoredTarget();
 			if (hasAir && enemyAA < 0.5f && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.AirStrike))
 				EnsureMission(MissionType.AirStrike, 70, highValue, "Air strike on high-value target");
@@ -1852,9 +1906,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var stagedAttack = missions.Missions.Any(m => MissionManager.IsOffensive(m.Type) && m.Status == MissionStatus.Executing
 				&& m.Type != MissionType.AirStrike && m.Type != MissionType.NavalStrike && m.Type != MissionType.SupportPowerStrike);
 			if (hasAir && enemyAA >= 0.5f && stagedAttack && !missions.Missions.Any(m => m.Type == MissionType.AirStrike))
-				EnsureMission(MissionType.AirStrike, 65, RegionCenter(blackboard.EnemyRegion), "Soften enemy air defenses before the assault");
+				EnsureMission(MissionType.AirStrike, 65, RegionCenter(Blackboard.EnemyRegion), "Soften enemy air defenses before the assault");
 
-			if (blackboard.HasReadySuperweapon && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.SupportPowerStrike))
+			if (Blackboard.HasReadySuperweapon && highValue != null && !missions.Missions.Any(m => m.Type == MissionType.SupportPowerStrike))
 				EnsureMission(MissionType.SupportPowerStrike, 95, highValue, "Support-power strike");
 
 			var choke = ChokepointRegionNearEnemy();
@@ -1889,11 +1943,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		CPos? ChokepointRegionNearEnemy()
 		{
-			if (blackboard.EnemyRegion < 0)
+			if (Blackboard.EnemyRegion < 0)
 				return null;
 
-			for (var i = 0; i < blackboard.Regions.Length; i++)
-				if (blackboard.MapAnalysis.IsChokepoint(MovementClass.Ground, blackboard.EnemyRegion, i))
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
+				if (Blackboard.MapAnalysis.IsChokepoint(MovementClass.Ground, Blackboard.EnemyRegion, i))
 					return RegionCenter(i);
 
 			return null;
@@ -1901,12 +1955,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		CPos? FlankRegionTarget(CoalitionMission attack)
 		{
-			var attackRegion = attack.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			var attackRegion = attack.Target != null ? Blackboard.RegionOf(attack.Target.Value).Index : -1;
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				if (blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion)
+				if (Blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion)
 					continue;
-				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i))
+				if (Blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, Blackboard.EnemyRegion, i))
 					return RegionCenter(i);
 			}
 
@@ -1921,26 +1975,55 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		void CreateDefensiveMissions()
 		{
 			// Mobile defense: enemies sighted away from the base region are intercepted in the field.
-			if (blackboard.HomeRegion >= 0 && !missions.Missions.Any(m => m.Type == MissionType.MobileDefense))
+			var away = Blackboard.HomeRegion < 0 ? null : Blackboard.EnemyIntel.FirstOrDefault(i =>
+				i.Status == IntelStatus.Observed && i.Class != UnitClass.Structure
+				&& Blackboard.RegionOf(i.LastSeenCell).Index != Blackboard.HomeRegion);
+			if (away != null)
 			{
-				var away = blackboard.EnemyIntel.FirstOrDefault(i => i.Class != UnitClass.Structure
-					&& blackboard.RegionOf(i.LastSeenCell).Index != blackboard.HomeRegion);
-				if (away != null)
+				if (!missions.Missions.Any(m => m.Type == MissionType.MobileDefense))
 					EnsureMission(MissionType.MobileDefense, 50, away.LastSeenCell, "Intercept enemy away from base");
 			}
+			else
+				CancelActiveMissions(MissionType.MobileDefense, "mobile threat no longer observed");
 
 			// Anti-air umbrella: enemy air presence demands AA concentration over the base.
-			if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air) && !missions.Missions.Any(m => m.Type == MissionType.AntiAirUmbrella))
-				EnsureMission(MissionType.AntiAirUmbrella, 55, RegionCenter(blackboard.HomeRegion), "Anti-air umbrella over the base");
+			if (Blackboard.EnemyIntel.Any(i => i.Status == IntelStatus.Observed && i.Class == UnitClass.Air))
+			{
+				if (!missions.Missions.Any(m => m.Type == MissionType.AntiAirUmbrella))
+					EnsureMission(MissionType.AntiAirUmbrella, 55, Blackboard.HomeCell, "Anti-air umbrella over the base");
+			}
+			else
+				CancelActiveMissions(MissionType.AntiAirUmbrella, "air threat no longer observed");
 
 			// Naval screen: enemy ships demand a coastal screen.
-			if (blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Naval) && blackboard.HasBigWater
-				&& !missions.Missions.Any(m => m.Type == MissionType.NavalScreen))
-				EnsureMission(MissionType.NavalScreen, 55, RegionCenter(blackboard.HomeRegion), "Naval screen");
+			if (Blackboard.EnemyIntel.Any(i => i.Status == IntelStatus.Observed && i.Class == UnitClass.Naval)
+				&& Blackboard.HasBigWater)
+			{
+				if (!missions.Missions.Any(m => m.Type == MissionType.NavalScreen))
+					EnsureMission(MissionType.NavalScreen, 55, Blackboard.HomeCell, "Naval screen");
+			}
+			else
+				CancelActiveMissions(MissionType.NavalScreen, "naval threat no longer observed");
 
 			// Economy escort: a raid-sensitive enemy threatens harvesters.
-			if (blackboard.Opponent.AttacksHarvesters && !missions.Missions.Any(m => m.Type == MissionType.Escort))
-				EnsureMission(MissionType.Escort, 45, RegionCenter(blackboard.HomeRegion), "Escort harvesters");
+			if (Blackboard.Opponent.AttacksHarvesters && !missions.Missions.Any(m => m.Type == MissionType.Escort))
+				EnsureMission(MissionType.Escort, 45, Blackboard.HomeCell, "Escort harvesters");
+		}
+
+		bool CancelActiveMissions(MissionType type, string reason)
+		{
+			var cancelled = false;
+			foreach (var mission in missions.Missions.Where(m => m.Type == type
+				&& m.Status is MissionStatus.Ready or MissionStatus.Executing).ToArray())
+			{
+				cancelled = true;
+				mission.Status = MissionStatus.Cancelled;
+				mission.OutcomeReason = reason;
+				arbiter.ReleaseMission(mission.Id);
+				CoalitionTelemetry.Log(world, $"Mission {mission.Id} ({type}) cancelled: {reason}");
+			}
+
+			return cancelled;
 		}
 
 		/// <summary>
@@ -1951,14 +2034,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void CreateAdvancedMissions(float ratio)
 		{
-			var hasAir = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
-			var hasNaval = blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Naval] > 0);
-			var enemyNavalKnown = blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Naval);
-			var enemyStructures = blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
+			var hasAir = Blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Air] > 0);
+			var hasNaval = Blackboard.Forces.Any(f => f.Counts[(int)UnitClass.Naval] > 0);
+			var enemyNavalKnown = Blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Naval);
+			var enemyStructures = Blackboard.EnemyIntel.Where(i => i.Class == UnitClass.Structure).ToArray();
 
 			// Harassment: a small fast force raids enemy harvesters when the fight is not heavily
 			// unfavorable and the enemy economy is known.
-			if (ratio < 1.5f && blackboard.EnemyRegion >= 0 && enemyStructures.Any(i => TargetEvaluator.EconomicValue(i.Type) > 0)
+			if (ratio < 1.5f && Blackboard.EnemyRegion >= 0 && enemyStructures.Any(i => TargetEvaluator.EconomicValue(i.Type) > 0)
 				&& !missions.Missions.Any(m => m.Type == MissionType.Harassment))
 			{
 				var economyTarget = HighestScored(
@@ -1969,16 +2052,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Expansion denial: enemy structures sit in a region that is not their base region.
-			if (blackboard.EnemyRegion >= 0 && !missions.Missions.Any(m => m.Type == MissionType.ExpansionDenial))
+			if (Blackboard.EnemyRegion >= 0 && !missions.Missions.Any(m => m.Type == MissionType.ExpansionDenial))
 			{
-				var expansion = enemyStructures.FirstOrDefault(i => blackboard.RegionOf(i.LastSeenCell).Index != blackboard.EnemyRegion);
+				var expansion = enemyStructures.FirstOrDefault(i => Blackboard.RegionOf(i.LastSeenCell).Index != Blackboard.EnemyRegion);
 				if (expansion != null)
 					EnsureMission(MissionType.ExpansionDenial, 50, expansion.LastSeenCell, "Deny enemy expansion");
 			}
 
 			// Naval blockade: patrol the enemy coast to deny enemy naval movement when big water exists
 			// and the enemy has ships.
-			if (blackboard.HasBigWater && enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalBlockade))
+			if (Blackboard.HasBigWater && enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalBlockade))
 			{
 				var coast = EnemyCoastRegion();
 				if (coast != null)
@@ -1986,11 +2069,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Naval strike: when the coalition has ships and big water, strike alongside the air strike.
-			if (blackboard.HasBigWater && hasNaval && blackboard.EnemyRegion >= 0
+			if (Blackboard.HasBigWater && hasNaval && Blackboard.EnemyRegion >= 0
 				&& !missions.Missions.Any(m => m.Type == MissionType.NavalStrike))
 			{
 				var highValue = BestScoredTarget();
-				EnsureMission(MissionType.NavalStrike, 65, highValue ?? RegionCenter(blackboard.EnemyRegion), "Naval strike on high-value target");
+				EnsureMission(MissionType.NavalStrike, 65, highValue ?? RegionCenter(Blackboard.EnemyRegion), "Naval strike on high-value target");
 			}
 
 			// Pincer: a strong coalition (ratio < 0.8f) with a staged attack sends a second flanking
@@ -2009,13 +2092,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Delaying action: when defending and outnumbered, a small force slows the enemy advance.
 			if (ratio > 2.0f && !missions.Missions.Any(m => m.Type == MissionType.DelayingAction))
 			{
-				var away = blackboard.EnemyIntel.FirstOrDefault(i => i.Class != UnitClass.Structure
-					&& blackboard.RegionOf(i.LastSeenCell).Index != blackboard.HomeRegion);
-				EnsureMission(MissionType.DelayingAction, 75, away?.LastSeenCell ?? RegionCenter(blackboard.HomeRegion), "Delay the enemy advance");
+				var away = Blackboard.EnemyIntel.FirstOrDefault(i => i.Class != UnitClass.Structure
+					&& Blackboard.RegionOf(i.LastSeenCell).Index != Blackboard.HomeRegion);
+				EnsureMission(MissionType.DelayingAction, 75, away?.LastSeenCell ?? Blackboard.HomeCell, "Delay the enemy advance");
 			}
 
 			// Air recon: the enemy position is unknown and the coalition has air scouts.
-			if (blackboard.EnemyRegion < 0 && hasAir && !missions.Missions.Any(m => m.Type == MissionType.AirRecon))
+			if (Blackboard.EnemyRegion < 0 && hasAir && !missions.Missions.Any(m => m.Type == MissionType.AirRecon))
 			{
 				var reconTarget = LeastExploredRegionNear();
 				if (reconTarget != null)
@@ -2023,7 +2106,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			// Naval recon: big water with unknown enemy naval presence.
-			if (blackboard.HasBigWater && !enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalRecon))
+			if (Blackboard.HasBigWater && !enemyNavalKnown && !missions.Missions.Any(m => m.Type == MissionType.NavalRecon))
 			{
 				var reconTarget = LeastExploredRegionNear();
 				if (reconTarget != null)
@@ -2034,7 +2117,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (stagedAttack != null && stagedAttack.PlannedRegions.Length > 0
 				&& !missions.Missions.Any(m => m.Type == MissionType.RouteRecon))
 			{
-				var unexplored = stagedAttack.PlannedRegions.FirstOrDefault(r => r >= 0 && blackboard.Regions[r].FriendlyControl < 0.1f);
+				var unexplored = stagedAttack.PlannedRegions.FirstOrDefault(r => r >= 0 && Blackboard.Regions[r].FriendlyControl < 0.1f);
 				if (unexplored >= 0)
 					EnsureMission(MissionType.RouteRecon, 42, RegionCenter(unexplored), "Scout the route to the target");
 			}
@@ -2042,7 +2125,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Decoy transport: a special-operations mission is active and a transport is available;
 			// send an empty transport to a fake landing zone to draw enemy attention.
 			if (missions.Missions.Any(m => m.Type == MissionType.SpecialOps && m.Status == MissionStatus.Executing)
-				&& blackboard.Transports.Count > 0 && !missions.Missions.Any(m => m.Type == MissionType.DecoyTransport))
+				&& Blackboard.Transports.Count > 0 && !missions.Missions.Any(m => m.Type == MissionType.DecoyTransport))
 			{
 				var decoyTarget = DecoyLandingZone();
 				if (decoyTarget != null)
@@ -2066,18 +2149,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		CPos? EnemyCoastRegion()
 		{
-			if (blackboard.EnemyRegion < 0)
-				return RegionCenter(blackboard.EnemyRegion);
+			if (Blackboard.EnemyRegion < 0)
+				return RegionCenter(Blackboard.EnemyRegion);
 
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				if (i == blackboard.EnemyRegion)
+				if (i == Blackboard.EnemyRegion)
 					continue;
-				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, blackboard.EnemyRegion, i))
+				if (Blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, Blackboard.EnemyRegion, i))
 					return RegionCenter(i);
 			}
 
-			return RegionCenter(blackboard.EnemyRegion);
+			return RegionCenter(Blackboard.EnemyRegion);
 		}
 
 		/// <summary>
@@ -2087,14 +2170,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		CPos? PincerRegionTarget(CoalitionMission attack)
 		{
-			var attackRegion = attack.Target != null ? blackboard.RegionOf(attack.Target.Value).Index : -1;
+			var attackRegion = attack.Target != null ? Blackboard.RegionOf(attack.Target.Value).Index : -1;
 			var flank = missions.Missions.FirstOrDefault(m => m.Type == MissionType.Flank && m.Target != null);
-			var flankRegion = flank?.Target != null ? blackboard.RegionOf(flank.Target.Value).Index : -1;
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			var flankRegion = flank?.Target != null ? Blackboard.RegionOf(flank.Target.Value).Index : -1;
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				if (blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion || i == flankRegion)
+				if (Blackboard.Regions[i].EnemyPressure <= 0 || i == attackRegion || i == flankRegion)
 					continue;
-				if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i))
+				if (Blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, Blackboard.EnemyRegion, i))
 					return RegionCenter(i);
 			}
 
@@ -2109,20 +2192,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		CPos? DecoyLandingZone()
 		{
 			var specialOps = missions.Missions.FirstOrDefault(m => m.Type == MissionType.SpecialOps && m.Target != null);
-			var specialOpsRegion = specialOps?.Target != null ? blackboard.RegionOf(specialOps.Target.Value).Index : -1;
-			if (blackboard.EnemyRegion >= 0)
+			var specialOpsRegion = specialOps?.Target != null ? Blackboard.RegionOf(specialOps.Target.Value).Index : -1;
+			if (Blackboard.EnemyRegion >= 0)
 			{
-				for (var i = 0; i < blackboard.Regions.Length; i++)
+				for (var i = 0; i < Blackboard.Regions.Length; i++)
 				{
-					if (i == specialOpsRegion || i == blackboard.EnemyRegion)
+					if (i == specialOpsRegion || i == Blackboard.EnemyRegion)
 						continue;
-					if (blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, blackboard.EnemyRegion, i)
-						|| blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, blackboard.EnemyRegion, i))
+					if (Blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, Blackboard.EnemyRegion, i)
+						|| Blackboard.MapAnalysis.IsAdjacent(MovementClass.Naval, Blackboard.EnemyRegion, i))
 						return RegionCenter(i);
 				}
 			}
 
-			return RegionCenter(blackboard.EnemyRegion);
+			return RegionCenter(Blackboard.EnemyRegion);
 		}
 
 		/// <summary>
@@ -2133,18 +2216,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		void CreateReconMissions()
 		{
 			var existing = missions.Missions.Any(m => MissionManager.IsRecon(m.Type));
-			if (existing || blackboard.EnemyRegion < 0)
+			if (existing || Blackboard.EnemyRegion < 0)
 				return;
 
 			// Deep recon: the least-explored region adjacent to the enemy base (their rear).
-			var deep = BestReconRegion(r => blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, r, blackboard.EnemyRegion) ? 1f : 0f);
+			var deep = BestReconRegion(r => Blackboard.MapAnalysis.IsAdjacent(MovementClass.Ground, r, Blackboard.EnemyRegion) ? 1f : 0f);
 			if (deep != null)
 				EnsureMission(MissionType.DeepRecon, 40, RegionCenter(deep.Value), "Deep reconnaissance of the enemy rear");
 
 			// Expansion search: the least-explored region with the highest expansion value.
 			if (!missions.Missions.Any(m => m.Type == MissionType.ExpansionSearch))
 			{
-				var expansion = BestReconRegion(r => -blackboard.MapAnalysis.ExpansionValue[r]);
+				var expansion = BestReconRegion(r => -Blackboard.MapAnalysis.ExpansionValue[r]);
 				if (expansion != null)
 					EnsureMission(MissionType.ExpansionSearch, 35, RegionCenter(expansion.Value), "Search for an expansion site");
 			}
@@ -2152,7 +2235,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Defense probe: a lightly-observed enemy region with high static-defense threat.
 			if (!missions.Missions.Any(m => m.Type == MissionType.DefenseProbe))
 			{
-				var probe = BestReconRegion(r => -blackboard.Regions[r].Threats[(int)CoalitionCapability.StaticDefense]);
+				var probe = BestReconRegion(r => -Blackboard.Regions[r].Threats[(int)CoalitionCapability.StaticDefense]);
 				if (probe != null)
 					EnsureMission(MissionType.DefenseProbe, 35, RegionCenter(probe.Value), "Probe enemy defenses");
 			}
@@ -2163,9 +2246,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			int? best = null;
 			var bestValue = float.MinValue;
-			for (var i = 0; i < blackboard.Regions.Length; i++)
+			for (var i = 0; i < Blackboard.Regions.Length; i++)
 			{
-				if (blackboard.Regions[i].FriendlyControl > 0.1f || !ReachableFromHome(i))
+				if (Blackboard.Regions[i].FriendlyControl > 0.1f || !ReachableFromHome(i))
 					continue;
 
 				var v = value(i);
@@ -2182,25 +2265,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>True when the region is in the same ground-connected component as the home region.</summary>
 		bool ReachableFromHome(int regionIndex)
 		{
-			if (regionIndex < 0 || blackboard.HomeRegion < 0)
+			if (regionIndex < 0 || Blackboard.HomeRegion < 0)
 				return false;
 
-			return blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, regionIndex)
-				== blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, blackboard.HomeRegion);
+			return Blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, regionIndex)
+				== Blackboard.MapAnalysis.ComponentOf(MovementClass.Ground, Blackboard.HomeRegion);
 		}
 
 		CPos? RegionCenter(int regionIndex)
 		{
-			if (regionIndex < 0 || regionIndex >= blackboard.Regions.Length)
+			if (regionIndex < 0 || regionIndex >= Blackboard.Regions.Length)
 				return null;
-			var bounds = blackboard.Regions[regionIndex].Bounds;
+			var bounds = Blackboard.Regions[regionIndex].Bounds;
 			return new CPos((bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
 		}
 
 		/// <summary>Routes a raw LLM intent reply (command.intent.v1 subset) into the next command.</summary>
 		public void ApplyLlmIntent(string intentJson)
 		{
-			if (blackboard is null || string.IsNullOrEmpty(intentJson))
+			if (Blackboard is null || string.IsNullOrEmpty(intentJson))
 				return;
 
 			try

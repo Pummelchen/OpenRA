@@ -23,11 +23,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	/// </summary>
 	public sealed class CoalitionMatchMetrics
 	{
-		int samples;
 		float friendlyPeak;
 		float enemyPeak;
-		float friendlyValueLost;
-		float enemyValueDestroyed;
 		float idleFractionSum;
 		float cohesionSum;
 		float cashSum;
@@ -37,9 +34,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		// Economic damage: refineries/harvesters destroyed (friendly and enemy), tracked via peak deltas.
 		int friendlyRefineryPeak;
-		int friendlyRefineryLosses;
 		int enemyRefineryPeak;
-		int enemyRefineryLosses;
 
 		// Expansion timings: ticks when MCVs deployed (req 608).
 		readonly List<int> expansionTimings = [];
@@ -92,7 +87,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Records one sample of the coalition's state.</summary>
 		public void Sample(float friendlyValue, float enemyValue, float idleFraction, float cohesion, float cash)
 		{
-			samples++;
+			Samples++;
 
 			// Losses are measured as the drop from the highest value seen. This under-counts when
 			// production outpaces destruction, but is a stable deterministic proxy for real losses.
@@ -100,7 +95,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				friendlyPeak = friendlyValue;
 			else if (friendlyPeak > 0 && friendlyValue < friendlyPeak)
 			{
-				friendlyValueLost += friendlyPeak - friendlyValue;
+				FriendlyValueLost += friendlyPeak - friendlyValue;
 				friendlyPeak = friendlyValue;
 			}
 
@@ -108,7 +103,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				enemyPeak = enemyValue;
 			else if (enemyPeak > 0 && enemyValue < enemyPeak)
 			{
-				enemyValueDestroyed += enemyPeak - enemyValue;
+				EnemyValueDestroyed += enemyPeak - enemyValue;
 				enemyPeak = enemyValue;
 			}
 
@@ -117,19 +112,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			cashSum += cash;
 		}
 
-		public int Samples => samples;
-		public float FriendlyValueLost => friendlyValueLost;
-		public float EnemyValueDestroyed => enemyValueDestroyed;
+		public int Samples { get; private set; }
+		public float FriendlyValueLost { get; private set; }
+		public float EnemyValueDestroyed { get; private set; }
 
 		/// <summary>Destroyed/lost ratio; 1 means we traded evenly, above 1 we came out ahead.</summary>
-		public float ExchangeRatio => friendlyValueLost <= 0 ? (enemyValueDestroyed > 0 ? 1f : 0f)
-			: enemyValueDestroyed / friendlyValueLost;
+		public float ExchangeRatio => FriendlyValueLost <= 0 ? (EnemyValueDestroyed > 0 ? 1f : 0f)
+			: EnemyValueDestroyed / FriendlyValueLost;
 
-		public float AverageIdleFraction => samples == 0 ? 0f : idleFractionSum / samples;
+		public float AverageIdleFraction => Samples == 0 ? 0f : idleFractionSum / Samples;
 
-		public float AverageCohesion => samples == 0 ? 0f : cohesionSum / samples;
+		public float AverageCohesion => Samples == 0 ? 0f : cohesionSum / Samples;
 
-		public float AverageCash => samples == 0 ? 0f : cashSum / samples;
+		public float AverageCash => Samples == 0 ? 0f : cashSum / Samples;
 
 		public float AverageProductionIdleFraction => operationsSamples == 0 ? 0f
 			: productionIdleFractionSum / operationsSamples;
@@ -137,8 +132,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float AverageReserveAvailability => operationsSamples == 0 ? 0f
 			: reserveAvailabilitySum / operationsSamples;
 
-		public int FriendlyRefineryLosses => friendlyRefineryLosses;
-		public int EnemyRefineryLosses => enemyRefineryLosses;
+		public int FriendlyRefineryLosses { get; private set; }
+		public int EnemyRefineryLosses { get; private set; }
+
 		/// <summary>Expansion (MCV deployment) ticks, in order (req 608).</summary>
 		public IReadOnlyList<int> ExpansionTimings => expansionTimings;
 
@@ -208,7 +204,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				friendlyRefineryPeak = friendlyRefineries;
 			else if (friendlyRefineryPeak > 0 && friendlyRefineries < friendlyRefineryPeak)
 			{
-				friendlyRefineryLosses += friendlyRefineryPeak - friendlyRefineries;
+				FriendlyRefineryLosses += friendlyRefineryPeak - friendlyRefineries;
 				friendlyRefineryPeak = friendlyRefineries;
 			}
 
@@ -216,7 +212,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				enemyRefineryPeak = enemyRefineries;
 			else if (enemyRefineryPeak > 0 && enemyRefineries < enemyRefineryPeak)
 			{
-				enemyRefineryLosses += enemyRefineryPeak - enemyRefineries;
+				EnemyRefineryLosses += enemyRefineryPeak - enemyRefineries;
 				enemyRefineryPeak = enemyRefineries;
 			}
 		}
@@ -309,15 +305,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>One-line quality summary for the telemetry log.</summary>
 		public string Summary()
 		{
-			return samples == 0
+			var result = Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS";
+			return Samples == 0
 				? "Match metrics: no samples"
-				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {enemyValueDestroyed:0} / friendly {friendlyValueLost:0} lost), " +
-					$"econ dmg (enemy refineries lost {enemyRefineryLosses}, friendly {friendlyRefineryLosses}), " +
+				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {EnemyValueDestroyed:0} / friendly {FriendlyValueLost:0} lost), " +
+					$"econ dmg (enemy refineries lost {EnemyRefineryLosses}, friendly {FriendlyRefineryLosses}), " +
 					$"avg army idle {AverageIdleFraction * 100:0}%, production idle {AverageProductionIdleFraction * 100:0}%, " +
 					$"cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, reserve {AverageReserveAvailability * 100:0}%, " +
-					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, duration {DurationTicks} ticks, samples {samples}, " +
+					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {result}, " +
+					$"duration {DurationTicks} ticks, samples {Samples}, " +
 					$"expansions {expansionTimings.Count}, sync {Synchronization.AverageErrorTicks:0.0} avg/{Synchronization.MaximumErrorTicks} max ticks, " +
-					$"retreats {RetreatEffectiveness.Completed}/{RetreatEffectiveness.Started} complete ({RetreatEffectiveness.PreservationRate * 100:0}% preserved), recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
+					$"retreats {RetreatEffectiveness.Completed}/{RetreatEffectiveness.Started} complete " +
+					$"({RetreatEffectiveness.PreservationRate * 100:0}% preserved), " +
+					$"recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
 					$"transports {transportSurvived}/{transportTotal} survived, " +
 					$"counterattacks {counterattacksLaunched} ({counterattackEnemyDestroyed} destroyed), " +
 					$"base defense responses {baseDefenseResponseTimes.Count}, " +

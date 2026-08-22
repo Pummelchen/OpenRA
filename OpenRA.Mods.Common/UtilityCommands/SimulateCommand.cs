@@ -81,9 +81,7 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			// for testing the full LLM pipeline headlessly.
 			HeadlessSkirmish.DisableExternalBrain = ParseArg(args, "ENABLE_LLM", null) != "1";
 
-			var botTypes = botTypesArg != null
-				? botTypesArg.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray()
-				: null;
+			var botTypes = botTypesArg?.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToArray();
 			var botCount = botTypes?.Length ?? bots;
 
 			Console.WriteLine($"Simulating {map.Title} ({map.Uid}): {botCount} bots in {teams} teams for {ticks} ticks (seed {seed})...");

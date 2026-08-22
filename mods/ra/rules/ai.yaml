@@ -96,7 +96,7 @@ Player:
 		RequiresCondition: enable-normal-ai || enable-turtle-ai
 		HarvesterTypes: harv
 		RefineryTypes: proc
-		InitialHarvesters: 4
+		InitialHarvesters: 2
 	BaseBuilderBotModule@rush:
 		RequiresCondition: enable-rush-ai
 		MinimumExcessPower: 0
@@ -567,7 +567,7 @@ Player:
 		ProductionTypes: barr,tent,weap
 		NavalProductionTypes: spen, syrd
 		NavalWaterMinimumCells: 100
-		NewProductionCashThreshold: 8000
+		NewProductionCashThreshold: 7000
 		SiloTypes: silo
 		DefenseTypes: hbox,pbox,gun,ftur,tsla,agun,sam
 		BuildingLimits:
@@ -590,7 +590,7 @@ Player:
 			barr: 3
 			kenn: 1
 			dome: 1
-			weap: 8
+			weap: 4
 			hpad: 1
 			spen: 1
 			syrd: 1
@@ -638,12 +638,15 @@ Player:
 		ReserveFraction: 4
 		FeintFraction: 6
 		CommitReserveRatio: 0.6
-		CoordinatedAttackMinimum: 10
-		ScoutUnitTypes: e1
-		ScoutSquadSize: 25
+		CoordinatedAttackMinimum: 24
+		ScoutUnitTypes: jeep, e1
+		ScoutSquadSize: 4
 		ScoutMinDistance: 40
 		ScoutInterval: 100
-		ScoutSendPerInterval: 3
+		ScoutSendPerInterval: 1
+		PrerequisiteArmyThreshold: 10
+		ExpansionUnitTypes: mcv
+		ExpansionArmyThreshold: 100
 		AntiAirUnits: v2rl, e3, mig
 		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
 		AntiInfantryUnits: ftrk, 1tnk, jeep, e4

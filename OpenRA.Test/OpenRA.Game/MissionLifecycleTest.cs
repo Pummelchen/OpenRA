@@ -20,7 +20,6 @@ namespace OpenRA.Test
 		// The phase machine's transition conditions are pure functions of the mission and a small
 		// view of blackboard state. We exercise the manager's public lifecycle without a World:
 		// mission creation, unique IDs, cancellation, and terminal-state reasons are all engine-free.
-
 		[TestCase(TestName = "Missions receive unique sequential IDs.")]
 		public void UniqueIds()
 		{

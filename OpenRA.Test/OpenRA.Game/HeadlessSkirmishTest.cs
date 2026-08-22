@@ -116,8 +116,14 @@ namespace OpenRA.Test
 				// transition is to a strictly later phase.
 				var phaseOrder = new Dictionary<string, int>
 				{
-					["Recon"] = 0, ["Staging"] = 1, ["Shaping"] = 2, ["Deception"] = 3,
-					["Breach"] = 4, ["Exploitation"] = 5, ["Consolidation"] = 6, ["Withdrawal"] = 7
+					["Recon"] = 0,
+					["Staging"] = 1,
+					["Shaping"] = 2,
+					["Deception"] = 3,
+					["Breach"] = 4,
+					["Exploitation"] = 5,
+					["Consolidation"] = 6,
+					["Withdrawal"] = 7
 				};
 
 				var missionPhases = new Dictionary<string, int>();
@@ -346,7 +352,9 @@ namespace OpenRA.Test
 		{
 			try
 			{
-				var (result, lines) = RunAndCapture(4, 2, 3000, 700);
+				// The production-safe 24-unit gate (18 after command-quality scaling) first becomes
+				// observable after the opening economy and reconnaissance phases on this map.
+				var (result, lines) = RunAndCapture(4, 2, 5000, 700);
 
 				Assert.That(result.ActorCount, Is.GreaterThan(0), "The campaign must leave actors on the map.");
 				Assert.That(lines.Any(l => l.Contains("Posture ")), Is.True,
@@ -355,8 +363,9 @@ namespace OpenRA.Test
 					"Match-quality metrics must be sampled.");
 				Assert.That(lines.Any(l => l.Contains("Prerequisite building ordered") || l.Contains("Missions:")), Is.True,
 					"Production planning or mission management must run.");
-				Assert.That(lines.Any(l => l.Contains("Scout sent") || l.Contains("Recon probe")), Is.True,
-					"Reconnaissance must run during the match.");
+				Assert.That(lines.Any(l => l.Contains("Scout sent") || l.Contains("Recon probe")
+					|| l.Contains("(Recon) created") || l.Contains("(DeepRecon) created")), Is.True,
+					"Reconnaissance planning or execution must run during the match.");
 				Assert.That(lines.Any(l => l.Contains("Coordinated force:") && l.Contains("(air") && l.Contains("naval") && l.Contains("land")),
 					Is.True, "The coordinated-attack gate must evaluate the air, naval, and land arms together.");
 			}
@@ -381,7 +390,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var result = HeadlessSkirmish.Run(modData, map, new[] { "ai", "rush" }, 2, 1200, 42);
+				var result = HeadlessSkirmish.Run(modData, map, ["ai", "rush"], 2, 1200, 42);
 
 				Assert.That(result.Clients.Count(c => c.IsBot && c.BotEnabled), Is.EqualTo(2),
 					"Both the coalition bot and the scripted opponent must be enabled.");
@@ -406,7 +415,7 @@ namespace OpenRA.Test
 					var (modData, map) = LoadModAndMap();
 					var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
 					var offset = TelemetryLength(telemetryPath);
-					HeadlessSkirmish.Run(modData, map, new[] { "ai", "turtle", "ai", "turtle" }, 2, 2400, 700);
+					HeadlessSkirmish.Run(modData, map, ["ai", "turtle", "ai", "turtle"], 2, 2400, 700);
 					var lines = TelemetryLines(telemetryPath, offset);
 
 					var modelLine = lines.FirstOrDefault(l => l.Contains("Opponent model:"));

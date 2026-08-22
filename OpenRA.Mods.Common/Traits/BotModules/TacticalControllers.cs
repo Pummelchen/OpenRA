@@ -25,17 +25,14 @@ namespace OpenRA.Mods.Common.Traits
 	public abstract class TacticalController
 	{
 		protected readonly StrategicBrainBotModule Brain;
-		protected readonly World World;
-		protected readonly Player Player;
-		protected readonly IBot Bot;
 		protected readonly StrategicBrainBotModuleInfo Info;
+		protected World World => Brain.World;
+		protected Player Player => Brain.Player;
+		protected IBot Bot => Brain.Bot;
 
 		protected TacticalController(StrategicBrainBotModule brain)
 		{
 			Brain = brain;
-			World = brain.World;
-			Player = brain.Player;
-			Bot = brain.Bot;
 			Info = brain.Info;
 		}
 
@@ -289,17 +286,13 @@ namespace OpenRA.Mods.Common.Traits
 						Bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
 
 					// Advance once loaded, or when there is nothing to load (no cargo trait / no payload).
-					return cargo == null || cargo.PassengerCount > 0 || payload.Length == 0
-						? AdvanceAndContinue()
-						: true;
+					return (cargo != null && cargo.PassengerCount <= 0 && payload.Length != 0) || AdvanceAndContinue();
 				}
 
 				case TransportState.WaitForWindow:
 					// Hold until the synchronization window elapses (deception/distraction timing).
 					windowElapsed++;
-					return windowElapsed >= 30
-						? AdvanceAndContinue()
-						: true;
+					return windowElapsed < 30 || AdvanceAndContinue();
 
 				case TransportState.Transit:
 				{
@@ -334,9 +327,7 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					var distance = (transport.CenterPosition - World.Map.CenterOfCell(targetCell)).LengthSquared;
 					Bot.QueueOrder(new Order("Move", transport, Target.FromCell(World, targetCell), false));
-					return distance <= BaseRadiusSquared(5)
-						? AdvanceAndContinue()
-						: true;
+					return distance > BaseRadiusSquared(5) || AdvanceAndContinue();
 				}
 
 				case TransportState.Unload:
@@ -359,9 +350,7 @@ namespace OpenRA.Mods.Common.Traits
 						.ToArray();
 					if (payload.Length > 0 && (cargo == null || cargo.PassengerCount == 0))
 						Bot.QueueOrder(new Order("EnterTransport", null, Target.FromActor(transport), false, groupedActors: payload));
-					return cargo != null && cargo.PassengerCount > 0
-						? AdvanceAndContinue()
-						: true;
+					return cargo == null || cargo.PassengerCount <= 0 || AdvanceAndContinue();
 				}
 
 				case TransportState.Extract:
@@ -369,7 +358,6 @@ namespace OpenRA.Mods.Common.Traits
 					return AdvanceAndContinue();
 
 				case TransportState.Hold:
-					return false;
 
 				default:
 					return false;

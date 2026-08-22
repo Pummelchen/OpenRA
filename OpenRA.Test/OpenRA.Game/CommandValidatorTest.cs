@@ -29,7 +29,7 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Unknown mission types are rejected with a machine-readable reason.")]
 		public void UnknownType()
 		{
-			var rejections = CommandValidator.ValidateMissions(new[] { ("teleport", 1, 1, 50) }, 128, 128).ToArray();
+			var rejections = CommandValidator.ValidateMissions([("teleport", 1, 1, 50)], 128, 128).ToArray();
 
 			Assert.That(rejections, Has.Length.EqualTo(1));
 			Assert.That(rejections[0].Index, Is.EqualTo(0));
@@ -39,7 +39,7 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Out-of-bounds targets are rejected.")]
 		public void OutOfBounds()
 		{
-			var rejections = CommandValidator.ValidateMissions(new[] { ("attack", 999, 999, 50) }, 128, 128).ToArray();
+			var rejections = CommandValidator.ValidateMissions([("attack", 999, 999, 50)], 128, 128).ToArray();
 
 			Assert.That(rejections[0].Reason, Does.Contain("REJECTED_OUT_OF_BOUNDS"));
 		}
@@ -47,7 +47,7 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Negative priorities are rejected.")]
 		public void NegativePriority()
 		{
-			var rejections = CommandValidator.ValidateMissions(new[] { ("raid", 5, 5, -1) }, 128, 128).ToArray();
+			var rejections = CommandValidator.ValidateMissions([("raid", 5, 5, -1)], 128, 128).ToArray();
 
 			Assert.That(rejections[0].Reason, Does.Contain("REJECTED_INVALID_PRIORITY"));
 		}
@@ -95,13 +95,13 @@ namespace OpenRA.Test
 		{
 			Assert.That(CommandValidator.ValidateProduce(null), Is.Empty);
 			Assert.That(CommandValidator.ValidateProduce([]), Is.Empty);
-			Assert.That(CommandValidator.ValidateProduce(new[] { "2tnk", "mig" }), Is.Empty);
+			Assert.That(CommandValidator.ValidateProduce(["2tnk", "mig"]), Is.Empty);
 		}
 
 		[TestCase(TestName = "A blank production entry is rejected with its index.")]
 		public void BlankProduceEntry()
 		{
-			var rejections = CommandValidator.ValidateProduce(new[] { "2tnk", "", "mig" }).ToArray();
+			var rejections = CommandValidator.ValidateProduce(["2tnk", "", "mig"]).ToArray();
 
 			Assert.That(rejections, Has.Length.EqualTo(1));
 			Assert.That(rejections[0].Index, Is.EqualTo(1));
@@ -122,15 +122,15 @@ namespace OpenRA.Test
 		public void MergeProduce()
 		{
 			// A null boost leaves the existing list unchanged.
-			Assert.That(CommandValidator.MergeProduce(new[] { "2tnk", "mig" }, null),
+			Assert.That(CommandValidator.MergeProduce(["2tnk", "mig"], null),
 				Is.EqualTo(new[] { "2tnk", "mig" }));
 
 			// A null existing list just becomes the boost.
-			Assert.That(CommandValidator.MergeProduce(null, new[] { "arty", "jeep" }),
+			Assert.That(CommandValidator.MergeProduce(null, ["arty", "jeep"]),
 				Is.EqualTo(new[] { "arty", "jeep" }));
 
 			// Boosts append and deduplicate case-insensitively; blank entries are ignored.
-			var merged = CommandValidator.MergeProduce(new[] { "2tnk", "mig" }, new[] { "MIG", "", "arty" }).ToArray();
+			var merged = CommandValidator.MergeProduce(["2tnk", "mig"], ["MIG", "", "arty"]).ToArray();
 			Assert.That(merged, Is.EqualTo(new[] { "2tnk", "mig", "arty" }));
 		}
 
@@ -139,20 +139,22 @@ namespace OpenRA.Test
 		{
 			// No hint: deterministic thresholds decide attack vs defend.
 			var (attack, defend, build) = CommandValidator.ResolveCommanderIntent(null, 1.0f);
-			Assert.That(attack, Is.True);
+			Assert.That(attack, Is.False);
 			Assert.That(defend, Is.False);
 			Assert.That(build, Is.False);
+			(attack, _, _) = CommandValidator.ResolveCommanderIntent(null, 0.75f);
+			Assert.That(attack, Is.True);
 
 			// Overwhelming enemy forces a defensive posture even without a hint.
-			(attack, defend, build) = CommandValidator.ResolveCommanderIntent(null, 3.0f);
+			(_, defend, _) = CommandValidator.ResolveCommanderIntent(null, 3.0f);
 			Assert.That(defend, Is.True);
 
 			// Explicit attack/defend/turtle hints override the ratio.
-			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("attack", 3.0f);
+			(attack, _, _) = CommandValidator.ResolveCommanderIntent("attack", 3.0f);
 			Assert.That(attack, Is.True);
-			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("defend", 1.0f);
+			(_, defend, _) = CommandValidator.ResolveCommanderIntent("defend", 1.0f);
 			Assert.That(defend, Is.True);
-			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("TURTLE", 1.0f);
+			(_, defend, _) = CommandValidator.ResolveCommanderIntent("TURTLE", 1.0f);
 			Assert.That(defend, Is.True, "Postures are case-insensitive.");
 
 			// A build posture suppresses attack and defend regardless of ratio.
@@ -162,7 +164,7 @@ namespace OpenRA.Test
 			Assert.That(build, Is.True);
 
 			// Whitespace is tolerated.
-			(attack, defend, build) = CommandValidator.ResolveCommanderIntent("  BUILD  ", 3.0f);
+			(_, _, build) = CommandValidator.ResolveCommanderIntent("  BUILD  ", 3.0f);
 			Assert.That(build, Is.True);
 		}
 	}

@@ -49,9 +49,9 @@ namespace OpenRA.Test
 			var center = new WPos(10240, 0, 0);
 			var far = new WPos(35000, 0, 0);
 			var near = new WPos(5000, 0, 0);
-			var spreadSquared = (long)(15 * 1024) * (15 * 1024);
-			Assert.That(TacticalFormation.IsAheadOfCenter(far, target, center, spreadSquared), Is.True);
-			Assert.That(TacticalFormation.IsAheadOfCenter(near, target, center, spreadSquared), Is.False);
+			const long SpreadSquared = (long)(15 * 1024) * (15 * 1024);
+			Assert.That(TacticalFormation.IsAheadOfCenter(far, target, center, SpreadSquared), Is.True);
+			Assert.That(TacticalFormation.IsAheadOfCenter(near, target, center, SpreadSquared), Is.False);
 		}
 	}
 }

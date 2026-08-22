@@ -17,7 +17,6 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using SDL2;
 
 namespace OpenRA.WindowsLauncher
 {

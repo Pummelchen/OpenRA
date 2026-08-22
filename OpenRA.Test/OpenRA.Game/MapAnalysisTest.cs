@@ -40,8 +40,8 @@ namespace OpenRA.Test
 
 			// Region 0 (top-left) touches 1 (top-right) and 2 (bottom-left) orthogonally;
 			// region 3 (bottom-right) is only diagonal to 0, so it is not linked.
-			Assert.That(adjacency[0], Is.EquivalentTo(new[] { 1, 2 }));
-			Assert.That(adjacency[3], Is.EquivalentTo(new[] { 1, 2 }));
+			Assert.That(adjacency[0], Is.EquivalentTo([1, 2]));
+			Assert.That(adjacency[3], Is.EquivalentTo([1, 2]));
 			Assert.That(chokepoints[0], Is.Empty, "A wide open border is not a chokepoint.");
 		}
 
@@ -73,9 +73,9 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Regions outside the largest ground component are classified as islands.")]
 		public void IslandRegions()
 		{
-			var islands = CoalitionMapAnalysis.ComputeIslandRegions(new[] { 0, 0, 0, 1, 2 });
+			var islands = CoalitionMapAnalysis.ComputeIslandRegions([0, 0, 0, 1, 2]);
 
-			Assert.That(islands, Is.EquivalentTo(new[] { 3, 4 }));
+			Assert.That(islands, Is.EquivalentTo([3, 4]));
 		}
 
 		[TestCase(TestName = "A fully impassable region (sea) connects to nothing.")]
@@ -163,8 +163,8 @@ namespace OpenRA.Test
 			{
 				new[] { 1 }.ToFrozenSet(),
 				new[] { 0, 2 }.ToFrozenSet(),
-				new int[0].ToFrozenSet(),
-				new int[0].ToFrozenSet()
+				System.Array.Empty<int>().ToFrozenSet(),
+				System.Array.Empty<int>().ToFrozenSet()
 			};
 
 			var value = CoalitionMapAnalysis.ComputeArtilleryValue(regions, defensibility, chokepoints);
@@ -181,21 +181,21 @@ namespace OpenRA.Test
 			var adjacency = Enumerable.Range(0, 4).Select(_ => new List<int>()).ToArray();
 			adjacency[0].Add(1);
 			adjacency[1].Add(0);
-			var open = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
-			var naval = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var open = regions.Select(_ => System.Array.Empty<int>().ToFrozenSet()).ToArray();
+			var naval = regions.Select(_ => System.Array.Empty<int>().ToFrozenSet()).ToArray();
 			naval[0] = new[] { 1 }.ToFrozenSet();
 			naval[1] = new[] { 0 }.ToFrozenSet();
 			var components = new[] { 0, 0, 1, 2 };
 			var map = new CoalitionMapAnalysis(regions,
-				new[] { adjacency, adjacency, adjacency, adjacency },
-				new[] { open, naval, open, open },
-				new[] { components, components, components, components },
-				new[] { 3, 3, 3, 3 }, new HashSet<CPos>(), 10, 10,
-				new int[4], new float[4], new[] { 0.1f, 0.5f, 0.3f, 0.2f },
-				riverCells: new HashSet<CPos> { new CPos(4, 4) });
+				[adjacency, adjacency, adjacency, adjacency],
+				[open, naval, open, open],
+				[components, components, components, components],
+				[3, 3, 3, 3], [], 10, 10,
+				new int[4], new float[4], [0.1f, 0.5f, 0.3f, 0.2f],
+				riverCells: [new CPos(4, 4)]);
 
-			Assert.That(map.NarrowNavalPassageRegions, Is.EquivalentTo(new[] { 0, 1 }));
-			Assert.That(map.IslandRegions, Is.EquivalentTo(new[] { 2, 3 }));
+			Assert.That(map.NarrowNavalPassageRegions, Is.EquivalentTo([0, 1]));
+			Assert.That(map.IslandRegions, Is.EquivalentTo([2, 3]));
 			Assert.That(map.RiverCells, Does.Contain(new CPos(4, 4)));
 			Assert.That(map.BridgeCells, Is.Empty);
 			Assert.That(map.DefensibleRegions(), Is.EqualTo(new[] { 1, 2 }));
@@ -206,7 +206,7 @@ namespace OpenRA.Test
 		{
 			var regions = TwoByTwoRegions();
 			var passable = CoalitionMapAnalysis.ComputePassability(10, 10, (x, y) => true);
-			var bridges = new HashSet<CPos> { new CPos(5, 2) }; // on the region 0-1 border
+			var bridges = new HashSet<CPos> { new(5, 2) }; // on the region 0-1 border
 
 			var connections = CoalitionMapAnalysis.ComputeBridgeConnections(regions, bridges, passable, 10, 10);
 
@@ -219,12 +219,12 @@ namespace OpenRA.Test
 			int[] buildable = null)
 		{
 			var regions = TwoByTwoRegions();
-			chokepoints ??= regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			chokepoints ??= regions.Select(_ => System.Array.Empty<int>().ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
 			var allComponents = new[] { components, components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count, count }, new HashSet<CPos>(), 10, 10,
+			return new CoalitionMapAnalysis(regions, [adjacency, adjacency, adjacency, adjacency],
+				[chokepoints, chokepoints, chokepoints, chokepoints],
+				allComponents, [count, count, count, count], [], 10, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length],
 				buildable ?? new int[regions.Length]);
 		}
@@ -244,14 +244,14 @@ namespace OpenRA.Test
 			Link(1, 3);
 			var chokepoints = new[]
 			{
-				new int[0].ToFrozenSet(),
+				System.Array.Empty<int>().ToFrozenSet(),
 				new[] { 2 }.ToFrozenSet(),
-				new int[0].ToFrozenSet(),
-				new int[0].ToFrozenSet()
+				System.Array.Empty<int>().ToFrozenSet(),
+				System.Array.Empty<int>().ToFrozenSet()
 			};
 			var map = MapWith(adjacency, chokepoints);
 
-			var (regions, features) = CoalitionMapAnalysis.DescribeCorridor(map, new[] { 0, 1, 2 }, MovementClass.Ground);
+			var (regions, features) = CoalitionMapAnalysis.DescribeCorridor(map, [0, 1, 2], MovementClass.Ground);
 
 			Assert.That(regions, Is.EqualTo(new[] { 0, 1, 2 }));
 			Assert.That(features, Is.EqualTo(new[] { "open:0-1", "chokepoint:1-2" }));
@@ -270,7 +270,7 @@ namespace OpenRA.Test
 			Link(0, 1);
 			Link(1, 2);
 			Link(1, 3);
-			var map = MapWith(adjacency, buildable: new[] { 25, 0, 25, 25 });
+			var map = MapWith(adjacency, buildable: [25, 0, 25, 25]);
 
 			var value = map.InsertionValue(homeRegion: 0, enemyRegion: 3);
 

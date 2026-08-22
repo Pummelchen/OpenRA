@@ -42,8 +42,8 @@ namespace OpenRA.Test
 		{
 			var regions = new[]
 			{
-				new CoalitionRegion(0, new OpenRA.Primitives.Rectangle(0, 0, 5, 5)),
-				new CoalitionRegion(1, new OpenRA.Primitives.Rectangle(5, 0, 5, 5))
+				new CoalitionRegion(0, new Primitives.Rectangle(0, 0, 5, 5)),
+				new CoalitionRegion(1, new Primitives.Rectangle(5, 0, 5, 5))
 			};
 			regions[1].Threats[(int)CoalitionCapability.AntiAir] = 0.7f;
 

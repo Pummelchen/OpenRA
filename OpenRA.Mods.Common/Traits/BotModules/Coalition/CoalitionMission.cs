@@ -501,21 +501,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 								DeceptionSuccesses++;
 								DeceptionEnemiesDrawn += engaged;
 								CoalitionTelemetry.Log(blackboard.World,
-									$"{mission.Type} {mission.Id} effective: drew {engaged} enemy units; DECEPTION_EFFECTIVENESS={engaged * 100f / System.Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
+									$"{mission.Type} {mission.Id} effective: drew {engaged} enemy units; DECEPTION_EFFECTIVENESS={engaged * 100f / Math.Max(1, mission.FriendlyValueCommitted):0.0}%");
 								mission.Status = MissionStatus.Succeeded;
 								continue;
 							}
 						}
 
-						// Abort only when the coalition is hopelessly outnumbered. The old 1.8x threshold
-						// fired during ordinary fog-induced strength swings and made the commander drop
-						// every attack, which stalemated symmetric games. A 3x margin means the fight is
-						// genuinely unwinnable; otherwise the attack runs its course and the tactical
-						// brain's retreat logic manages a losing engagement.
-						if (enemyStrength > coalitionStrength * 3.0f)
+						// Fair-fog strength is a lower-bound estimate, so an enemy force 50% larger is
+						// already decisive evidence that the current operation should preserve survivors.
+						if (enemyStrength > coalitionStrength * 1.5f)
 						{
 							BeginWithdrawal(mission, blackboard.Tick, "coalition outmatched");
-							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} withdrawing: {mission.OutcomeReason} (coalition {coalitionStrength:0} vs enemy {enemyStrength:0})");
+							CoalitionTelemetry.Log(blackboard.World,
+								$"Mission {mission.Id} withdrawing: {mission.OutcomeReason} " +
+								$"(coalition {coalitionStrength:0} vs enemy {enemyStrength:0})");
 							continue;
 						}
 
@@ -647,7 +646,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return true;
 
 				case MissionPhase.Withdrawal:
-					return true;
 
 				default:
 					return true;
@@ -699,6 +697,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				sb.Append(",\"strikeKind\":\"")
 					.Append(domainStrike.Type == MissionType.AirStrike ? "air" : "naval").Append('"');
 			}
+
 			if (pincer != null && pincer.Target != null)
 				AppendTarget(sb, "pincer", pincer.Target.Value + new CVec(8, 0));
 			if (supportPower != null && supportPower.Target != null)
@@ -709,6 +708,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				sb.Append(",\"deceptionKind\":\"")
 					.Append(feint.Type.ToString().ToLowerInvariant()).Append('"');
 			}
+
 			if (recon != null && recon.Target != null)
 				AppendTarget(sb, "recon", recon.Target.Value);
 			if (bait != null && bait.Target != null)
@@ -718,6 +718,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				AppendTarget(sb, "counter", defend.Target.Value);
 				sb.Append(",\"defenseKind\":\"").Append(DefenseKind(defend.Type)).Append('"');
 			}
+
 			if (transport != null && transport.Target != null)
 			{
 				AppendTarget(sb, "transport", transport.Target.Value);
@@ -733,7 +734,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			void Assign(string key, CoalitionMission mission)
 			{
 				if (mission != null)
-					assignments[key] = mission.AssignedForces.Distinct().OrderBy(f => f).ToArray();
+					assignments[key] = mission.AssignedForces.Distinct().Order().ToArray();
 			}
 
 			Assign("attack", attack);

@@ -130,7 +130,7 @@ namespace OpenRA.Test
 			var risks = CombatEstimator.MajorRisks(
 				enemyAntiAir: 1f, friendlyAir: 1f, enemyArtillery: 1f, friendlyArtillery: 0f, enemyAir: 0f, friendlyAntiAir: 0f).ToArray();
 
-			Assert.That(risks, Is.EquivalentTo(new[] { "enemy_anti_air", "enemy_artillery", "no_air_cover" }));
+			Assert.That(risks, Is.EquivalentTo(["enemy_anti_air", "enemy_artillery", "no_air_cover"]));
 		}
 
 		[TestCase(TestName = "Capability gaps request anti-air when the enemy fields planes we cannot answer.")]
@@ -139,7 +139,7 @@ namespace OpenRA.Test
 			var gaps = CombatEstimator.CapabilityGaps(
 				enemyAir: 1f, friendlyAntiAir: 0f, enemyArmor: 1f, friendlyArtillery: 0f, enemyAntiAir: 0f, friendlyAir: 0f).ToArray();
 
-			Assert.That(gaps, Is.EquivalentTo(new[] { "anti_air", "anti_armor" }));
+			Assert.That(gaps, Is.EquivalentTo(["anti_air", "anti_armor"]));
 		}
 
 		[TestCase(TestName = "Reinforcement advantage names the side expected to receive help.")]
@@ -159,28 +159,28 @@ namespace OpenRA.Test
 			rifles[(int)UnitClass.Infantry] = 10;
 
 			// Armor dominates rifles.
-			var armorVsRifles = CombatEstimator.Estimate(
+			var (winRatio, _) = CombatEstimator.Estimate(
 				CombatEstimator.MatchupPower(armor, rifles, 1f), CombatEstimator.MatchupPower(rifles, armor, 1f),
 				0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
-			Assert.That(armorVsRifles.WinRatio, Is.GreaterThan(2f));
+			Assert.That(winRatio, Is.GreaterThan(2f));
 
 			// Even rifles against rifles are an even fight.
-			var riflesVsRifles = CombatEstimator.Estimate(
+			var (riflesWinRatio, _) = CombatEstimator.Estimate(
 				CombatEstimator.MatchupPower(rifles, rifles, 1f), CombatEstimator.MatchupPower(rifles, rifles, 1f),
 				0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
-			Assert.That(riflesVsRifles.WinRatio, Is.EqualTo(1f).Within(0.001f));
+			Assert.That(riflesWinRatio, Is.EqualTo(1f).Within(0.001f));
 
 			// Air against no anti-air is strong; air against full anti-air is halved.
 			var air = new int[6];
 			air[(int)UnitClass.Air] = 5;
-			var airVsRifles = CombatEstimator.Estimate(
+			var (airWinRatio, _) = CombatEstimator.Estimate(
 				CombatEstimator.MatchupPower(air, rifles, 1f), CombatEstimator.MatchupPower(rifles, air, 1f),
 				5f * CombatEstimator.ClassWeight(UnitClass.Air), 0f, 0f, 0f, 0f, 0f, 0f, 0f);
-			var airVsCoveredRifles = CombatEstimator.Estimate(
+			var (coveredAirWinRatio, _) = CombatEstimator.Estimate(
 				CombatEstimator.MatchupPower(air, rifles, 1f), CombatEstimator.MatchupPower(rifles, air, 1f),
 				5f * CombatEstimator.ClassWeight(UnitClass.Air), 0f, 0f, 0f, 0f, 1f, 0f, 0f);
 
-			Assert.That(airVsCoveredRifles.WinRatio, Is.LessThan(airVsRifles.WinRatio));
+			Assert.That(coveredAirWinRatio, Is.LessThan(airWinRatio));
 		}
 
 		[TestCase(TestName = "Intel power scales class weight by expected count and confidence.")]

@@ -89,19 +89,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	{
 		/// <summary>Per-capability snake_case keys, matching the threat_field.v1 contract.</summary>
 		public static readonly string[] CapabilityKeys =
-		{
+		[
 			"ground_anti_armor", "ground_anti_infantry", "artillery", "anti_air", "air_to_air",
 			"naval", "submarine", "vision_exposure", "detection", "static_defense",
 			"reinforcement", "support_power_risk", "active_combat", "congestion"
-		};
+		];
 
 		/// <summary>Snake_case keys for the friendly functional capability profile.</summary>
 		public static readonly string[] FriendlyCapabilityKeys =
-		{
+		[
 			"anti_air", "anti_armor", "anti_infantry", "artillery", "recon", "transport",
 			"naval", "air", "detection", "anti_structure", "mobility", "fast_raiding",
 			"air_superiority", "special_operations", "base_defense"
-		};
+		];
 
 		/// <summary>
 		/// Executes one tool call: <c>{"tool": "&lt;name&gt;", "arguments": {...}}</c>. Returns the
@@ -166,7 +166,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						case "find_special_ops_routes":
 							return FindSpecialOpsRoutes(context);
 						case "get_mission_status":
-							return GetMissionStatus(context, args);
+							return GetMissionStatus(context);
 						case "get_force_readiness":
 							return GetForceReadiness(context, args);
 						case "get_transport_status":
@@ -222,7 +222,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// ------------------------------------------------------------------------------------
 		// Tools
 		// ------------------------------------------------------------------------------------
-
 		static string GetGlobalSummary(ToolContext context)
 		{
 			var ratio = context.CoalitionArmyStrength <= 0 ? 0 : context.EnemyArmyStrength / context.CoalitionArmyStrength;
@@ -626,8 +625,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["likely_reactions"] = new JsonArray((opponent.MovesWholeArmyToDefend
 					? new[] { "whole_army_redeploys", "counterattack" }
 					: opponent.RespondsStronglyToRaids
-						? new[] { "local_defense", "raid_response" }
-						: new[] { "hold", "limited_response" })
+						? ["local_defense", "raid_response"]
+						: ["hold", "limited_response"])
 					.Select(r => (JsonNode)r).ToArray())
 			});
 		}
@@ -676,7 +675,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return Ok(new JsonArray(targets));
 		}
 
-		static string GetMissionStatus(ToolContext context, JsonElement args)
+		static string GetMissionStatus(ToolContext context)
 		{
 			var missions = context.Missions.Select(m => new JsonObject
 			{
@@ -747,12 +746,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		static string SetProductionDirective(ToolContext context, JsonElement args)
 		{
 			var units = StringArray(Require(args, "units"), "units");
-			var rejection = CommandValidator.ValidateProduce(units).FirstOrDefault();
+			var rejections = CommandValidator.ValidateProduce(units);
+			var rejection = rejections.Count > 0 ? rejections[0] : default;
 			if (rejection.Reason != null)
 				throw new ArgumentException(rejection.Reason);
 
 			var buildable = context.Facilities.SelectMany(f => f.Buildable).ToHashSet(StringComparer.OrdinalIgnoreCase);
-			var unknown = CommandValidator.ValidateUnitNames(units, buildable, "production_directive").FirstOrDefault();
+			var unknownUnits = CommandValidator.ValidateUnitNames(units, buildable, "production_directive");
+			var unknown = unknownUnits.Count > 0 ? unknownUnits[0] : default;
 			if (unknown.Reason != null)
 				throw new ArgumentException(unknown.Reason);
 
@@ -788,8 +789,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		static string MissionPatch(ToolContext context, string type, int x, int y, int priority)
 		{
-			var rejection = CommandValidator.ValidateMissions([(type, x, y, priority)],
-				context.MapAnalysis.Width, context.MapAnalysis.Height).FirstOrDefault();
+			var rejections = CommandValidator.ValidateMissions([(type, x, y, priority)],
+				context.MapAnalysis.Width, context.MapAnalysis.Height);
+			var rejection = rejections.Count > 0 ? rejections[0] : default;
 			if (rejection.Reason != null)
 				throw new ArgumentException(rejection.Reason);
 
@@ -906,7 +908,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// ------------------------------------------------------------------------------------
 		// Engine helpers
 		// ------------------------------------------------------------------------------------
-
 		static float AgeSeconds(ToolContext context, EnemyIntel intel)
 		{
 			return (context.Tick - intel.LastSeenTick) * context.Timestep / 1000f;
@@ -979,7 +980,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// ------------------------------------------------------------------------------------
 		// Argument validation
 		// ------------------------------------------------------------------------------------
-
 		static JsonElement Require(JsonElement args, string name)
 		{
 			if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var value))

@@ -22,6 +22,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	/// </summary>
 	public static class CommandValidator
 	{
+		/// <summary>Cap on production entries so a malformed reply cannot flood the directive list.</summary>
+		public const int MaxProduceEntries = 64;
+
+		/// <summary>The maximum reserve fraction the commander may request (1/N of the army held
+		/// back). 0 means no override; the brain clamps to this same ceiling.</summary>
+		public const int MaxReserveFraction = 10;
+
 		/// <summary>The mission types the commander may request, in their canonical wire form.</summary>
 		public static readonly IReadOnlySet<string> KnownMissionTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 		{
@@ -92,9 +99,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"attack", "defend", "build", "turtle"
 		};
 
-		/// <summary>Cap on production entries so a malformed reply cannot flood the directive list.</summary>
-		public const int MaxProduceEntries = 64;
-
 		/// <summary>
 		/// Validates a posture hint. A null/empty posture is valid (the deterministic posture applies);
 		/// an unknown value is rejected with a machine-readable reason.
@@ -112,14 +116,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>
 		/// Resolves a posture hint into intent flags for mission creation. A "build" posture collapses
 		/// into an economy stance and suppresses attack/defend intents; otherwise the deterministic
-		/// force-ratio thresholds are combined with explicit attack/defend/turtle hints.
+		/// force-ratio thresholds are combined with explicit attack/defend/turtle hints. Automatic
+		/// attacks require a material advantage because fair-fog enemy strength is a lower-bound estimate.
 		/// </summary>
 		public static (bool Attack, bool Defend, bool Build) ResolveCommanderIntent(string posture, float ratio)
 		{
 			var normalized = posture?.Trim();
 			var build = string.Equals(normalized, "build", StringComparison.OrdinalIgnoreCase);
-			var attack = !build && (ratio < 1.5f || string.Equals(normalized, "attack", StringComparison.OrdinalIgnoreCase));
-			var defend = !build && (ratio > 2.0f || string.Equals(normalized, "defend", StringComparison.OrdinalIgnoreCase)
+			var attack = !build && (ratio <= 0.75f || string.Equals(normalized, "attack", StringComparison.OrdinalIgnoreCase));
+			var defend = !build && (ratio >= 1.25f || string.Equals(normalized, "defend", StringComparison.OrdinalIgnoreCase)
 				|| string.Equals(normalized, "turtle", StringComparison.OrdinalIgnoreCase));
 			return (attack, defend, build);
 		}
@@ -194,9 +199,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				? null
 				: $"REJECTED_INVALID_EXPANSION_PRIORITY: expansion priority {priority} must be -1, 0, or 1";
 		}
-		/// <summary>The maximum reserve fraction the commander may request (1/N of the army held
-		/// back). 0 means no override; the brain clamps to this same ceiling.</summary>
-		public const int MaxReserveFraction = 10;
 
 		/// <summary>
 		/// Validates a reserve-fraction override. 0 is valid (no override); values outside 0..

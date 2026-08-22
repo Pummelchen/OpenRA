@@ -37,7 +37,7 @@ namespace OpenRA.Mods.Common.Traits
 		public readonly int MinProductionCash = 400;
 
 		[Desc("Preferred unit production order. Earlier entries are produced first when buildable.")]
-		public readonly FrozenSet<string> ArmyPriority = [];
+		public readonly string[] ArmyPriority = [];
 
 		[Desc("Units that are prioritized when enemy air units are spotted.")]
 		public readonly FrozenSet<string> AntiAirUnits = [];
@@ -89,7 +89,7 @@ namespace OpenRA.Mods.Common.Traits
 		public readonly bool CoordinatedAttackMixedArms = true;
 
 		[Desc("Cheap infantry types sent to walk alone into unexplored territory (suicide scouts).")]
-		public readonly FrozenSet<string> ScoutUnitTypes = [];
+		public readonly string[] ScoutUnitTypes = [];
 
 		[Desc("How many scouts (total) are kept walking into unexplored territory.")]
 		public readonly int ScoutSquadSize = 25;
@@ -102,6 +102,15 @@ namespace OpenRA.Mods.Common.Traits
 
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
+
+		[Desc("Minimum combat-unit count before production may spend on technology prerequisites.")]
+		public readonly int PrerequisiteArmyThreshold = 10;
+
+		[Desc("Production-request unit types that create strategic expansions.")]
+		public readonly FrozenSet<string> ExpansionUnitTypes = new HashSet<string> { "mcv" }.ToFrozenSet();
+
+		[Desc("Minimum combat-unit count before production may honor an expansion-unit request.")]
+		public readonly int ExpansionArmyThreshold = 100;
 
 		[Desc("Difficulty 0-3 (easy, normal, hard, impossible): scales the coordinated-attack threshold, " +
 			"the reserve, and how aggressively the bot commits. Convenience knob that sets all " +
@@ -200,7 +209,8 @@ namespace OpenRA.Mods.Common.Traits
 		public override object Create(ActorInitializer init) { return new StrategicBrainBotModule(this, init); }
 	}
 
-	public sealed class StrategicBrainBotModule : ConditionalTrait<StrategicBrainBotModuleInfo>, IBotTick, IBotRespondToAttack
+	public sealed class StrategicBrainBotModule : ConditionalTrait<StrategicBrainBotModuleInfo>, IBotTick,
+		IBotRespondToAttack, IBotRequestUnitProduction
 	{
 		enum Posture { BuildArmy, Attack, Defend }
 
@@ -212,44 +222,45 @@ namespace OpenRA.Mods.Common.Traits
 			public bool IsStructure;
 		}
 
-		readonly StrategicBrainBotModuleInfo info;
 		// Enemy memory deliberately contains snapshots, never live actors. A live Actor can reveal
 		// a mobile enemy's current position after it has moved back under fog.
 		readonly Dictionary<uint, Sighting> sightings = [];
 		readonly HashSet<Actor> retreating = [];
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
+		readonly HashSet<Actor> missionScouts = [];
+		readonly HashSet<CPos> attemptedScoutTargets = [];
+		int scoutsDeployed;
+		int missionScoutsDeployed;
 		readonly HashSet<Actor> deceptionForce = [];
+		readonly List<string> requestedProduction = [];
 		readonly HashSet<uint> teamRetreatActorIds = [];
 		bool teamRetreatActive;
+		bool enemyBaseEverLocated;
 
 		// Exposed to the tactical controllers.
-		internal World World => world;
-		internal Player Player => player;
-		internal IBot Bot => bot;
-		internal StrategicBrainBotModuleInfo Info => info;
+		internal World World { get; private set; }
+		internal Player Player { get; private set; }
+		internal IBot Bot { get; private set; }
+		internal new StrategicBrainBotModuleInfo Info { get; }
 		internal int CurrentReserveFraction => reserveFractionOverride > 0
-			? reserveFractionOverride : info.ScaledReserveFraction();
+			? reserveFractionOverride : Info.ScaledReserveFraction();
 
 		/// <summary>Forwards a controller inability to the strategic commander for a debounced review.</summary>
 		internal void RequestStrategicReplan(string reason)
 		{
-			var commander = player?.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commander = Player?.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			commander?.RequestReplan(reason);
 		}
 
 		// Per-domain tactical controllers: each executes its own component of a mission (land/air/
 		// naval waves, transports, special insertions) and claims its own units through the arbiter.
-		GroundController ground;
-		AirController air;
-		NavalController naval;
-		TransportController transport;
-		SpecialOpsController specialOps;
-
-		World world;
-		Player player;
-		IBot bot;
+		readonly GroundController ground;
+		readonly AirController air;
+		readonly NavalController naval;
+		readonly TransportController transport;
+		readonly SpecialOpsController specialOps;
 		ProductionQueue[] queues = [];
 
 		int enemyArmyCount;
@@ -262,6 +273,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		Posture posture = Posture.BuildArmy;
 		int lastAttackTick;
+		int lastWaveTick;
 		int lastDefendTick;
 		CPos? counterPos;
 		int enemyCountAtDefense;
@@ -298,6 +310,7 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? pincerTarget;
 		CPos? feintTarget;
 		CPos? reconTarget;
+		CPos? issuedReconTarget;
 		CPos? baitTarget;
 		CPos? counterTarget;
 		CPos? transportTarget;
@@ -312,14 +325,15 @@ namespace OpenRA.Mods.Common.Traits
 		string[] produceBoost;
 		bool teamRetreat;
 		int feintTick;
+		int lastExpansionGuardTick = int.MinValue;
 
 		static readonly System.Text.Json.JsonSerializerOptions PlanOptions = new() { PropertyNameCaseInsensitive = true };
 
 		public StrategicBrainBotModule(StrategicBrainBotModuleInfo info, ActorInitializer init)
 			: base(info)
 		{
-			this.info = info;
-			world = init.World;
+			Info = info;
+			World = init.World;
 			ground = new GroundController(this);
 			air = new AirController(this);
 			naval = new NavalController(this);
@@ -329,20 +343,31 @@ namespace OpenRA.Mods.Common.Traits
 
 		void IBotRespondToAttack.RespondToAttack(IBot bot, Actor self, AttackInfo e)
 		{
-			if (player == null || e.Attacker == null || e.Attacker.IsDead || !e.Attacker.IsInWorld)
+			if (Player == null || e.Attacker == null || e.Attacker.IsDead || !e.Attacker.IsInWorld)
 				return;
 
-			if (player.RelationshipWith(e.Attacker.Owner) != PlayerRelationship.Enemy)
+			if (Player.RelationshipWith(e.Attacker.Owner) != PlayerRelationship.Enemy)
 				return;
 
 			// An enemy attacked one of our actors: raise the alarm and prepare to defend, and record
 			// how quickly the enemy reacted to our last wave (response-time sample for the model).
-			lastAttackTick = world.WorldTick;
+			lastAttackTick = World.WorldTick;
 			SetPosture(Posture.Defend);
 
-			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commander = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
-			commander?.RecordEnemyResponse(world.WorldTick);
+			commander?.RecordEnemyResponse(World.WorldTick);
+		}
+
+		void IBotRequestUnitProduction.RequestUnitProduction(IBot bot, string requestedActor)
+		{
+			if (!string.IsNullOrWhiteSpace(requestedActor))
+				requestedProduction.Add(requestedActor);
+		}
+
+		int IBotRequestUnitProduction.RequestedProductionCount(IBot bot, string requestedActor)
+		{
+			return requestedProduction.Count(name => name == requestedActor);
 		}
 
 		void IBotTick.BotTick(IBot bot)
@@ -350,43 +375,43 @@ namespace OpenRA.Mods.Common.Traits
 			if (IsTraitDisabled)
 				return;
 
-			this.bot = bot;
-			player = bot.Player;
-			world = player.World;
+			Bot = bot;
+			Player = bot.Player;
+			World = Player.World;
 
-			queues = player.PlayerActor.TraitsImplementing<ProductionQueue>()
+			queues = Player.PlayerActor.TraitsImplementing<ProductionQueue>()
 				.Where(q => q.Enabled)
 				.ToArray();
 
 			// Optional economic bonus: a per-tick cash injection scaled by the difficulty axis.
 			// 0 (the default) is a strictly fair game with no hidden income.
-			var economicBonus = info.ResolvedDifficulty().EconomicBonus;
-			if (economicBonus > 0 && world.WorldTick % 100 == 0)
+			var economicBonus = Info.ResolvedDifficulty().EconomicBonus;
+			if (economicBonus > 0 && World.WorldTick % 100 == 0)
 			{
-				var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
+				var resources = Player.PlayerActor.TraitOrDefault<PlayerResources>();
 				resources?.GiveCash(50 * economicBonus);
 			}
 
-			var tick = world.WorldTick;
+			var tick = World.WorldTick;
 
 			// The order arbiter: each mission claims its units in priority order, so no unit receives
 			// conflicting orders from several missions in the same tick.
 			claimedUnits.Clear();
 
-			if (tick % info.IntelUpdateInterval == 0)
+			if (tick % Info.IntelUpdateInterval == 0)
 				UpdateIntel(tick);
 
-			if (tick % info.BuildPlanInterval == 0)
+			if (tick % Info.BuildPlanInterval == 0)
 				UpdateBuildPlan();
 
 			// Scouts are claimed before tactics so they are never pulled into waves or feints.
-			if (tick % info.ScoutInterval == 0)
+			if (tick % Info.ScoutInterval == 0)
 				UpdateScouting();
 
-			if (tick % info.TacticInterval == 0)
+			if (tick % Info.TacticInterval == 0)
 				UpdateTactics();
 
-			if (tick % info.CoordinationInterval == 0)
+			if (tick % Info.CoordinationInterval == 0)
 				UpdateCoordination();
 		}
 
@@ -397,16 +422,16 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void UpdateIntel(int tick)
 		{
-			var stale = sightings.Where(kv => tick - kv.Value.Tick > info.SightingMemoryTicks).Select(kv => kv.Key).ToArray();
+			var stale = sightings.Where(kv => tick - kv.Value.Tick > Info.SightingMemoryTicks).Select(kv => kv.Key).ToArray();
 			foreach (var key in stale)
 				sightings.Remove(key);
 
-			foreach (var a in world.Actors)
+			foreach (var a in World.Actors)
 			{
-				if (a.IsDead || !a.IsInWorld || a.Owner == player)
+				if (a.IsDead || !a.IsInWorld || a.Owner == Player)
 					continue;
 
-				if (player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
+				if (Player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
 					continue;
 
 				// Player actors have no position and cannot be sighted.
@@ -414,7 +439,7 @@ namespace OpenRA.Mods.Common.Traits
 					continue;
 
 				// Fog-respecting awareness: explored terrain is not current observation.
-				if (!player.Shroud.IsVisible(a.CenterPosition))
+				if (!Player.Shroud.IsVisible(a.CenterPosition))
 					continue;
 
 				sightings[a.ActorID] = new Sighting
@@ -426,18 +451,19 @@ namespace OpenRA.Mods.Common.Traits
 				};
 			}
 
-			bool IsArmy(Sighting s) => !s.IsStructure && !info.ExcludeFromArmyTypes.Contains(s.Type);
+			bool IsArmy(Sighting s) => !s.IsStructure && !Info.ExcludeFromArmyTypes.Contains(s.Type);
 
 			enemyArmyCount = sightings.Values.Count(IsArmy);
-			enemyAirSpotted = sightings.Values.Any(s => info.AirUnitTypes.Contains(s.Type));
-			enemyArmorSpotted = sightings.Values.Any(s => info.ArmorUnitTypes.Contains(s.Type));
-			enemyInfantrySpotted = sightings.Values.Any(s => info.InfantryUnitTypes.Contains(s.Type));
+			enemyAirSpotted = sightings.Values.Any(s => Info.AirUnitTypes.Contains(s.Type));
+			enemyArmorSpotted = sightings.Values.Any(s => Info.ArmorUnitTypes.Contains(s.Type));
+			enemyInfantrySpotted = sightings.Values.Any(s => Info.InfantryUnitTypes.Contains(s.Type));
+			enemyBaseEverLocated |= sightings.Values.Any(s => s.IsStructure);
 
 			var composition = $"armor={enemyArmorSpotted} air={enemyAirSpotted} infantry={enemyInfantrySpotted}";
 			if (composition != lastComposition)
 			{
 				lastComposition = composition;
-				CoalitionTelemetry.Log(world, $"Enemy composition: {composition} (army {enemyArmyCount})");
+				CoalitionTelemetry.Log(World, $"Enemy composition: {composition} (army {enemyArmyCount})");
 			}
 
 			var structureSightings = sightings.Values.Where(s => s.IsStructure).Select(s => s.Position).ToArray();
@@ -456,9 +482,10 @@ namespace OpenRA.Mods.Common.Traits
 			// locally scouted force balance.
 			if (teamStrategy != null || teamRole != null || teamRetreat)
 			{
-				if (teamRetreat || teamRole == "defend" || teamStrategy == "defend" || teamStrategy == "turtle")
+				var teamPosture = ResolveTeamStrategy(teamRetreat, teamRole, teamStrategy);
+				if (teamPosture == "defend")
 					SetPosture(Posture.Defend);
-				else if (teamRole == "main" || teamRole == "escort" || teamStrategy == "attack")
+				else if (teamPosture == "attack")
 					SetPosture(Posture.Attack);
 				else
 					SetPosture(Posture.BuildArmy);
@@ -472,26 +499,37 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
-			var tick = world.WorldTick;
-			if (tick - lastAttackTick < info.AttackPostureTicks / 2)
+			var tick = World.WorldTick;
+			if (tick - lastAttackTick < Info.AttackPostureTicks / 2)
 			{
 				SetPosture(Posture.Defend);
 				return;
 			}
 
-			if (enemyArmyCount > ownArmyCount * info.DefendArmyRatio)
+			if (enemyArmyCount > ownArmyCount * Info.DefendArmyRatio)
 			{
 				SetPosture(Posture.Defend);
 				return;
 			}
 
-			if (ownArmyCount >= info.AttackForceThreshold && enemyBaseCenter != null)
+			if (ownArmyCount >= Info.AttackForceThreshold && enemyBaseCenter != null)
 			{
 				SetPosture(Posture.Attack);
 				return;
 			}
 
 			SetPosture(Posture.BuildArmy);
+		}
+
+		/// <summary>
+		/// Resolves the coalition plan without allowing an operational role to invent an attack.
+		/// Roles specialize force ownership; only the shared strategy authorizes offensive posture.
+		/// </summary>
+		public static string ResolveTeamStrategy(bool retreat, string role, string strategy)
+		{
+			if (retreat || role == "defend" || strategy is "defend" or "turtle")
+				return "defend";
+			return strategy == "attack" ? "attack" : "build";
 		}
 
 		void SetPosture(Posture newPosture)
@@ -565,10 +603,7 @@ namespace OpenRA.Mods.Common.Traits
 			if (plan == null)
 				return;
 
-			bool Assigned(string key)
-			{
-				return CoalitionOrderArbiter.IsAssigned(plan.Assignments, key, player.InternalName);
-			}
+			bool Assigned(string key) => CoalitionOrderArbiter.IsAssigned(plan.Assignments, key, Player.InternalName);
 
 			teamStrategy = Assigned("attack") ? plan.Strategy : Assigned("counter") ? "defend" : "build";
 			teamRetreat = plan.Retreat;
@@ -576,7 +611,10 @@ namespace OpenRA.Mods.Common.Traits
 			attackTarget = Assigned("attack") ? ClampCell(ToCell(plan.Attack)) : null;
 			pincerTarget = Assigned("pincer") ? ClampCell(ToCell(plan.Pincer)) : null;
 			feintTarget = Assigned("feint") ? ClampCell(ToCell(plan.Feint)) : null;
-			reconTarget = Assigned("recon") ? ClampCell(ToCell(plan.Recon)) : null;
+			var nextReconTarget = Assigned("recon") ? ClampCell(ToCell(plan.Recon)) : null;
+			if (nextReconTarget != reconTarget)
+				issuedReconTarget = null;
+			reconTarget = nextReconTarget;
 			baitTarget = Assigned("bait") ? ClampCell(ToCell(plan.Bait)) : null;
 			counterTarget = Assigned("counter") ? ClampCell(ToCell(plan.Counter)) : null;
 			transportTarget = Assigned("transport") ? ClampCell(ToCell(plan.Transport)) : null;
@@ -590,10 +628,10 @@ namespace OpenRA.Mods.Common.Traits
 			expansionGuardTarget = ClampCell(ToCell(plan.ExpansionGuard));
 			acceptableLossFraction = Math.Clamp(plan.AcceptableLoss, 0f, 1f);
 			teamCommitReserve = plan.CommitReserve;
-			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
+			teamRole = plan.Roles != null && plan.Roles.TryGetValue(Player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
 			supportPowerTick = plan.SupportPowerTick;
-			foreach (var expansion in player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>())
+			foreach (var expansion in Player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>())
 				expansion.SetStrategicPriority(teamRole == "expansion" ? 1 : plan.ExpansionPriority);
 			if (plan.Force != null)
 			{
@@ -607,7 +645,7 @@ namespace OpenRA.Mods.Common.Traits
 
 		CPos? ClampCell(CPos? cell)
 		{
-			return cell == null ? null : world.Map.Clamp(cell.Value);
+			return cell == null ? null : World.Map.Clamp(cell.Value);
 		}
 
 		static CPos? ToCell(TeamTarget target)
@@ -622,11 +660,11 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void UpdateBuildPlan()
 		{
-			if (player == null)
+			if (Player == null)
 				return;
 
-			var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
-			if (resources == null || resources.GetCashAndResources() < info.MinProductionCash)
+			var resources = Player.PlayerActor.TraitOrDefault<PlayerResources>();
+			if (resources == null || resources.GetCashAndResources() < Info.MinProductionCash)
 				return;
 
 			// Build the adaptive pick order: team produce boosts and role priorities first, then
@@ -635,25 +673,26 @@ namespace OpenRA.Mods.Common.Traits
 			if (produceBoost != null)
 				pickOrder.AddRange(produceBoost);
 			if (teamRole == "naval" && coalitionHasWater)
-				pickOrder.AddRange(info.NavalPriority);
+				pickOrder.AddRange(Info.NavalPriority);
 			if (enemyAirSpotted)
-				pickOrder.AddRange(info.AntiAirUnits);
+				pickOrder.AddRange(Info.AntiAirUnits);
 			if (enemyArmorSpotted)
-				pickOrder.AddRange(info.AntiArmorUnits);
+				pickOrder.AddRange(Info.AntiArmorUnits);
 			if (enemyInfantrySpotted)
-				pickOrder.AddRange(info.AntiInfantryUnits);
-			pickOrder.AddRange(info.ArmyPriority);
+				pickOrder.AddRange(Info.AntiInfantryUnits);
+			pickOrder.AddRange(Info.ArmyPriority);
 
 			// Log production-priority changes so the build plan is auditable in telemetry.
 			var pickOrderStr = string.Join(",", pickOrder.Take(8));
 			if (pickOrderStr != lastPickOrder)
 			{
 				lastPickOrder = pickOrderStr;
-				CoalitionTelemetry.Log(world, $"Production priorities: {pickOrderStr}");
+				CoalitionTelemetry.Log(World, $"Production priorities: {pickOrderStr}");
 			}
 
-			// Aggressive cancellation: while defending, cancel whatever is in production if it is not
-			// one of the top-priority units, so the counter force comes out fast.
+			// While defending, replace a queued unit only when it no longer appears among the most
+			// urgent counters. Cancellation refunds its cost and prevents a stale long build from
+			// blocking an immediately needed response.
 			if (posture == Posture.Defend)
 			{
 				var priorities = pickOrder.Take(5).ToArray();
@@ -661,7 +700,7 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					var current = q.CurrentItem();
 					if (current != null && !priorities.Contains(current.Item))
-						bot.QueueOrder(Order.CancelProduction(q.Actor, current.Item, 1));
+						Bot.QueueOrder(Order.CancelProduction(q.Actor, current.Item, 1));
 				}
 			}
 
@@ -678,39 +717,80 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					var criticalBuildings = new[] { "weap", "barr", "tent", "proc", "powr", "apwr" };
 					var replacement = ProductionContract.SelectEmergencyReplacement(true, criticalBuildings,
-						building => world.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.Name == building),
+						building => World.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == Player && a.Info.Name == building),
 						building => queues.Any(q => q.AllQueued().Any(i => i.Item == building)),
 						building => buildingQueue.BuildableItems().Any(i => i.Name == building));
 					if (replacement != null)
 					{
-						bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, replacement, 1));
-						CoalitionTelemetry.Log(world, $"Emergency replacement: {replacement} ordered");
+						Bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, replacement, 1));
+						CoalitionTelemetry.Log(World, $"Emergency replacement: {replacement} ordered");
 						return;
 					}
 				}
 			}
 
-			// Produce on every idle queue in parallel: each queue takes the highest-priority unit it can
+			// Honor engine module requests (harvester replacement, MCV expansion) before discretionary
+			// army production. These requests use the same prerequisite/cash-valid production queues and
+			// cannot create units directly.
+			var availableQueues = idleQueues.ToList();
+			foreach (var requested in requestedProduction.ToArray())
+			{
+				// Keep a newly issued request pending until the next bot tick makes the production
+				// order visible. This closes the same-tick request/order race with harvester and MCV
+				// managers and prevents duplicate requests on parallel factories.
+				if (queues.Any(q => q.AllQueued().Any(i => i.Item == requested)))
+				{
+					requestedProduction.Remove(requested);
+					continue;
+				}
+
+				if (!World.Map.Rules.Actors.TryGetValue(requested, out var requestedInfo))
+				{
+					requestedProduction.Remove(requested);
+					continue;
+				}
+
+				var requestedCost = requestedInfo.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
+				if (resources.GetCashAndResources() < requestedCost)
+					continue;
+				if (Info.ExpansionUnitTypes.Contains(requested)
+					&& !MayInvestInPrerequisite(OwnCombatUnits().Count(), Info.ExpansionArmyThreshold))
+					continue;
+
+				var queue = availableQueues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == requested));
+				if (queue == null)
+					continue;
+
+				Bot.QueueOrder(Order.StartProduction(queue.Actor, requested, 1));
+				availableQueues.Remove(queue);
+				CoalitionTelemetry.Log(World, $"Requested production ordered: {requested}");
+			}
+
+			// Produce on every remaining idle queue in parallel: each queue takes the highest-priority unit it can
 			// build, so the air, naval, and land arms all get produced instead of the first pick
 			// monopolizing production.
 			var usedUnits = new HashSet<string>();
-			foreach (var queue in idleQueues)
+			foreach (var queue in availableQueues)
 			{
 				var unitName = pickOrder.FirstOrDefault(u =>
-					!info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
+					!Info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
 				if (unitName == null)
 					continue;
 
 				usedUnits.Add(unitName);
-				bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
+				Bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
 			}
 
 			// Order missing prerequisite buildings for the desired units that no queue can build yet.
 			// The building is only ordered when this queue can build it right now (its own prerequisites
-			// are met) and it is not already queued; otherwise the next pick gets a chance.
+			// are met) and it is not already queued; otherwise the next pick gets a chance. Establish a
+			// minimum field army first so early tech spending cannot leave the base open to a rush.
+			if (!MayInvestInPrerequisite(OwnCombatUnits().Count(), Info.PrerequisiteArmyThreshold))
+				return;
+
 			foreach (var unitName in pickOrder)
 			{
-				if (info.ExcludeFromArmyTypes.Contains(unitName) || usedUnits.Contains(unitName))
+				if (Info.ExcludeFromArmyTypes.Contains(unitName) || usedUnits.Contains(unitName))
 					continue;
 
 				var missing = MissingPrerequisiteBuilding(unitName);
@@ -722,16 +802,22 @@ namespace OpenRA.Mods.Common.Traits
 				if (buildingQueue == null || alreadyQueued || !buildingQueue.BuildableItems().Any(i => i.Name == missing))
 					continue;
 
-				bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, missing, 1));
-				CoalitionTelemetry.Log(world, $"Prerequisite building ordered: {missing} (for {unitName})");
+				Bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, missing, 1));
+				CoalitionTelemetry.Log(World, $"Prerequisite building ordered: {missing} (for {unitName})");
 				break;
 			}
+		}
+
+		/// <summary>True when the field army is large enough to divert production cash into technology.</summary>
+		public static bool MayInvestInPrerequisite(int combatUnits, int minimumArmy)
+		{
+			return minimumArmy <= 0 || combatUnits >= minimumArmy;
 		}
 
 		/// <summary>Returns the first prerequisite building of a unit that the player has not yet built, or null.</summary>
 		string MissingPrerequisiteBuilding(string unitName)
 		{
-			if (!world.Map.Rules.Actors.TryGetValue(unitName, out var unitInfo))
+			if (!World.Map.Rules.Actors.TryGetValue(unitName, out var unitInfo))
 				return null;
 
 			var buildable = unitInfo.TraitInfoOrDefault<BuildableInfo>();
@@ -743,10 +829,10 @@ namespace OpenRA.Mods.Common.Traits
 				// Prerequisites may carry ! (invert) and ~ (hide) modifiers; faction and checkbox
 				// prerequisites do not resolve to buildings and are skipped.
 				var name = prerequisite.TrimStart('!', '~');
-				if (!world.Map.Rules.Actors.TryGetValue(name, out var buildingInfo) || !buildingInfo.HasTraitInfo<BuildingInfo>())
+				if (!World.Map.Rules.Actors.TryGetValue(name, out var buildingInfo) || !buildingInfo.HasTraitInfo<BuildingInfo>())
 					continue;
 
-				var have = world.Actors.Any(a => !a.IsDead && a.IsInWorld && a.Owner == player && a.Info.Name == name);
+				var have = World.Actors.Any(a => !a.IsDead && a.IsInWorld && a.Owner == Player && a.Info.Name == name);
 				if (!have)
 					return name;
 			}
@@ -767,26 +853,26 @@ namespace OpenRA.Mods.Common.Traits
 
 			var units = OwnCombatUnits().ToList();
 			var retreatCell = RetreatCell(baseCenter.Value);
+			var holdCell = World.Map.CellContaining(MostValuableStructurePosition() ?? baseCenter.Value);
 
 			// Micro-precision scales the retreat threshold: a precise bot pulls units earlier.
 			var retreatThreshold = acceptableLossFraction > 0f
 				? (int)Math.Clamp(50f - acceptableLossFraction * 40f, 10f, 50f)
-				: info.ResolvedDifficulty().RetreatHealthPercent();
+				: Info.ResolvedDifficulty().RetreatHealthPercent();
 
 			foreach (var a in units)
 			{
 				var health = a.TraitOrDefault<IHealth>();
 				var fraction = health == null ? 100 : health.HP * 100 / health.MaxHP;
-
 				if (retreating.Contains(a))
 				{
 					// A retreated unit rejoins the army once it has recovered or reached the base.
 					var nearBase = (a.CenterPosition - baseCenter.Value).LengthSquared <= BaseRadiusSquared(10);
-					if (fraction > info.RegroupHealthPercent || nearBase)
+					if (fraction > Info.RegroupHealthPercent || nearBase)
 						retreating.Remove(a);
 					else
 					{
-						bot.QueueOrder(new Order("Move", a, Target.FromCell(world, retreatCell), false));
+						Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
 						continue;
 					}
 				}
@@ -794,7 +880,7 @@ namespace OpenRA.Mods.Common.Traits
 				if (fraction < retreatThreshold)
 				{
 					retreating.Add(a);
-					bot.QueueOrder(new Order("Move", a, Target.FromCell(world, retreatCell), false));
+					Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
 				}
 			}
 
@@ -805,13 +891,15 @@ namespace OpenRA.Mods.Common.Traits
 			// Strategic reserve: missions commit only the available army (everything minus the held-back
 			// reserve), unless the reserve is committed for a decisive push. Zero scouted enemies means
 			// unknown (fog), not weak - the reserve is only committed against a scouted, outnumbered enemy.
-			reserveCommitted = teamCommitReserve
-				|| (enemyArmyCount > 0 && enemyArmyCount <= OwnCombatUnits().Count() * info.CommitReserveRatio);
+			var mapCells = World.Map.MapSize.Width * World.Map.MapSize.Height;
+			var exploredFraction = mapCells > 0 ? Player.Shroud.RevealedCells * 1f / mapCells : 0f;
+			reserveCommitted = teamCommitReserve || MayCommitObservedAdvantage(enemyBaseEverLocated,
+				exploredFraction, enemyArmyCount, OwnCombatUnits().Count(), Info.CommitReserveRatio);
 			if (reserveCommitted != lastReserveCommitted)
 			{
 				lastReserveCommitted = reserveCommitted;
 				if (reserveCommitted)
-					CoalitionTelemetry.Log(world, $"Reserve committed: coalition outnumbers the scouted enemy ({enemyArmyCount} vs {OwnCombatUnits().Count()})");
+					CoalitionTelemetry.Log(World, $"Reserve committed: coalition outnumbers the scouted enemy ({enemyArmyCount} vs {OwnCombatUnits().Count()})");
 			}
 
 			var availableArmy = AvailableArmy(activeArmy);
@@ -821,53 +909,54 @@ namespace OpenRA.Mods.Common.Traits
 			// nearby threat (so a minor raid does not strip the whole army from its missions), and the
 			// most valuable structure's vicinity is defended first.
 			var defendedPos = MostValuableStructurePosition() ?? baseCenter.Value;
-			var baseThreat = ClosestEnemyTo(defendedPos, BaseRadiusSquared(info.BaseDefenseScanRadius));
+			var baseThreat = ClosestEnemyTo(defendedPos, BaseRadiusSquared(Info.BaseDefenseScanRadius));
 			if (baseThreat != null)
 			{
 				SetPosture(Posture.Defend);
-				lastDefendTick = world.WorldTick;
+				lastDefendTick = World.WorldTick;
+
 				// The counterattack objective is the best observed estimate of where the attackers
 				// originated: a currently/previously observed enemy base center when available, otherwise
 				// the contact cell. No hidden actor position is consulted.
-				counterPos = world.Map.CellContaining(enemyBaseCenter ?? baseThreat.Value);
+				counterPos = World.Map.CellContaining(enemyBaseCenter ?? baseThreat.Value);
 				enemyCountAtDefense = enemyArmyCount;
 
 				var nearby = sightings.Values.Count(s =>
-					(s.Position - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
-				var minCommitment = Math.Min(info.MinWaveSize, activeArmy.Length);
+					(s.Position - defendedPos).LengthSquared <= BaseRadiusSquared(Info.BaseDefenseScanRadius));
+				var minCommitment = Math.Min(Info.MinWaveSize, activeArmy.Length);
 				var commitment = Math.Clamp(nearby * 3, minCommitment, activeArmy.Length);
 				var defenders = Claim(activeArmy).Take(commitment).ToArray();
 				if (defenders.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.Value), false, groupedActors: defenders));
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.Value), false, groupedActors: defenders));
 				return;
 			}
 
 			// Anti-air umbrella: hold AA units over the base against enemy air.
 			if (defenseKind == "aa" && enemyAirSpotted)
 			{
-				var aa = Claim(activeArmy.Where(a => info.AntiAirUnits.Contains(a.Info.Name))).ToArray();
+				var aa = Claim(activeArmy.Where(a => Info.AntiAirUnits.Contains(a.Info.Name))).ToArray();
 				if (aa.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: aa));
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, holdCell), false, groupedActors: aa));
 			}
 
 			// Naval screen: hold ships near the coast against an enemy navy.
 			if (defenseKind == "naval")
 			{
-				var ships = Claim(activeArmy.Where(a => info.NavalPriority.Contains(a.Info.Name))).ToArray();
+				var ships = Claim(activeArmy.Where(a => Info.NavalPriority.Contains(a.Info.Name))).ToArray();
 				if (ships.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: ships));
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, holdCell), false, groupedActors: ships));
 			}
 
 			// Economy escort: keep a small guard on the harvesters and other economy units.
 			if (defenseKind == "escort")
 			{
-				var harvester = world.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == player
-					&& !a.Info.HasTraitInfo<BuildingInfo>() && info.ExcludeFromArmyTypes.Contains(a.Info.Name));
+				var harvester = World.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == Player
+					&& !a.Info.HasTraitInfo<BuildingInfo>() && Info.ExcludeFromArmyTypes.Contains(a.Info.Name));
 				if (harvester != null)
 				{
 					var guard = Claim(activeArmy).Take(3).ToArray();
 					if (guard.Length > 0)
-						bot.QueueOrder(new Order("AttackMove", null, Target.FromActor(harvester), false, groupedActors: guard));
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromActor(harvester), false, groupedActors: guard));
 				}
 			}
 
@@ -876,69 +965,74 @@ namespace OpenRA.Mods.Common.Traits
 			// available army that is staged for missions. Enhanced (req 355): commit the reserve to
 			// intercept when the enemy is attacking, logging the commitment with a reason.
 			var reserve = activeArmy.Where(a => !availableArmy.Contains(a)).ToArray();
-			var raidThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(info.BaseDefenseScanRadius * 3));
-			if (raidThreat != null && reserve.Length >= info.MinWaveSize / 2 && world.WorldTick - lastDefendTick > info.CounterDelayTicks)
+			var raidThreat = ClosestEnemyTo(baseCenter.Value, BaseRadiusSquared(Info.BaseDefenseScanRadius * 3));
+			if (raidThreat != null && reserve.Length >= Info.MinWaveSize / 2 && World.WorldTick - lastDefendTick > Info.CounterDelayTicks)
 			{
 				SetPosture(Posture.Defend);
 				var interceptors = Claim(reserve).ToArray();
 				if (interceptors.Length > 0)
 				{
-					ReserveCounterattack(bot, interceptors, raidThreat.Value);
+					ReserveCounterattack(Bot, interceptors, raidThreat.Value);
+					lastDefendTick = World.WorldTick;
 				}
 			}
 
 			// Reserve exploit breakthrough (req 357): when a Breakthrough mission reaches the
 			// Exploitation phase, commit the reserve to push through the breach.
-			var ccModule = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var ccModule = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			var sharedBB = ccModule?.Blackboard;
 			if (attackTarget != null && ReserveManager.ShouldExploit(attackPhase)
-				&& reserve.Length >= info.MinWaveSize / 2)
+				&& reserve.Length >= Info.MinWaveSize / 2)
 			{
 				var exploitReserve = Claim(reserve).ToArray();
 				if (exploitReserve.Length > 0)
-					ReserveExploitBreakthrough(bot, exploitReserve, attackTarget.Value);
+					ReserveExploitBreakthrough(Bot, exploitReserve, attackTarget.Value);
 			}
 
 			// Reserve protect expansion (req 359): when a new expansion is detected, assign a small
 			// reserve force to guard it.
-			if (expansionGuardTarget != null && reserve.Length >= info.MinWaveSize / 2)
+			if (expansionGuardTarget != null && reserve.Length >= Info.MinWaveSize / 2
+				&& World.WorldTick - lastExpansionGuardTick >= Info.CoordinationInterval)
 			{
-				var expansionGuard = Claim(reserve).Take(Math.Min(reserve.Length, info.MinWaveSize / 2)).ToArray();
+				var expansionGuard = Claim(reserve).Take(Math.Min(reserve.Length, Info.MinWaveSize / 2)).ToArray();
 				if (expansionGuard.Length > 0)
-					ReserveProtectExpansion(bot, expansionGuard, expansionGuardTarget.Value);
+				{
+					ReserveProtectExpansion(Bot, expansionGuard, expansionGuardTarget.Value);
+					lastExpansionGuardTick = World.WorldTick;
+				}
 			}
 
 			// Counterattack-after-defense: shortly after repelling an attack, strike back at the
 			// attacker with the whole army - no coordinated gate, the enemy force is weakened.
 			// Gate on the shared blackboard so only one bot fires the counterattack per window.
 			var enemyNearOrigin = counterPos == null ? 0 : sightings.Values.Count(s => !s.IsStructure
-				&& (s.Position - world.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
+				&& (s.Position - World.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
 			var productionAtOrigin = counterPos != null && sightings.Values.Any(s => s.IsStructure
 				&& s.Type is "weap" or "afld" or "hpad" or "barr" or "tent" or "spen" or "syrd" or "fact"
-				&& (s.Position - world.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
+				&& (s.Position - World.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
 			var counterDecision = CounterattackAssessment.Evaluate(activeArmy.Length, enemyCountAtDefense,
-				enemyArmyCount, enemyNearOrigin, productionAtOrigin, info.MinWaveSize);
-			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && counterDecision.ShouldLaunch
-				&& (sharedBB == null || world.WorldTick - sharedBB.LastCounterattackTick >= info.CounterDelayTicks / 2))
+				enemyArmyCount, enemyNearOrigin, productionAtOrigin, Info.MinWaveSize);
+			if (World.WorldTick - lastDefendTick <= Info.CounterDelayTicks && counterPos != null && counterDecision.ShouldLaunch
+				&& (sharedBB == null || World.WorldTick - sharedBB.LastCounterattackTick >= Info.CounterDelayTicks / 2))
 			{
 				if (sharedBB != null)
-					sharedBB.LastCounterattackTick = world.WorldTick;
+					sharedBB.LastCounterattackTick = World.WorldTick;
 				var counter = Claim(activeArmy).ToArray();
 				if (counter.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterPos.Value), false, groupedActors: counter));
-					CoalitionTelemetry.Log(world,
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, counterPos.Value), false, groupedActors: counter));
+					CoalitionTelemetry.Log(World,
 						$"Counterattack with {counter.Length} units toward estimated origin {counterPos.Value}: {counterDecision.Reason}");
 
 					// Record counterattack and base defense response telemetry (reqs 620, 621).
-					var ccModuleForCounter = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+					var ccModuleForCounter = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 						.FirstOrDefault(m => !m.IsTraitDisabled);
 					if (ccModuleForCounter != null)
 					{
 						var enemyDestroyed = counterDecision.EnemyDepleted ? enemyCountAtDefense - enemyArmyCount : 0;
 						ccModuleForCounter.RecordCounterattack(Math.Max(0, enemyDestroyed));
-						ccModuleForCounter.RecordBaseDefenseResponse(lastDefendTick, world.WorldTick);
+						ccModuleForCounter.RecordBaseDefenseResponse(lastDefendTick, World.WorldTick);
 					}
 				}
 
@@ -947,9 +1041,9 @@ namespace OpenRA.Mods.Common.Traits
 
 			if (!teamRetreat && teamRetreatActive)
 			{
-				var survivors = world.Actors.Count(a => a.IsInWorld && !a.IsDead
+				var survivors = World.Actors.Count(a => a.IsInWorld && !a.IsDead
 					&& teamRetreatActorIds.Contains(a.ActorID));
-				var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				var ccModuleForRetreat = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 					.FirstOrDefault(m => !m.IsTraitDisabled);
 				ccModuleForRetreat?.RecordRetreatOutcome(survivors);
 				teamRetreatActorIds.Clear();
@@ -965,12 +1059,12 @@ namespace OpenRA.Mods.Common.Traits
 					var retreaters = Claim(activeArmy).ToArray();
 					if (retreaters.Length > 0)
 					{
-						bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: retreaters));
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, retreatCell), false, groupedActors: retreaters));
 						teamRetreatActorIds.UnionWith(retreaters.Select(a => a.ActorID));
 						teamRetreatActive = true;
-						var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+						var ccModuleForRetreat = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 							.FirstOrDefault(m => !m.IsTraitDisabled);
-						ccModuleForRetreat?.RecordRetreat(world.WorldTick, retreaters.Length);
+						ccModuleForRetreat?.RecordRetreat(World.WorldTick, retreaters.Length);
 					}
 				}
 
@@ -983,7 +1077,7 @@ namespace OpenRA.Mods.Common.Traits
 				SetPosture(Posture.Defend);
 				var interceptors = Claim(activeArmy).ToArray();
 				if (interceptors.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterTarget.Value), false, groupedActors: interceptors));
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, counterTarget.Value), false, groupedActors: interceptors));
 				return;
 			}
 
@@ -994,19 +1088,31 @@ namespace OpenRA.Mods.Common.Traits
 			// Special operations: insert scarce assets at the designated target, on foot when no
 			// transport is available. The asset is claimed so waves never take it.
 			if (transportTarget != null && transportKind != null && specialOps != null)
-				specialOps.Execute(transportTarget, transportKind, transportAvailable: world.Actors.Any(a =>
-					a.IsInWorld && !a.IsDead && a.Owner == player && info.TransportTypes.Contains(a.Info.Name)));
+				specialOps.Execute(transportTarget, transportKind, transportAvailable: World.Actors.Any(a =>
+					a.IsInWorld && !a.IsDead && a.Owner == Player && Info.TransportTypes.Contains(a.Info.Name)));
 
 			// Reconnaissance: probe the designated position with a small force to confirm what is there.
-			if (reconTarget != null)
+			if (reconTarget != null && issuedReconTarget != reconTarget)
 			{
-				var recon = Claim(availableArmy).Take(3).ToArray();
-				if (recon.Length > 0)
+				missionScouts.RemoveWhere(a => !a.IsInWorld || a.IsDead);
+				var recon = Claim(missionScouts).ToList();
+				var needed = Math.Min(3 - recon.Count, 3 - missionScoutsDeployed);
+				if (needed > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, reconTarget.Value), false, groupedActors: recon));
-					CoalitionTelemetry.Log(world, $"Recon probe of {recon.Length} units to {reconTarget.Value}");
+					var reinforcements = Claim(availableArmy.Where(a => !missionScouts.Contains(a))).Take(needed).ToArray();
+					missionScouts.UnionWith(reinforcements);
+					missionScoutsDeployed += reinforcements.Length;
+					recon.AddRange(reinforcements);
+				}
+
+				if (recon.Count > 0)
+				{
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, reconTarget.Value), false, groupedActors: recon.ToArray()));
+					issuedReconTarget = reconTarget;
+					CoalitionTelemetry.Log(World, $"Recon probe of {recon.Count} units to {reconTarget.Value}");
+
 					// Record recon telemetry (req 616). Useful intel is assumed true when the probe survives.
-					var ccModuleForRecon = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+					var ccModuleForRecon = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 						.FirstOrDefault(m => !m.IsTraitDisabled);
 					ccModuleForRecon?.RecordReconMission(true);
 				}
@@ -1019,8 +1125,8 @@ namespace OpenRA.Mods.Common.Traits
 				var bait = Claim(availableArmy).Take(3).ToArray();
 				if (bait.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, baitTarget.Value), false, groupedActors: bait));
-					CoalitionTelemetry.Log(world, $"Bait placed: {bait.Length} units at {baitTarget.Value}");
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, baitTarget.Value), false, groupedActors: bait));
+					CoalitionTelemetry.Log(World, $"Bait placed: {bait.Length} units at {baitTarget.Value}");
 				}
 			}
 
@@ -1031,24 +1137,24 @@ namespace OpenRA.Mods.Common.Traits
 			var deceptionDamaged = deceptionForce.Any(a =>
 			{
 				var health = a.TraitOrDefault<IHealth>();
-				return health != null && health.HP * 100 / health.MaxHP < info.RegroupHealthPercent;
+				return health != null && health.HP * 100 / health.MaxHP < Info.RegroupHealthPercent;
 			});
 			if (deceptionForce.Count > 0
-				&& (deceptionDamaged || world.WorldTick - feintTick >= info.TacticInterval * 2))
+				&& (deceptionDamaged || World.WorldTick - feintTick >= Info.TacticInterval * 2))
 			{
 				var withdrawing = Claim(deceptionForce).ToArray();
 				if (withdrawing.Length > 0)
-					bot.QueueOrder(new Order("Move", null, Target.FromCell(world, retreatCell), false,
+					Bot.QueueOrder(new Order("Move", null, Target.FromCell(World, retreatCell), false,
 						groupedActors: withdrawing));
 				deceptionForce.Clear();
-				CoalitionTelemetry.Log(world, $"Deception force withdrew early ({(deceptionDamaged ? "loss limit" : "purpose complete")})");
+				CoalitionTelemetry.Log(World, $"Deception force withdrew early ({(deceptionDamaged ? "loss limit" : "purpose complete")})");
 			}
 
-			var feintCommitment = FeintCommitment(availableArmy.Length, info.FeintFraction);
+			var feintCommitment = FeintCommitment(availableArmy.Length, Info.FeintFraction);
 			if (feintTarget != null && deceptionForce.Count == 0 && feintCommitment > 0
-				&& world.WorldTick - feintTick > info.TacticInterval * 5)
+				&& World.WorldTick - feintTick > Info.TacticInterval * 5)
 			{
-				feintTick = world.WorldTick;
+				feintTick = World.WorldTick;
 				var feint = Claim(availableArmy).Take(feintCommitment).ToArray();
 				if (feint.Length > 0)
 				{
@@ -1056,16 +1162,17 @@ namespace OpenRA.Mods.Common.Traits
 					var destination = feintTarget.Value;
 					if (deceptionKind == "fakebuildup")
 					{
-						var baseCell = world.Map.CellContaining(baseCenter.Value);
+						var baseCell = World.Map.CellContaining(baseCenter.Value);
 						destination = baseCell + (destination - baseCell) / 2;
 					}
+
 					var order = deceptionKind == "fakebuildup" ? "Move" : "AttackMove";
-					bot.QueueOrder(new Order(order, null, Target.FromCell(world, destination), false, groupedActors: feint));
-					CoalitionTelemetry.Log(world, $"{deceptionKind ?? "feint"} of {feint.Length} units to {destination}");
+					Bot.QueueOrder(new Order(order, null, Target.FromCell(World, destination), false, groupedActors: feint));
+					CoalitionTelemetry.Log(World, $"{deceptionKind ?? "feint"} of {feint.Length} units to {destination}");
 
 					// Record the feint launch (req 627) so the commander can later measure whether it
 					// opened a launch window for the main wave.
-					var ccModuleForFeint = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+					var ccModuleForFeint = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 						.FirstOrDefault(m => !m.IsTraitDisabled);
 					if (ccModuleForFeint != null)
 					{
@@ -1079,36 +1186,35 @@ namespace OpenRA.Mods.Common.Traits
 			if (strikeTarget != null)
 			{
 				var strikeUnits = Claim(activeArmy.Where(a => strikeKind == "air"
-					? info.AirUnitTypes.Contains(a.Info.Name)
-					: strikeKind == "naval" ? info.NavalPriority.Contains(a.Info.Name)
-					: info.AirUnitTypes.Contains(a.Info.Name) || info.NavalPriority.Contains(a.Info.Name))).ToArray();
+					? Info.AirUnitTypes.Contains(a.Info.Name)
+					: strikeKind == "naval" ? Info.NavalPriority.Contains(a.Info.Name)
+					: Info.AirUnitTypes.Contains(a.Info.Name) || Info.NavalPriority.Contains(a.Info.Name))).ToArray();
 				if (strikeUnits.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, strikeTarget.Value), false, groupedActors: strikeUnits));
-					CoalitionTelemetry.Log(world, $"Strike of {strikeUnits.Length} units to {strikeTarget.Value}");
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, strikeTarget.Value), false, groupedActors: strikeUnits));
+					CoalitionTelemetry.Log(World, $"Strike of {strikeUnits.Length} units to {strikeTarget.Value}");
 				}
 			}
 
 			// Support-power strike: fire the first ready superweapon at the designated target.
-			if (supportPowerTarget != null && world.WorldTick >= supportPowerTick)
+			if (supportPowerTarget != null && World.WorldTick >= supportPowerTick && FireSupportPower(supportPowerTarget.Value))
 			{
-				if (FireSupportPower(supportPowerTarget.Value))
-					supportPowerTarget = null;
+				supportPowerTarget = null;
 			}
 
 			// Cohesion: a scattered army regroups before launching, so it does not attack as isolated
 			// units. The force's cohesion comes from the shared blackboard (spread around its center).
-			var commanderCenter = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commanderCenter = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			var ownCohesion = commanderCenter?.Blackboard?.Forces
-				.FirstOrDefault(f => f.Owner == player.InternalName)?.Cohesion ?? 1f;
-			if (ownCohesion < info.RegroupCohesionThreshold)
+				.FirstOrDefault(f => f.Owner == Player.InternalName)?.Cohesion ?? 1f;
+			if (ownCohesion < Info.RegroupCohesionThreshold)
 			{
 				var regroupers = Claim(activeArmy).ToArray();
 				if (regroupers.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: regroupers));
-					CoalitionTelemetry.Log(world, $"Army regrouping: cohesion {ownCohesion:0.00} below {info.RegroupCohesionThreshold}");
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, holdCell), false, groupedActors: regroupers));
+					CoalitionTelemetry.Log(World, $"Army regrouping: cohesion {ownCohesion:0.00} below {Info.RegroupCohesionThreshold}");
 				}
 
 				return;
@@ -1118,30 +1224,32 @@ namespace OpenRA.Mods.Common.Traits
 			// force. Land is the essential arm; air and naval are layered on when available. Requiring
 			// air in particular blocked attacks on maps where air production is not prioritized, which
 			// left the coalition sitting on defense to be worn down.
-			var coordinatedMinimum = (int)info.ScaleDifficulty(info.CoordinatedAttackMinimum);
+			var coordinatedMinimum = (int)Info.ScaleDifficulty(Info.CoordinatedAttackMinimum);
 			var coordinated = coalitionArmy >= coordinatedMinimum
-				&& (!info.CoordinatedAttackMixedArms || (coalitionLand > 0
+				&& (!Info.CoordinatedAttackMixedArms || (coalitionLand > 0
 					&& (!coalitionHasWater || coalitionNaval > 0)));
 			if (!coordinated)
 			{
-				var gate = $"coalition {coalitionArmy}/{coordinatedMinimum} ready (air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand}, water {(coalitionHasWater ? "yes" : "no")})";
+				var gate = $"coalition {coalitionArmy}/{coordinatedMinimum} ready " +
+					$"(air {coalitionAir}, naval {coalitionNaval}, land {coalitionLand}, " +
+					$"water {(coalitionHasWater ? "yes" : "no")})";
 				if (gate != lastCoordGate)
 				{
 					lastCoordGate = gate;
-					CoalitionTelemetry.Log(world, $"Coordinated force: {gate}");
+					CoalitionTelemetry.Log(World, $"Coordinated force: {gate}");
 				}
 			}
 
 			// Without a decisive force or hostile intent, hold the available army near the base.
 			// The attack tick is the coalition-wide launch window (time-on-target): every allied bot
 			// launches in the same tick range so the waves arrive together.
-			if (posture != Posture.Attack || availableArmy.Length < info.MinWaveSize || !coordinated || world.WorldTick < attackTick)
+			if (posture != Posture.Attack || availableArmy.Length < Info.MinWaveSize || !coordinated || World.WorldTick < attackTick)
 			{
-				if (world.WorldTick - lastAttackTick > info.WithdrawDelayTicks)
+				if (World.WorldTick - lastAttackTick > Info.WithdrawDelayTicks)
 				{
 					var holders = Claim(availableArmy).ToArray();
 					if (holders.Length > 0)
-						bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: holders));
+						Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, holdCell), false, groupedActors: holders));
 				}
 
 				return;
@@ -1151,52 +1259,58 @@ namespace OpenRA.Mods.Common.Traits
 			// priority over the locally scouted enemy, so all allied bots push the same position together.
 			// Each domain controller executes its own component (land/air/naval) so the wave is
 			// coordinated without a single blob order and each domain can later refine its behavior.
-			var target = attackTarget != null ? world.Map.CenterOfCell(attackTarget.Value) : BestAttackTarget();
+			var target = attackTarget != null ? World.Map.CenterOfCell(attackTarget.Value) : BestAttackTarget();
 			if (target == null)
 				return;
+			if (!MayIssueWave(World.WorldTick, lastWaveTick, Info.AttackPostureTicks))
+				return;
 
-			lastAttackTick = world.WorldTick;
+			lastAttackTick = World.WorldTick;
+			lastWaveTick = World.WorldTick;
 			var priorClaims = claimedUnits.Count;
 			if (pincerTarget != null)
 			{
-				var secondAxis = Claim(availableArmy.Where(a => !info.AirUnitTypes.Contains(a.Info.Name)
-					&& !info.NavalPriority.Contains(a.Info.Name)))
+				var secondAxis = Claim(availableArmy.Where(a => !Info.AirUnitTypes.Contains(a.Info.Name)
+					&& !Info.NavalPriority.Contains(a.Info.Name)))
 					.Take(Math.Max(1, availableArmy.Length / 3)).ToArray();
 				if (secondAxis.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, pincerTarget.Value), false,
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, pincerTarget.Value), false,
 						groupedActors: secondAxis));
-					CoalitionTelemetry.Log(world, $"Pincer second axis of {secondAxis.Length} units to {pincerTarget.Value}");
+					CoalitionTelemetry.Log(World, $"Pincer second axis of {secondAxis.Length} units to {pincerTarget.Value}");
 				}
 			}
+
 			ground?.Attack(availableArmy, target.Value);
-			air?.Attack(availableArmy, target.Value);
-			naval?.Attack(availableArmy, target.Value);
+			if (availableArmy.Any(a => Info.AirUnitTypes.Contains(a.Info.Name)))
+				air?.Attack(availableArmy, target.Value);
+			if (coalitionHasWater && availableArmy.Any(a => Info.NavalPriority.Contains(a.Info.Name)))
+				naval?.Attack(availableArmy, target.Value);
 
 			// Mark the wave launch so the opponent model can measure the enemy's response time,
 			// and record how much enemy contact this raid generated (raid-sensitivity signal).
-			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commander = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			if (commander != null)
 			{
-				commander.MarkWaveLaunch(world.WorldTick);
+				commander.MarkWaveLaunch(World.WorldTick);
 
 				// Record whether this engagement is fought with local numerical superiority (req 613),
 				// and whether a recent feint opened this launch window (req 627).
 				var bb = commander.Blackboard;
 				if (bb != null)
 					commander.RecordEngagement(bb.CoalitionArmyStrength >= bb.EnemyArmyStrength * 1.5f);
-				if (commander.LastFeintTick >= 0 && world.WorldTick - commander.LastFeintTick <= info.TacticInterval * 5)
+				if (commander.LastFeintTick >= 0 && World.WorldTick - commander.LastFeintTick <= Info.TacticInterval * 5)
 					commander.RecordFeintOpenedWindow();
 				if (attackTarget != null)
 				{
 					var raidCell = attackTarget.Value;
 					var team = commander.TeamPlayers();
-					var enemiesNearRaid = world.Actors.Count(a =>
-						a.IsInWorld && !a.IsDead && a.Owner != player && a.OccupiesSpace != null
-						&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
+					var enemiesNearRaid = World.Actors.Count(a =>
+						a.IsInWorld && !a.IsDead && a.Owner != Player && a.OccupiesSpace != null
+						&& Player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
 						&& team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition))
-						&& (a.CenterPosition - world.Map.CenterOfCell(raidCell)).LengthSquared <= BaseRadiusSquared(20));
+						&& (a.CenterPosition - World.Map.CenterOfCell(raidCell)).LengthSquared <= BaseRadiusSquared(20));
 					commander.RecordRaidContact(enemiesNearRaid);
 				}
 			}
@@ -1204,16 +1318,16 @@ namespace OpenRA.Mods.Common.Traits
 			// Count only the units the domain controllers claimed for this wave (prior claims from
 			// recon/bait/feint are excluded).
 			var wave = claimedUnits.Skip(priorClaims).ToArray();
-			if (wave.Length >= info.MinWaveSize)
+			if (wave.Length >= Info.MinWaveSize)
 			{
-				var waveAir = wave.Count(a => info.AirUnitTypes.Contains(a.Info.Name));
-				var waveNaval = wave.Count(a => info.NavalPriority.Contains(a.Info.Name));
-				var waveAA = wave.Count(a => info.AntiAirUnits.Contains(a.Info.Name));
+				var waveAir = wave.Count(a => Info.AirUnitTypes.Contains(a.Info.Name));
+				var waveNaval = wave.Count(a => Info.NavalPriority.Contains(a.Info.Name));
+				var waveAA = wave.Count(a => Info.AntiAirUnits.Contains(a.Info.Name));
 				var waveArtillery = wave.Count(a => a.Info.Name is "v2rl" or "arty");
 				var waveLand = wave.Length - waveAir - waveNaval;
-				CoalitionTelemetry.Log(world,
+				CoalitionTelemetry.Log(World,
 					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} " +
-					$"(sync error {world.WorldTick - attackTick}t) " +
+					$"(sync error {World.WorldTick - attackTick}t) " +
 					$"[{waveLand} land ({waveArtillery} artillery, {waveAA} aa), {waveAir} air, {waveNaval} naval]");
 			}
 		}
@@ -1222,6 +1336,12 @@ namespace OpenRA.Mods.Common.Traits
 		public static int FeintCommitment(int availableUnits, int fraction)
 		{
 			return fraction > 0 && availableUnits > fraction ? Math.Max(1, availableUnits / fraction) : 0;
+		}
+
+		/// <summary>Debounces a persistent attack plan while still allowing its first wave immediately.</summary>
+		public static bool MayIssueWave(int currentTick, int lastWaveTick, int interval)
+		{
+			return lastWaveTick <= 0 || currentTick - lastWaveTick >= Math.Max(1, interval);
 		}
 
 		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>
@@ -1234,7 +1354,7 @@ namespace OpenRA.Mods.Common.Traits
 		Actor[] AvailableArmy(IEnumerable<Actor> army)
 		{
 			var list = army as Actor[] ?? army.ToArray();
-			var reserveFraction = reserveFractionOverride > 0 ? reserveFractionOverride : info.ScaledReserveFraction();
+			var reserveFraction = reserveFractionOverride > 0 ? reserveFractionOverride : Info.ScaledReserveFraction();
 			if (reserveCommitted || list.Length < reserveFraction)
 				return list;
 
@@ -1253,10 +1373,10 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void ReserveCounterattack(IBot bot, Actor[] reserve, WPos raidThreat)
 		{
-			if (reserve.Length < info.MinWaveSize / 2)
+			if (reserve.Length < Info.MinWaveSize / 2)
 				return;
 
-			reserveManager.Commit(world.WorldTick, reserve.Length, "counterattack interception", world, info.MinWaveSize);
+			reserveManager.Commit(World.WorldTick, reserve.Length, "counterattack interception", World, Info.MinWaveSize);
 			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat), false, groupedActors: reserve));
 		}
 
@@ -1266,11 +1386,11 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void ReserveReinforceFront(IBot bot, Actor[] reserve, CPos allyUnderAttack)
 		{
-			if (reserve.Length < info.MinWaveSize / 2)
+			if (reserve.Length < Info.MinWaveSize / 2)
 				return;
 
-			reserveManager.Commit(world.WorldTick, reserve.Length, "reinforce failing front", world, info.MinWaveSize);
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, allyUnderAttack), false, groupedActors: reserve));
+			reserveManager.Commit(World.WorldTick, reserve.Length, "reinforce failing front", World, Info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, allyUnderAttack), false, groupedActors: reserve));
 		}
 
 		/// <summary>
@@ -1279,11 +1399,11 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void ReserveExploitBreakthrough(IBot bot, Actor[] reserve, CPos breakthroughTarget)
 		{
-			if (reserve.Length < info.MinWaveSize / 2)
+			if (reserve.Length < Info.MinWaveSize / 2)
 				return;
 
-			reserveManager.Commit(world.WorldTick, reserve.Length, "exploit breakthrough", world, info.MinWaveSize);
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, breakthroughTarget), false, groupedActors: reserve));
+			reserveManager.Commit(World.WorldTick, reserve.Length, "exploit breakthrough", World, Info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, breakthroughTarget), false, groupedActors: reserve));
 		}
 
 		/// <summary>
@@ -1292,40 +1412,43 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void ReserveProtectExpansion(IBot bot, Actor[] reserve, CPos expansionLocation)
 		{
-			var guardForce = reserve.Take(Math.Min(reserve.Length, info.MinWaveSize / 2)).ToArray();
+			var guardForce = reserve.Take(Math.Min(reserve.Length, Info.MinWaveSize / 2)).ToArray();
 			if (guardForce.Length == 0)
 				return;
 
-			reserveManager.Commit(world.WorldTick, guardForce.Length, "protect expansion", world, info.MinWaveSize);
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, expansionLocation), false, groupedActors: guardForce));
+			reserveManager.Commit(World.WorldTick, guardForce.Length, "protect expansion", World, Info.MinWaveSize);
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, expansionLocation), false, groupedActors: guardForce));
 		}
 
 		/// <summary>
-		/// Suicide scouts: cheap infantry walk alone into different unexplored regions far from the
-		/// base. Losing them is cheap, and each one uncovers a corridor of the map for the coalition.
+		/// Recon scouts: a bounded number of cheap infantry walk into different unexplored regions far
+		/// from the base. Completed or dead scouts leave the active set so reconnaissance cannot consume
+		/// an ever-growing share of the field army.
 		/// </summary>
 		void UpdateScouting()
 		{
-			if (info.ScoutUnitTypes.Count == 0)
+			if (Info.ScoutUnitTypes.Length == 0)
 				return;
 
-			var active = scouts.Count(a => a.IsInWorld && !a.IsDead);
-			if (active >= info.ScoutSquadSize)
+			scouts.RemoveWhere(a => !a.IsInWorld || a.IsDead || a.IsIdle);
+			var active = scouts.Count;
+			if (!ShouldScout(enemyBaseEverLocated, active, Info.ScoutSquadSize, scoutsDeployed))
 				return;
 
 			var baseCenter = BaseCenter();
 			if (baseCenter == null)
 				return;
 
-			var toSend = Math.Min(info.ScoutSendPerInterval, info.ScoutSquadSize - active);
+			var toSend = Math.Min(Info.ScoutSendPerInterval, Info.ScoutSquadSize - active);
 			if (toSend <= 0)
 				return;
 
-			var infantry = OwnCombatUnits().Where(a => info.ScoutUnitTypes.Contains(a.Info.Name)).ToArray();
+			var infantry = OwnCombatUnits().Where(a => Info.ScoutUnitTypes.Contains(a.Info.Name)
+				&& !scouts.Contains(a)).ToArray();
 			if (infantry.Length == 0)
 				return;
 
-			var targets = ScoutTargets(baseCenter.Value, toSend);
+			var targets = ScoutTargets(baseCenter.Value, toSend, infantry[0]);
 			for (var i = 0; i < Math.Min(toSend, Math.Min(infantry.Length, targets.Length)); i++)
 			{
 				var scout = infantry[i];
@@ -1333,29 +1456,72 @@ namespace OpenRA.Mods.Common.Traits
 					continue;
 
 				scouts.Add(scout);
-				bot.QueueOrder(new Order("Move", scout, Target.FromCell(world, targets[i]), false));
-				CoalitionTelemetry.Log(world, $"Scout sent to {targets[i]} (shadow far from base)");
+				attemptedScoutTargets.Add(targets[i]);
+				scoutsDeployed++;
+				Bot.QueueOrder(new Order("Move", scout, Target.FromCell(World, targets[i]), false));
+				CoalitionTelemetry.Log(World, $"Scout sent to {targets[i]} (shadow far from base)");
 			}
 		}
 
 		/// <summary>Picks unexplored cells at least ScoutMinDistance from the base, spread across the map.</summary>
-		CPos[] ScoutTargets(WPos baseCenter, int count)
+		CPos[] ScoutTargets(WPos baseCenter, int count, Actor scout)
 		{
-			var targets = new List<CPos>();
-			var minDistanceSq = (long)WDist.FromCells(info.ScoutMinDistance).Length;
+			var mobile = scout.TraitOrDefault<Mobile>();
+			if (mobile == null)
+				return [];
+
+			var minDistanceSq = (long)WDist.FromCells(Info.ScoutMinDistance).Length;
 			minDistanceSq *= minDistanceSq;
-			var stride = Math.Max(4, world.Map.MapSize.Width / 16);
+			var stride = Math.Max(4, World.Map.MapSize.Width / 16);
+			var targets = new List<CPos>();
+			var baseCell = World.Map.CellContaining(baseCenter);
+
+			// Starting locations are public map metadata, not hidden player state. Check the most
+			// distant viable candidates first so bounded reconnaissance reaches likely enemy bases
+			// instead of spending all of its probes on arbitrary map corners. Aim at a fixed approach
+			// cell rather than the spawn center, which is normally occupied by a hidden construction
+			// yard and must not affect fair-fog target selection.
+			var spawnCandidates = World.Map.ActorDefinitions
+				.Where(n => n.Value.Value == "mpspawn")
+				.Select(n => new ActorReference(n.Key, n.Value).GetValue<LocationInit, CPos>())
+				.Select(spawn => SpawnApproachCell(spawn, baseCell, 6))
+				.Where(cpos => !Player.Shroud.IsExplored(cpos)
+					&& !attemptedScoutTargets.Contains(cpos)
+					&& (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared >= minDistanceSq
+					&& mobile.CanEnterCell(cpos, scout, BlockedByActor.Immovable))
+				.OrderByDescending(cpos => (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared)
+				.ThenBy(cpos => cpos.Y)
+				.ThenBy(cpos => cpos.X);
+			foreach (var cpos in spawnCandidates)
+			{
+				if (!mobile.PathFinder.PathExistsForLocomotor(mobile.Locomotor, scout.Location, cpos))
+					continue;
+
+				targets.Add(cpos);
+				if (targets.Count >= count)
+					return targets.ToArray();
+			}
 
 			var index = 0;
-			foreach (var cpos in world.Map.AllCells)
+			var candidates = World.Map.AllCells.Where(cpos =>
+				++index % stride == 0
+					&& !Player.Shroud.IsExplored(cpos)
+					&& !attemptedScoutTargets.Contains(cpos)
+					&& !targets.Contains(cpos)
+					&& (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared >= minDistanceSq
+					&& mobile.CanEnterCell(cpos, scout, BlockedByActor.Immovable))
+
+				// Each deployment maximizes separation from prior targets. This produces distinct
+				// reconnaissance axes instead of feeding every scout into the same far corner.
+				.OrderByDescending(cpos => ScoutSeparationScore(cpos, attemptedScoutTargets,
+					World.Map.CellContaining(baseCenter)))
+				.ThenByDescending(cpos => (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared)
+				.ThenBy(cpos => cpos.Y)
+				.ThenBy(cpos => cpos.X);
+
+			foreach (var cpos in candidates)
 			{
-				if (++index % stride != 0)
-					continue;
-
-				if (player.Shroud.IsExplored(cpos))
-					continue;
-
-				if ((world.Map.CenterOfCell(cpos) - baseCenter).LengthSquared < minDistanceSq)
+				if (!mobile.PathFinder.PathExistsForLocomotor(mobile.Locomotor, scout.Location, cpos))
 					continue;
 
 				targets.Add(cpos);
@@ -1366,6 +1532,37 @@ namespace OpenRA.Mods.Common.Traits
 			return targets.ToArray();
 		}
 
+		/// <summary>Squared distance to the nearest prior target, or the base for the first scout.</summary>
+		public static int ScoutSeparationScore(CPos candidate, IReadOnlyCollection<CPos> attemptedTargets, CPos baseCell)
+		{
+			return attemptedTargets.Count == 0
+				? (candidate - baseCell).LengthSquared
+				: attemptedTargets.Min(target => (candidate - target).LengthSquared);
+		}
+
+		/// <summary>Returns a deterministic home-facing approach cell outside a normally occupied spawn center.</summary>
+		public static CPos SpawnApproachCell(CPos spawn, CPos home, int offset)
+		{
+			var distance = Math.Max(0, offset);
+			return new CPos(spawn.X + Math.Sign(home.X - spawn.X) * distance,
+				spawn.Y + Math.Sign(home.Y - spawn.Y) * distance);
+		}
+
+		/// <summary>Recon is bounded and stops once the coalition has located an enemy base.</summary>
+		public static bool ShouldScout(bool enemyBaseLocated, int activeScouts, int maximumScouts, int scoutsDeployed = 0)
+		{
+			return !enemyBaseLocated && maximumScouts > 0 && activeScouts < maximumScouts
+				&& scoutsDeployed < maximumScouts;
+		}
+
+		/// <summary>Observed force advantage is trusted for an all-in only after broad reconnaissance.</summary>
+		public static bool MayCommitObservedAdvantage(bool enemyBaseLocated, float exploredFraction,
+			int enemyArmy, int ownArmy, float commitRatio)
+		{
+			return enemyBaseLocated && exploredFraction >= 0.7f && enemyArmy > 0
+				&& enemyArmy <= ownArmy * commitRatio;
+		}
+
 		/// <summary>
 		/// Executes a transport mission through the transport controller's state machine. The
 		/// controller claims the payload so the main army does not order it elsewhere during the
@@ -1373,25 +1570,27 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		void ExecuteTransportMission()
 		{
-			var active = transport.Execute(transportTarget, transportKind, world.WorldTick);
+			var active = transport.Execute(transportTarget, transportKind, World.WorldTick);
 			if (!active)
 			{
-				var ccModuleForTransport = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				var ccModuleForTransport = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 					.FirstOrDefault(m => !m.IsTraitDisabled);
 
 				if (transport.Aborted)
 				{
-					CoalitionTelemetry.Log(world, "Transport mission aborted during transit");
+					CoalitionTelemetry.Log(World, "Transport mission aborted during transit");
+
 					// Record transport telemetry (req 617): aborted = not survived.
 					ccModuleForTransport?.RecordTransport(false);
 				}
 				else
 				{
-					var transportActor = world.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == player
-						&& info.TransportTypes.Contains(a.Info.Name));
+					var transportActor = World.Actors.FirstOrDefault(a => a.IsInWorld && !a.IsDead && a.Owner == Player
+						&& Info.TransportTypes.Contains(a.Info.Name));
 					var health = transportActor?.TraitOrDefault<IHealth>();
 					var percent = health == null ? 100 : health.HP * 100 / health.MaxHP;
-					CoalitionTelemetry.Log(world, $"Transport mission completed; transport survived at {percent}% health");
+					CoalitionTelemetry.Log(World, $"Transport mission completed; transport survived at {percent}% health");
+
 					// Record transport telemetry (req 617): survived.
 					ccModuleForTransport?.RecordTransport(true);
 				}
@@ -1408,13 +1607,13 @@ namespace OpenRA.Mods.Common.Traits
 		void UpdateCoordination()
 		{
 			var army = OwnCombatUnits().Where(a => !retreating.Contains(a)).ToArray();
-			if (army.Length < info.MinWaveSize)
+			if (army.Length < Info.MinWaveSize)
 				return;
 
-			var allies = world.Players.Where(p =>
-				p != player &&
+			var allies = World.Players.Where(p =>
+				p != Player &&
 				p.PlayerActor.TraitsImplementing<ModularBot>().Any(b => b.IsEnabled) &&
-				player.RelationshipWith(p) == PlayerRelationship.Ally).ToArray();
+				Player.RelationshipWith(p) == PlayerRelationship.Ally).ToArray();
 
 			if (allies.Length == 0)
 				return;
@@ -1430,27 +1629,27 @@ namespace OpenRA.Mods.Common.Traits
 				if (allyBase == null)
 					continue;
 
-				if (ClosestEnemyTo(allyBase.Value, BaseRadiusSquared(info.AllyReinforceScanRadius)) == null)
+				if (ClosestEnemyTo(allyBase.Value, BaseRadiusSquared(Info.AllyReinforceScanRadius)) == null)
 					continue;
 
 				// Per-ally cooldown: only one bot reinforces a given ally per coordination interval,
 				// so the whole coalition doesn't send duplicate waves to the same defender.
 				var lastSent = lastReinforceTick.GetValueOrDefault(ally.InternalName);
-				if (world.WorldTick - lastSent < info.CoordinationInterval)
+				if (World.WorldTick - lastSent < Info.CoordinationInterval)
 					continue;
 
-				var reinforcements = Claim(available).Take(Math.Max(1, available.Length / info.ReinforcementFraction)).ToArray();
+				var reinforcements = Claim(available).Take(Math.Max(1, available.Length / Info.ReinforcementFraction)).ToArray();
 				if (reinforcements.Length > 0)
 				{
-					lastReinforceTick[ally.InternalName] = world.WorldTick;
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(allyBase.Value), false, groupedActors: reinforcements));
+					lastReinforceTick[ally.InternalName] = World.WorldTick;
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(allyBase.Value), false, groupedActors: reinforcements));
 				}
 
 				// Reserve reinforce failing front (req 356): when an ally is under attack, also send
 				// the reserve (not just the available army) to reinforce their position.
 				var reserveForFront = army.Where(a => !available.Contains(a) && claimedUnits.Add(a)).ToArray();
-				if (reserveForFront.Length >= info.MinWaveSize / 2)
-					ReserveReinforceFront(bot, reserveForFront, world.Map.CellContaining(allyBase.Value));
+				if (reserveForFront.Length >= Info.MinWaveSize / 2)
+					ReserveReinforceFront(Bot, reserveForFront, World.Map.CellContaining(allyBase.Value));
 			}
 		}
 
@@ -1468,14 +1667,14 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		public CPos[] PlanTransportRoute(CPos target)
 		{
-			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commander = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			var blackboard = commander?.Blackboard;
 			var baseCenter = BaseCenter();
 			if (blackboard == null || baseCenter == null)
 				return [];
 
-			var from = blackboard.RegionOf(world.Map.CellContaining(baseCenter.Value)).Index;
+			var from = blackboard.RegionOf(World.Map.CellContaining(baseCenter.Value)).Index;
 			var to = blackboard.RegionOf(target).Index;
 			var route = CoalitionRoutePlanner.FindRoute(blackboard.MapAnalysis, blackboard.ThreatField(),
 				from, to, MovementClass.Ground, RouteWeights.Stealth());
@@ -1491,8 +1690,8 @@ namespace OpenRA.Mods.Common.Traits
 
 		IEnumerable<Actor> OwnStructures()
 		{
-			return world.Actors.Where(a =>
-				a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.HasTraitInfo<BuildingInfo>());
+			return World.Actors.Where(a =>
+				a.IsInWorld && !a.IsDead && a.Owner == Player && a.Info.HasTraitInfo<BuildingInfo>());
 		}
 
 		/// <summary>The position of the most strategically valuable own structure, defended first.</summary>
@@ -1517,9 +1716,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		IEnumerable<Actor> OwnCombatUnits()
 		{
-			return world.Actors.Where(a =>
-				a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null && !a.Info.HasTraitInfo<BuildingInfo>() &&
-				!info.ExcludeFromArmyTypes.Contains(a.Info.Name));
+			return World.Actors.Where(a =>
+				a.IsInWorld && !a.IsDead && a.Owner == Player && a.OccupiesSpace != null && !a.Info.HasTraitInfo<BuildingInfo>() &&
+				!Info.ExcludeFromArmyTypes.Contains(a.Info.Name));
 		}
 
 		/// <summary>Returns the closest remembered enemy position within the given squared radius, or null.</summary>
@@ -1547,11 +1746,11 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		CPos RetreatCell(WPos baseCenter)
 		{
-			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+			var commander = Player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			var blackboard = commander?.Blackboard;
 			if (blackboard == null || blackboard.HomeRegion < 0)
-				return world.Map.CellContaining(baseCenter);
+				return World.Map.CellContaining(baseCenter);
 
 			var home = blackboard.HomeRegion;
 			var best = home;
@@ -1580,14 +1779,14 @@ namespace OpenRA.Mods.Common.Traits
 		/// </summary>
 		bool FireSupportPower(CPos target)
 		{
-			var manager = player.PlayerActor.TraitOrDefault<SupportPowerManager>();
+			var manager = Player.PlayerActor.TraitOrDefault<SupportPowerManager>();
 			if (manager == null)
 				return false;
 
 			// Friendly-fire avoidance: superweapons have a blast radius, so a target crowded with
 			// friendly units is withheld rather than risking them.
-			var targetPos = world.Map.CenterOfCell(target);
-			var friendlyNear = world.Actors.Count(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null
+			var targetPos = World.Map.CenterOfCell(target);
+			var friendlyNear = World.Actors.Count(a => a.IsInWorld && !a.IsDead && a.Owner == Player && a.OccupiesSpace != null
 				&& (a.CenterPosition - targetPos).LengthSquared <= BaseRadiusSquared(SupportPowerFriendlyFireRadius));
 			var targetValue = sightings.Values.Where(s =>
 				(s.Position - targetPos).LengthSquared <= BaseRadiusSquared(8))
@@ -1602,12 +1801,12 @@ namespace OpenRA.Mods.Common.Traits
 				if (!SupportPowerPolicy.ShouldFire(role, targetValue, friendlyNear, shapingWindowOpen: true))
 					continue;
 
-				bot.QueueOrder(new Order(kv.Key, manager.Self, Target.FromCell(world, target), false));
-				CoalitionTelemetry.Log(world, $"Support power {kv.Key} ({role}) fired at {target} during shaping window");
+				Bot.QueueOrder(new Order(kv.Key, manager.Self, Target.FromCell(World, target), false));
+				CoalitionTelemetry.Log(World, $"Support power {kv.Key} ({role}) fired at {target} during shaping window");
 				return true;
 			}
 
-			CoalitionTelemetry.Log(world,
+			CoalitionTelemetry.Log(World,
 				$"Support power withheld at {target}: no ready supported power met value/safety threshold (value {targetValue:0.0}, friendly {friendlyNear})");
 			return false;
 		}

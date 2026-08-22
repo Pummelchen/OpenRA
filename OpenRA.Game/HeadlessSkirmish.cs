@@ -229,7 +229,7 @@ namespace OpenRA
 			foreach (var c in lobby.Clients)
 			{
 				var player = world.Players.FirstOrDefault(p => p.ClientIndex == c.Index);
-				var killCosts = player != null && CaptureKillCosts != null ? CaptureKillCosts(player) : default;
+				var (killsCost, deathsCost) = player != null && CaptureKillCosts != null ? CaptureKillCosts(player) : default;
 				result.Clients.Add(new ClientSummary
 				{
 					Index = c.Index,
@@ -239,8 +239,8 @@ namespace OpenRA
 					IsBot = c.IsBot,
 					Slot = c.Slot,
 					BotEnabled = c.IsBot && player != null && (IsBotEnabled?.Invoke(player) ?? true),
-					KillsCost = killCosts.KillsCost,
-					DeathsCost = killCosts.DeathsCost
+					KillsCost = killsCost,
+					DeathsCost = deathsCost
 				});
 			}
 

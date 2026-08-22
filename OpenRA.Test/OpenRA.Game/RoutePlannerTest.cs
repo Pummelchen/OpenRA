@@ -41,12 +41,12 @@ namespace OpenRA.Test
 			// Build a minimal analysis: chokepoints empty, components derived from the adjacency,
 			// no resources.
 			var regions = GridRegions();
-			var chokepoints = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var chokepoints = regions.Select(_ => System.Array.Empty<int>().ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
 			var allComponents = new[] { components, components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
+			return new CoalitionMapAnalysis(regions, [adjacency, adjacency, adjacency, adjacency],
+				[chokepoints, chokepoints, chokepoints, chokepoints],
+				allComponents, [count, count, count, count], [], 15, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length]);
 		}
 
@@ -72,12 +72,12 @@ namespace OpenRA.Test
 			return adjacency;
 		}
 
-		static float[][] Threats(params (int Region, float[] Values)[] entries)
+		static float[][] Threats(params (int, float[])[] entries)
 		{
 			var threats = Enumerable.Range(0, 6)
 				.Select(_ => new float[System.Enum.GetValues<CoalitionCapability>().Length]).ToArray();
-			foreach (var entry in entries)
-				threats[entry.Region] = entry.Values;
+			foreach (var (region, values) in entries)
+				threats[region] = values;
 			return threats;
 		}
 
@@ -103,7 +103,7 @@ namespace OpenRA.Test
 
 			// Heavy enemy armor concentration on region 1 (the direct top corridor). The bottom
 			// corridor (0-3-4-5) avoids it entirely.
-			var threats = Threats((1, ThreatValues(Combat: 10)));
+			var threats = Threats((1, ThreatValues(combat: 10)));
 			var route = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, MovementClass.Ground, RouteWeights.Stealth());
 
 			Assert.That(route.Found, Is.True);
@@ -124,7 +124,7 @@ namespace OpenRA.Test
 			adjacency[5].Remove(2);
 
 			var map = MapWith(adjacency);
-			var threats = Threats((1, ThreatValues(Combat: 10)));
+			var threats = Threats((1, ThreatValues(combat: 10)));
 
 			var assault = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, MovementClass.Ground, RouteWeights.Assault());
 			var stealth = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, MovementClass.Ground, RouteWeights.Stealth());
@@ -148,7 +148,7 @@ namespace OpenRA.Test
 			adjacency[5].Remove(2);
 
 			var map = MapWith(adjacency);
-			var threats = Threats((1, ThreatValues(AntiAir: 10)));
+			var threats = Threats((1, ThreatValues(antiAir: 10)));
 
 			var light = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, MovementClass.Ground, RouteWeights.Assault());
 			var heavy = CoalitionRoutePlanner.FindRoute(map, threats, 0, 5, MovementClass.Ground, RouteWeights.Stealth());
@@ -186,13 +186,13 @@ namespace OpenRA.Test
 		public void RetreatRouteAndCorridor()
 		{
 			var map = MapWith(Grid());
-			var threats = Threats((1, ThreatValues(Combat: 5)));
+			var threats = Threats((1, ThreatValues(combat: 5)));
 			var retreat = CoalitionRoutePlanner.FindRoute(map, threats, 0, 2, MovementClass.Ground, RouteWeights.Retreat());
 
 			Assert.That(retreat.Found, Is.True);
 			Assert.That(retreat.Regions, Does.Not.Contain(1));
-			var corridor = CoalitionMapAnalysis.DescribeCorridor(map, retreat.Regions, MovementClass.Ground);
-			Assert.That(corridor.Features, Has.Length.EqualTo(retreat.Regions.Length - 1));
+			var (_, features) = CoalitionMapAnalysis.DescribeCorridor(map, retreat.Regions, MovementClass.Ground);
+			Assert.That(features, Has.Length.EqualTo(retreat.Regions.Length - 1));
 		}
 
 		[TestCase(TestName = "Routes are recalculated when dynamic threats change.")]
@@ -200,7 +200,7 @@ namespace OpenRA.Test
 		{
 			var map = MapWith(Grid());
 			var before = CoalitionRoutePlanner.FindRoute(map, Threats(), 0, 2, MovementClass.Ground, RouteWeights.Assault());
-			var after = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(Combat: 20))), 0, 2,
+			var after = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(combat: 20))), 0, 2,
 				MovementClass.Ground, RouteWeights.Assault());
 
 			Assert.That(before.Regions, Does.Contain(1));
@@ -211,7 +211,7 @@ namespace OpenRA.Test
 		public void ReinforcementPotential()
 		{
 			var map = MapWith(Grid());
-			var route = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(Reinforcement: 20))), 0, 2,
+			var route = CoalitionRoutePlanner.FindRoute(map, Threats((1, ThreatValues(reinforcement: 20))), 0, 2,
 				MovementClass.Ground, RouteWeights.Stealth());
 
 			Assert.That(route.Found, Is.True);
@@ -262,7 +262,7 @@ namespace OpenRA.Test
 
 			Assert.That(route.Found, Is.True);
 			Assert.That(route.Cost, Is.EqualTo(0f));
-			Assert.That(route.Regions, Is.EquivalentTo(new[] { 3 }));
+			Assert.That(route.Regions, Is.EquivalentTo([3]));
 		}
 
 		[TestCase(TestName = "Invalid region indices return no route.")]
@@ -274,12 +274,12 @@ namespace OpenRA.Test
 			Assert.That(CoalitionRoutePlanner.FindRoute(map, threats, 0, 99, MovementClass.Ground, RouteWeights.Assault()).Found, Is.False);
 		}
 
-		static float[] ThreatValues(float Combat = 0, float AntiAir = 0, float Reinforcement = 0)
+		static float[] ThreatValues(float combat = 0, float antiAir = 0, float reinforcement = 0)
 		{
 			var values = new float[System.Enum.GetValues<CoalitionCapability>().Length];
-			values[(int)CoalitionCapability.GroundAntiArmor] = Combat;
-			values[(int)CoalitionCapability.AntiAir] = AntiAir;
-			values[(int)CoalitionCapability.Reinforcement] = Reinforcement;
+			values[(int)CoalitionCapability.GroundAntiArmor] = combat;
+			values[(int)CoalitionCapability.AntiAir] = antiAir;
+			values[(int)CoalitionCapability.Reinforcement] = reinforcement;
 			return values;
 		}
 	}

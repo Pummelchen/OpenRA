@@ -26,8 +26,8 @@ namespace OpenRA.Test
 				"legacy plans remain broadcast-compatible");
 			var assignments = new Dictionary<string, string[]>
 			{
-				["attack"] = new[] { "Multi1" },
-				["recon"] = System.Array.Empty<string>()
+				["attack"] = ["Multi1"],
+				["recon"] = []
 			};
 			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "attack", "Multi1"), Is.True);
 			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "attack", "Multi0"), Is.False);
@@ -138,7 +138,7 @@ namespace OpenRA.Test
 			arbiter.Assign("OP-1", "main", ArbiterPriority.ActiveCombat, "Multi0");
 			arbiter.Assign("OP-1", "escort", ArbiterPriority.ActiveCombat, "Multi1");
 
-			Assert.That(arbiter.ForcesOf("OP-1").ToArray(), Is.EquivalentTo(new[] { "Multi0", "Multi1" }));
+			Assert.That(arbiter.ForcesOf("OP-1").ToArray(), Is.EquivalentTo(["Multi0", "Multi1"]));
 		}
 
 		[TestCase(TestName = "A released force no longer appears in ForcesOf.")]

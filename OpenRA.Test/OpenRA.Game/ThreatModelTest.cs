@@ -30,7 +30,7 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Armor, "2tnk",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[] { CoalitionCapability.GroundAntiArmor }));
+			Assert.That(caps, Is.EquivalentTo([CoalitionCapability.GroundAntiArmor]));
 		}
 
 		[TestCase(TestName = "Infantry seeds ground anti-infantry only.")]
@@ -38,7 +38,7 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Infantry, "e1",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[] { CoalitionCapability.GroundAntiInfantry }));
+			Assert.That(caps, Is.EquivalentTo([CoalitionCapability.GroundAntiInfantry]));
 		}
 
 		[TestCase(TestName = "A mig seeds both AA interception and air-to-air threat.")]
@@ -46,10 +46,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Air, "mig",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.AntiAir, CoalitionCapability.AirToAir
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "A submarine seeds naval and submarine threat.")]
@@ -57,10 +57,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Naval, "msub",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.Naval, CoalitionCapability.Submarine
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "Artillery units seed both anti-armor (class) and artillery threat.")]
@@ -68,10 +68,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Armor, "v2rl",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.GroundAntiArmor, CoalitionCapability.Artillery
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "A factory seeds static defense and reinforcement threat.")]
@@ -79,10 +79,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Structure, "weap",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.StaticDefense, CoalitionCapability.Reinforcement
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "A superweapon seeds static defense and support-power risk.")]
@@ -90,10 +90,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Structure, "iron",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.StaticDefense, CoalitionCapability.SupportPowerRisk
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "A dog seeds infantry-class and detection threat.")]
@@ -101,10 +101,10 @@ namespace OpenRA.Test
 		{
 			var caps = CoalitionBlackboard.CapabilitiesFor(UnitClass.Infantry, "dog",
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
-			Assert.That(caps, Is.EquivalentTo(new[]
-			{
+			Assert.That(caps, Is.EquivalentTo(
+			[
 				CoalitionCapability.GroundAntiInfantry, CoalitionCapability.Detection
-			}));
+			]));
 		}
 
 		[TestCase(TestName = "A harvester (support) seeds no combat threat.")]

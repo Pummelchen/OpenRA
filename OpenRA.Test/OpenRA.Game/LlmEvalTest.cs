@@ -25,8 +25,7 @@ namespace OpenRA.Test
 		// (ai/llm_eval.py) uses to score LLM strategic decisions. The parsers are pure
 		// functions of log lines — no World, no simulation — so we feed them synthetic
 		// telemetry lines and assert the resulting scores.
-
-		static readonly Regex TimestampRegex = new Regex(@"^\[(\d+\.\d+)\]\s*(.*)", RegexOptions.Compiled);
+		static readonly Regex TimestampRegex = new(@"^\[(\d+\.\d+)\]\s*(.*)", RegexOptions.Compiled);
 
 		static string StripTimestamp(string line)
 		{
@@ -37,11 +36,10 @@ namespace OpenRA.Test
 		static float? TimestampSeconds(string line)
 		{
 			var m = TimestampRegex.Match(line);
-			return m.Success ? float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : (float?)null;
+			return m.Success ? float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : null;
 		}
 
 		// --- Legality scoring (req 729) ---
-
 		static (float Score, int Rejections, int TotalCommands) ScoreLegality(string[] lines)
 		{
 			var rejections = 0;
@@ -51,11 +49,12 @@ namespace OpenRA.Test
 				var msg = StripTimestamp(raw);
 				if (msg.Contains("REJECTED_"))
 					rejections++;
-				if (msg.StartsWith("LLM intent applied:"))
+				if (msg.StartsWith("LLM intent applied:", StringComparison.Ordinal))
 				{
 					var m = Regex.Match(msg, @"missions=(\d+).*produce=(\d+)");
 					if (m.Success)
-						totalCommands += int.Parse(m.Groups[1].Value) + int.Parse(m.Groups[2].Value);
+						totalCommands += int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)
+							+ int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
 					else
 						totalCommands++;
 				}
@@ -66,7 +65,6 @@ namespace OpenRA.Test
 		}
 
 		// --- Strategic oscillation (req 734) ---
-
 		static (float Score, int Changes, float ChangesPerMinute, bool Oscillating) ScoreOscillation(string[] lines)
 		{
 			var postureChanges = new List<float>();
@@ -121,7 +119,6 @@ namespace OpenRA.Test
 		}
 
 		// --- Idle fraction parsing (req 738) ---
-
 		static (float Score, float? AvgIdle, bool Flagged) ScoreIdleForces(string[] lines)
 		{
 			var idleFractions = new List<float>();
@@ -130,7 +127,7 @@ namespace OpenRA.Test
 				var msg = StripTimestamp(raw);
 				var m = Regex.Match(msg, @"avg idle (\d+)%");
 				if (m.Success)
-					idleFractions.Add(int.Parse(m.Groups[1].Value) / 100f);
+					idleFractions.Add(int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) / 100f);
 			}
 
 			if (idleFractions.Count == 0)
@@ -148,7 +145,6 @@ namespace OpenRA.Test
 		}
 
 		// --- Tests ---
-
 		[TestCase(TestName = "A clean log with no rejections scores 1.0.")]
 		public void LegalityNoRejections()
 		{
@@ -175,6 +171,7 @@ namespace OpenRA.Test
 			};
 
 			var (score, rejections, total) = ScoreLegality(lines);
+
 			// 2 rejections out of 6 total commands => score = 1 - 2/6 = 0.6667
 			Assert.That(rejections, Is.EqualTo(2));
 			Assert.That(total, Is.EqualTo(6));
@@ -184,7 +181,7 @@ namespace OpenRA.Test
 		[TestCase(TestName = "An empty log scores 1.0 (no commands, no rejections).")]
 		public void LegalityEmpty()
 		{
-			var (score, rejections, total) = ScoreLegality(Array.Empty<string>());
+			var (score, rejections, total) = ScoreLegality([]);
 			Assert.That(score, Is.EqualTo(1.0f).Within(0.001f));
 			Assert.That(rejections, Is.EqualTo(0));
 			Assert.That(total, Is.EqualTo(0));
@@ -214,8 +211,7 @@ namespace OpenRA.Test
 				"[120.0] Posture attack; coalition 200 vs enemy 100",
 				"[300.0] Strategic posture: breakthrough",
 			};
-
-			var (score, changes, cpm, oscillating) = ScoreOscillation(lines);
+			var (score, changes, _, oscillating) = ScoreOscillation(lines);
 			Assert.That(changes, Is.EqualTo(3));
 			Assert.That(oscillating, Is.False, "3 changes over 5 minutes is 0.6/min, well under the 3/min threshold.");
 			Assert.That(score, Is.EqualTo(1.0f).Within(0.001f));
@@ -253,8 +249,7 @@ namespace OpenRA.Test
 			{
 				"[0.0] Posture build; coalition 100 vs enemy 100",
 			};
-
-			var (score, changes, cpm, oscillating) = ScoreOscillation(lines);
+			var (score, _, _, oscillating) = ScoreOscillation(lines);
 			Assert.That(score, Is.EqualTo(1.0f).Within(0.001f));
 			Assert.That(oscillating, Is.False);
 		}

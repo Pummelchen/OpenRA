@@ -39,12 +39,12 @@ namespace OpenRA.Test
 		static CoalitionMapAnalysis MapWith(List<int>[] adjacency)
 		{
 			var regions = GridRegions();
-			var chokepoints = regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			var chokepoints = regions.Select(_ => System.Array.Empty<int>().ToFrozenSet()).ToArray();
 			var (components, count) = CoalitionMapAnalysis.ConnectedComponents(adjacency);
 			var allComponents = new[] { components, components, components, components };
-			return new CoalitionMapAnalysis(regions, new[] { adjacency, adjacency, adjacency, adjacency },
-				new[] { chokepoints, chokepoints, chokepoints, chokepoints },
-				allComponents, new[] { count, count, count, count }, new System.Collections.Generic.HashSet<CPos>(), 15, 10,
+			return new CoalitionMapAnalysis(regions, [adjacency, adjacency, adjacency, adjacency],
+				[chokepoints, chokepoints, chokepoints, chokepoints],
+				allComponents, [count, count, count, count], [], 15, 10,
 				new int[regions.Length], new float[regions.Length], new float[regions.Length]);
 		}
 
@@ -396,16 +396,16 @@ namespace OpenRA.Test
 		public void ProductionState()
 		{
 			var context = Context();
-			context.Facilities = new[]
-			{
+			context.Facilities =
+			[
 				new ProductionFacility("Multi0", "Vehicle", "weap", new CPos(4, 4))
 				{
 					Current = "2tnk",
-					Queued = new[] { "3tnk" },
-					Buildable = new[] { "2tnk", "3tnk" },
+					Queued = ["3tnk"],
+					Buildable = ["2tnk", "3tnk"],
 					ProgressPercent = 50
 				}
-			};
+			];
 
 			var result = Result(Call(context, "get_production_state")).GetProperty("result");
 			var facilities = result.EnumerateArray().ToArray();
@@ -436,12 +436,24 @@ namespace OpenRA.Test
 		public void IntelStatusHonesty()
 		{
 			var context = Context();
-			context.EnemyIntel = new[]
-			{
-				new EnemyIntel("3tnk", UnitClass.Armor) { LastSeenCell = new CPos(2, 2), LastSeenTick = 1000, Confidence = 1f, Status = IntelStatus.Observed },
-				new EnemyIntel("3tnk", UnitClass.Armor) { LastSeenCell = new CPos(4, 4), LastSeenTick = 500, Confidence = 0.4f, Status = IntelStatus.LastKnown, PositionErrorCells = 4 },
-				new EnemyIntel(string.Empty, UnitClass.Support) { LastSeenCell = new CPos(12, 8), LastSeenTick = 1000, Confidence = 0.2f, Status = IntelStatus.Suspected, PositionErrorCells = 16 }
-			};
+			context.EnemyIntel =
+			[
+				new EnemyIntel("3tnk", UnitClass.Armor)
+				{
+					LastSeenCell = new CPos(2, 2), LastSeenTick = 1000,
+					Confidence = 1f, Status = IntelStatus.Observed
+				},
+				new EnemyIntel("3tnk", UnitClass.Armor)
+				{
+					LastSeenCell = new CPos(4, 4), LastSeenTick = 500,
+					Confidence = 0.4f, Status = IntelStatus.LastKnown, PositionErrorCells = 4
+				},
+				new EnemyIntel(string.Empty, UnitClass.Support)
+				{
+					LastSeenCell = new CPos(12, 8), LastSeenTick = 1000,
+					Confidence = 0.2f, Status = IntelStatus.Suspected, PositionErrorCells = 16
+				}
+			];
 
 			var result = Result(Call(context, "inspect_enemy_intelligence")).GetProperty("result");
 			var entries = result.EnumerateArray().ToArray();
@@ -463,8 +475,8 @@ namespace OpenRA.Test
 		public void SuspectedIntelNotScored()
 		{
 			var context = Context();
-			context.EnemyIntel = context.EnemyIntel.Concat(new[]
-			{
+			context.EnemyIntel = context.EnemyIntel.Concat(
+			[
 				new EnemyIntel(string.Empty, UnitClass.Structure)
 				{
 					LastSeenCell = new CPos(1, 1),
@@ -473,7 +485,7 @@ namespace OpenRA.Test
 					Status = IntelStatus.Suspected,
 					PositionErrorCells = 16
 				}
-			}).ToArray();
+			]).ToArray();
 
 			// The suspected structure-class entry is a hypothesis, not a confirmed sighting, so it is
 			// excluded from target scoring even though it carries a structure class.
@@ -483,7 +495,8 @@ namespace OpenRA.Test
 
 			// It instead surfaces as an intelligence question the commander can act on.
 			var uncertainties = Result(Call(context, "get_uncertainties")).GetProperty("result").EnumerateArray().ToArray();
-			Assert.That(uncertainties.Any(u => u.GetProperty("question").GetString().StartsWith("suspected_enemy_in_region_")),
+			Assert.That(uncertainties.Any(u => u.GetProperty("question").GetString()
+				.StartsWith("suspected_enemy_in_region_", System.StringComparison.Ordinal)),
 				Is.True, "Suspected presence is reported as a recon question, not a target.");
 		}
 
@@ -513,7 +526,7 @@ namespace OpenRA.Test
 				if (ok)
 					Assert.That(root.TryGetProperty("result", out _), Is.True, $"{tool} success must carry a result.");
 				else
-					Assert.That(root.TryGetProperty("error", out var err) && err.ValueKind == System.Text.Json.JsonValueKind.String,
+					Assert.That(root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.String,
 						Is.True, $"{tool} failure must carry a machine-readable error string.");
 			}
 		}

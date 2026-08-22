@@ -288,12 +288,12 @@ namespace OpenRA.Mods.Common.Traits
 			var sumX = 0L;
 			var sumY = 0L;
 			foreach (var a in enemyActors)
-				{
-					enemyByType.TryGetValue(a.Info.Name, out var n);
-					enemyByType[a.Info.Name] = n + 1;
-					sumX += a.Location.X;
-					sumY += a.Location.Y;
-				}
+			{
+				enemyByType.TryGetValue(a.Info.Name, out var n);
+				enemyByType[a.Info.Name] = n + 1;
+				sumX += a.Location.X;
+				sumY += a.Location.Y;
+			}
 
 			enemyByType = enemyByType.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key)
 				.Take(MaxEnemyTypes).ToDictionary(kv => kv.Key, kv => kv.Value);
@@ -450,7 +450,7 @@ namespace OpenRA.Mods.Common.Traits
 				.Where(i => i.Status == IntelStatus.Suspected || i.Confidence < 0.5f)
 				.Select(i => i.Status == IntelStatus.Suspected
 					? $"suspected_enemy_in_region_{blackboard.RegionOf(i.LastSeenCell).Index}"
-					: $"enemy_{i.Type}_position_conf{System.Math.Round(i.Confidence, 2)}")
+					: $"enemy_{i.Type}_position_conf{Math.Round(i.Confidence, 2)}")
 				.Distinct(), MaxUncertainties);
 		}
 

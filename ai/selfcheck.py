@@ -14,6 +14,7 @@ import os
 import py_compile
 import sys
 import tempfile
+from types import SimpleNamespace
 
 AI_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ("model_server.py", "selfplay.py", "llm_eval.py")
@@ -107,11 +108,43 @@ def repeat_state_regression():
     print("repeat-state evaluation OK")
 
 
+def selfplay_failure_regression():
+    import selfplay
+
+    original_run = selfplay.subprocess.run
+    try:
+        selfplay.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="simulation output\n", stderr="engine crash\n")
+        try:
+            selfplay.run_sim("missing-map", 2, 2, 100, 42)
+        except RuntimeError as error:
+            assert "engine crash" in str(error), "failure must include engine diagnostics"
+        else:
+            raise AssertionError("failed simulations must not be summarized as draws")
+    finally:
+        selfplay.subprocess.run = original_run
+
+    try:
+        selfplay.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=("Finished: 100 ticks, game over, 20 actors\n"
+                    "2  AI enabled  team 2  faction england  Rush AI   kills_cost=500 deaths_cost=100\n"
+                    "Winners: Rush AI\n"),
+            stderr="")
+        result = selfplay.run_sim("missing-map", 2, 2, 100, 43)
+        assert result["winner_teams"] == [2], "winner names must exclude appended statistics"
+    finally:
+        selfplay.subprocess.run = original_run
+
+    print("self-play failure handling OK")
+
+
 def main():
     compile_all()
     rotation_regression()
     commander_contract_regression()
     repeat_state_regression()
+    selfplay_failure_regression()
     print("selfcheck OK")
     return 0
 

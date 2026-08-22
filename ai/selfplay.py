@@ -10,6 +10,7 @@ Usage (run from the repo root):
   ai/selfplay.py --map <uid> --runs 6 --seed-base 100   # seeds 100..105
   ai/selfplay.py --sweep-reserve 4,6,8 --runs 3          # reserve fraction grid
   ai/selfplay.py --maps a,b,c --runs 4                   # cross-map overfitting check
+  ai/selfplay.py --bot-type normal --vs rush --runs 3   # scripted baseline comparison
 """
 
 import argparse
@@ -35,14 +36,20 @@ def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_type
         f'cd "{REPO}/mods/ra" && PATH="$HOME/.dotnet:$PATH" '
         f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed} {intel_spec}'.rstrip(),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=1200).stdout
+    completed = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    out = completed.stdout + completed.stderr
+    if completed.returncode != 0:
+        tail = "\n".join(out.splitlines()[-20:])
+        raise RuntimeError(f"simulation failed for seed {seed} (exit {completed.returncode}):\n{tail}")
 
     result = {"seed": seed, "game_over": False, "winners": [], "events": {}}
     m = re.search(r"Finished: (\d+) ticks, (game over|time limit reached), (\d+) actors", out)
-    if m:
-        result["ticks"] = int(m.group(1))
-        result["game_over"] = m.group(2) == "game over"
-        result["actors"] = int(m.group(3))
+    if not m:
+        tail = "\n".join(out.splitlines()[-20:])
+        raise RuntimeError(f"simulation produced no completion record for seed {seed}:\n{tail}")
+    result["ticks"] = int(m.group(1))
+    result["game_over"] = m.group(2) == "game over"
+    result["actors"] = int(m.group(3))
     w = re.search(r"Winners: (.+)", out)
     if w:
         result["winners"] = [x.strip() for x in w.group(1).split(",")]
@@ -62,7 +69,7 @@ def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_type
     # Map client names to teams so a head-to-head can attribute the winner.
     name_to_team = {}
     for line in out.splitlines():
-        m = re.search(r"team (\d+)\s+faction\s+\S+\s+(.+)$", line)
+        m = re.search(r"team (\d+)\s+faction\s+\S+\s+(.+?)\s+kills_cost=", line)
         if m:
             name_to_team[m.group(2).strip()] = int(m.group(1))
     result["winner_teams"] = sorted({name_to_team[n] for n in result["winners"] if n in name_to_team})
@@ -268,14 +275,14 @@ def run_combat_accuracy(args) -> None:
 
 
 def run_head_to_head(opponents: list, args) -> None:
-    """Coalition "ai" vs each scripted opponent (1v1), reporting the coalition's combat results.
+    """Selected bot vs each scripted opponent (1v1), reporting its combat results.
 
     The coalition bot is always team 1 and the scripted opponent team 2. Reports the decisive
     result distribution (coalition wins / opponent wins / stalemates) and both the fog-limited
     exchange (from the commander's telemetry) and the ground-truth exchange (from PlayerStatistics,
     which counts every kill regardless of fog).
     """
-    print(f"\n=== head-to-head: coalition 'ai' vs scripted bots ({args.runs} runs each) ===")
+    print(f"\n=== head-to-head: '{args.bot_type}' vs scripted bots ({args.runs} runs each) ===")
     for opponent in opponents:
         coalition_wins = 0
         opponent_wins = 0
@@ -285,7 +292,7 @@ def run_head_to_head(opponents: list, args) -> None:
         ground_truths = []
         for i in range(args.runs):
             result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
-                             bot_types=["ai", opponent], intelligence=args.intelligence)
+                             bot_types=[args.bot_type, opponent], intelligence=args.intelligence)
             winner_teams = result.get("winner_teams", [])
             if 1 in winner_teams:
                 coalition_wins += 1
@@ -305,7 +312,7 @@ def run_head_to_head(opponents: list, args) -> None:
         mean_exchange = statistics.mean(exchanges) if exchanges else float("nan")
         mean_ratio = statistics.mean(ratios) if ratios else float("nan")
         mean_truth = statistics.mean(ground_truths) if ground_truths else float("nan")
-        print(f"  ai vs {opponent}: W {coalition_wins}/L {opponent_wins}/D {stalemates}, "
+        print(f"  {args.bot_type} vs {opponent}: W {coalition_wins}/L {opponent_wins}/D {stalemates}, "
               f"fog exchange {mean_exchange:.2f}, ground-truth exchange {mean_truth:.2f}, "
               f"predicted ratio {mean_ratio:.2f}")
 
@@ -331,6 +338,8 @@ def main() -> None:
     parser.add_argument("--combat-accuracy", action="store_true",
                         help="correlate predicted win ratio with actual outcomes across runs")
     parser.add_argument("--vs", help="comma-separated scripted bot types to fight head-to-head, e.g. rush,turtle,naval")
+    parser.add_argument("--bot-type", default="ai",
+                        help="bot type placed on team 1 for head-to-head comparisons (default: ai)")
     parser.add_argument("--intelligence", type=int, default=None,
                         help="override the coalition commander's fog advantage (0 = fair fog, 3 = omniscient)")
     parser.add_argument("--bots", type=int, default=4)

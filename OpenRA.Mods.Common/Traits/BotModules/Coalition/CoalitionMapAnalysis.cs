@@ -28,12 +28,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	}
 
 	/// <summary>
+	/// <para>
 	/// Static terrain analysis of a map: the region adjacency graph per movement class,
 	/// chokepoints (narrow region crossings), connected components (continents/islands and
 	/// sea bodies), bridges, and per-region resource/defensibility scores.
-	///
+	/// </para>
+	/// <para>
 	/// Everything here is terrain-derived and shroud-independent, so the analysis is computed
 	/// once per map and cached; dynamic state (threats, control) lives in the blackboard.
+	/// </para>
 	/// </summary>
 	public sealed class CoalitionMapAnalysis
 	{
@@ -117,7 +120,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			Defensibility = defensibility;
 			BuildableCells = buildableCells ?? new int[regions.Length];
 			ExpansionValue = expansionValue ?? new float[regions.Length];
-			BridgeConnections = bridgeConnections ?? regions.Select(_ => new int[0].ToFrozenSet()).ToArray();
+			BridgeConnections = bridgeConnections ?? regions.Select(_ => Array.Empty<int>().ToFrozenSet()).ToArray();
 			RallyValue = rallyValue ?? new float[regions.Length];
 			ArtilleryValue = artilleryValue ?? new float[regions.Length];
 			IslandRegions = ComputeIslandRegions(components[(int)MovementClass.Ground]).ToFrozenSet();
@@ -277,7 +280,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// ------------------------------------------------------------------------------------
 		// World-backed builder. The result holds no World references and is cached per map.
 		// ------------------------------------------------------------------------------------
-
 		static readonly Dictionary<string, CoalitionMapAnalysis> Cache = [];
 
 		public static CoalitionMapAnalysis ForMap(World world, FrozenSet<string> waterTerrainTypes,
@@ -457,8 +459,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			foreach (var cell in bridgeCells)
 			{
 				var region = RegionOf(regions, cell);
-				foreach (var neighbor in new[] { new CPos(cell.X + 1, cell.Y), new CPos(cell.X - 1, cell.Y),
-					new CPos(cell.X, cell.Y + 1), new CPos(cell.X, cell.Y - 1) })
+				foreach (var neighbor in new[]
+				{
+					new CPos(cell.X + 1, cell.Y), new CPos(cell.X - 1, cell.Y),
+					new CPos(cell.X, cell.Y + 1), new CPos(cell.X, cell.Y - 1)
+				})
 				{
 					if (neighbor.X < 0 || neighbor.Y < 0 || neighbor.X >= width || neighbor.Y >= height)
 						continue;

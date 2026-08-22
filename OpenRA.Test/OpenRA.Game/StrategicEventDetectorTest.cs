@@ -88,13 +88,14 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Operational state changes trigger immediate strategic reviews.")]
 		public void OperationalTriggers()
 		{
-			string Trigger(System.Func<int, int, int, int, int, int, (int Attack, int Failed, int Transport, int Complete, int Route, int Cash)> next)
+			static string Trigger(System.Func<int, int, int, int, int, int,
+				(int, int, int, int, int, int)> next)
 			{
 				var detector = new StrategicEventDetector();
 				detector.Detect(2, 2, 4, 3, true, 0, 0, 0, 0, 10, 4000);
-				var state = next(0, 0, 0, 0, 10, 4000);
-				return detector.Detect(2, 2, 4, 3, true, state.Attack, state.Failed,
-					state.Transport, state.Complete, state.Route, state.Cash);
+				var (attack, failed, transport, complete, route, cash) = next(0, 0, 0, 0, 10, 4000);
+				return detector.Detect(2, 2, 4, 3, true, attack, failed,
+					transport, complete, route, cash);
 			}
 
 			Assert.That(Trigger((_, f, t, c, r, cash) => (1, f, t, c, r, cash)), Is.EqualTo("major allied attack started"));

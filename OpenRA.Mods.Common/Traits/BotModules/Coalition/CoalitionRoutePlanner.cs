@@ -11,7 +11,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -137,8 +136,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			dist[from] = 0;
 
 			var open = new SortedSet<(float Cost, int Region)>(Comparer<(float, int)>.Create((a, b) =>
-				a.Item1 != b.Item1 ? a.Item1.CompareTo(b.Item1) : a.Item2.CompareTo(b.Item2)));
-			open.Add((0f, from));
+				a.Item1 != b.Item1 ? a.Item1.CompareTo(b.Item1) : a.Item2.CompareTo(b.Item2)))
+			{
+				(0f, from)
+			};
 
 			while (open.Count > 0)
 			{
