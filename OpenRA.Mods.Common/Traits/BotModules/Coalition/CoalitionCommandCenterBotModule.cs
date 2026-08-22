@@ -125,6 +125,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			/// <summary>Override the coalition's reserve fraction (1/N of the army held back). 0 = no override.</summary>
 			public int ReserveFraction { get; set; }
 
+			/// <summary>Required rationale when reducing the meaningful reserve below 15%.</summary>
+			public string ReserveJustification { get; set; }
+
 			/// <summary>Production capability directive: the LLM requests a specific capability (e.g. "anti_air", "anti_armor", "naval").</summary>
 			public string RequestCapability { get; set; }
 
@@ -444,6 +447,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Advance the mission lifecycle.
 			missions.Update(blackboard, coalitionArmy, enemyArmy);
 
+			// Select posture before scoring targets or creating missions so every decision in this
+			// review uses one coherent policy rather than the previous review's stance.
+			var enemyStaticDefense = blackboard.EnemyRegion >= 0
+				? blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense]
+				: 0f;
+			var enemyEconomyStrong = blackboard.EnemyIntel.Any(i =>
+				i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
+			var expansionOpportunity = blackboard.MapAnalysis.ExpansionValue.Any(v => v >= 0.6f);
+			var recentlyDefended = strategicPosture == StrategicPosture.Defensive && ratio < 1f;
+			var casualtyFraction = blackboard.Forces.Count == 0 ? 0f : blackboard.Forces.Max(f => f.CasualtyFraction);
+			var newPosture = PostureSelection.Select(ratio, enemyStaticDefense,
+				(int)coalitionArmy, enemyEconomyStrong, expansionOpportunity, recentlyDefended, casualtyFraction);
+			if (newPosture != strategicPosture)
+			{
+				strategicPosture = newPosture;
+				CoalitionTelemetry.Log(world, $"Strategic posture: {strategicPosture.ToString().ToLowerInvariant()}");
+			}
+
+			var posturePolicy = PostureSelection.PolicyFor(strategicPosture);
+			brain?.OverrideReserveFraction(posturePolicy.ReserveFraction);
+
 			// Mission creation driven by the force balance, intel, and LLM intent. Attack unless the
 			// enemy is clearly stronger (an even or slightly unfavorable fight is still worth taking
 			// with better tactics and reserve commitment); defend only when clearly outnumbered.
@@ -476,7 +500,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Additional offensive missions driven by intel: raids on economy/production, air and
 			// support-power strikes, chokepoint seizure, and a flank to divide the defense. A "build"
 			// posture defers offensive raids while the coalition expands its economy.
-			if (!wantBuild)
+			if (!wantBuild && posturePolicy.SecondaryOperationBudget >= 0.1f)
 				CreateOffensiveMissions(ratio);
 
 			if (wantDefend)
@@ -500,7 +524,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// delaying action, air/naval/route recon, and decoy transport. These extend the deterministic
 			// commander with the remaining mission types that were previously enum-only or missing.
 			// A "build" posture defers these proactive strikes while the coalition expands its economy.
-			if (!wantBuild)
+			if (!wantBuild && posturePolicy.SecondaryOperationBudget >= 0.1f)
 				CreateAdvancedMissions(ratio);
 
 			// Deception: once an attack is staged, keep a feint active against another enemy-facing region.
@@ -637,6 +661,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Capability-driven production from observed enemy composition, plus any LLM production
 			// boost (already validated and cleaned by ApplyLlmIntent).
 			var produceJson = MergeProduce(BuildProduceJson(), llmIntent?.Produce);
+			foreach (var capability in posturePolicy.ProductionCapabilities)
+				produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(capability));
 
 			// LLM capability directive: translate the requested capability into the matching
 			// counter-unit list and merge it into the production directive.
@@ -678,9 +704,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var directiveJson = missions.BuildDirectiveJson(blackboard, produceJson, llmIntent?.Retreat == true, rolesJson, forceJson, attackTick);
 
-			// LLM expansion priority override: signal the brain to prioritize or suppress expansion.
-			if (llmIntent?.ExpansionPriority is 1 or -1)
-				directiveJson = directiveJson.Insert(directiveJson.Length - 1, $",\"expansion_priority\":{llmIntent.ExpansionPriority}");
+			// Posture controls expansion timing and combat risk; a validated LLM expansion choice can
+			// override the posture for this review. Reserve commitment is explicit for all-in stances.
+			var expansionPriority = llmIntent?.ExpansionPriority is 1 or -1
+				? llmIntent.ExpansionPriority : posturePolicy.ExpansionPriority;
+			var postureDirective = FormattableString.Invariant(
+				$",\"expansionPriority\":{expansionPriority}," +
+				$"\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00}," +
+				$"\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()}");
+			directiveJson = directiveJson.Insert(directiveJson.Length - 1, postureDirective);
 
 			if (llmIntent != null)
 				CoalitionTelemetry.Log(world,
@@ -696,25 +728,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CoalitionTelemetry.Log(world, $"Posture {strategy}; coalition {blackboard.CoalitionArmyStrength:0} vs enemy {blackboard.EnemyArmyStrength:0}");
 			}
 
-			// Strategic posture: the overall stance derived from the force balance and the enemy's
-			// shape. It selects the target-scoring profile and whether the reserve is committed.
-			var enemyRatio = blackboard.CoalitionArmyStrength <= 0 ? 1f : blackboard.EnemyArmyStrength / blackboard.CoalitionArmyStrength;
-			var enemyStaticDefense = blackboard.EnemyRegion >= 0
-				? blackboard.Regions[blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense]
-				: 0f;
-			var enemyEconomyStrong = blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
-			var ownArmy = (int)blackboard.CoalitionArmyStrength;
-			var newPosture = PostureSelection.Select(enemyRatio, enemyStaticDefense, ownArmy, enemyEconomyStrong);
-			if (newPosture != strategicPosture)
-			{
-				strategicPosture = newPosture;
-				CoalitionTelemetry.Log(world, $"Strategic posture: {strategicPosture.ToString().ToLowerInvariant()}");
-			}
-
-			// Per-front postures (req 341): set local postures for the home and enemy regions based
-			// on the force ratio in those regions specifically, overriding the global posture where
-			// the local situation differs. StrategicPosture.None means "use global".
-			SetLocalPostures(enemyRatio);
+			// Per-front postures (req 341): every region independently overrides the global posture
+			// when its local control, pressure, or expansion opportunity warrants it.
+			SetLocalPostures();
 
 			brain?.ApplyTeamPlan(directiveJson);
 
@@ -722,40 +738,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
-		/// Sets per-region local postures for the home and enemy fronts based on the force ratio
-		/// in each region specifically. A home region under heavy pressure gets a Defensive local
-		/// posture; an enemy region where we outnumber the local defence gets a Breakthrough local
-		/// posture. Regions with no overriding local condition keep LocalPosture = None (use global).
+		/// Sets per-region local postures from each theater's own control, pressure, and expansion
+		/// value. Regions with no overriding local condition keep LocalPosture = None (use global).
 		/// </summary>
-		void SetLocalPostures(float globalEnemyRatio)
+		void SetLocalPostures()
 		{
-			// Home front: when the enemy is pressing our base region, defend locally even if the
-			// global posture is offensive.
-			if (blackboard.HomeRegion >= 0)
+			for (var i = 0; i < blackboard.Regions.Length; i++)
 			{
-				var home = blackboard.Regions[blackboard.HomeRegion];
-				var homePressure = home.EnemyPressure;
-				var homePosture = homePressure > 0.5f ? StrategicPosture.Defensive : StrategicPosture.None;
-				if (home.LocalPosture != homePosture)
+				var region = blackboard.Regions[i];
+				var localPosture = PostureSelection.SelectLocal(region.FriendlyControl, region.EnemyPressure,
+					blackboard.MapAnalysis.ExpansionValue[i]);
+				if (region.LocalPosture != localPosture)
 				{
-					home.LocalPosture = homePosture;
-					if (homePosture != StrategicPosture.None)
-						CoalitionTelemetry.Log(world, $"Local posture {homePosture.ToString().ToLowerInvariant()} for home region {home.Index} (pressure {homePressure:0.00})");
-				}
-			}
-
-			// Enemy front: when we have a decisive local advantage at the enemy region, push for a
-			// breakthrough there even if the global posture is more conservative.
-			if (blackboard.EnemyRegion >= 0)
-			{
-				var enemy = blackboard.Regions[blackboard.EnemyRegion];
-				var localRatio = globalEnemyRatio;
-				var enemyPosture = localRatio <= 0.4f ? StrategicPosture.Breakthrough : StrategicPosture.None;
-				if (enemy.LocalPosture != enemyPosture)
-				{
-					enemy.LocalPosture = enemyPosture;
-					if (enemyPosture != StrategicPosture.None)
-						CoalitionTelemetry.Log(world, $"Local posture {enemyPosture.ToString().ToLowerInvariant()} for enemy region {enemy.Index} (ratio {localRatio:0.00})");
+					region.LocalPosture = localPosture;
+					if (localPosture != StrategicPosture.None)
+						CoalitionTelemetry.Log(world,
+							$"Local posture {localPosture.ToString().ToLowerInvariant()} for region {region.Index} " +
+							$"(control {region.FriendlyControl:0.00}, pressure {region.EnemyPressure:0.00})");
 				}
 			}
 		}
@@ -2148,10 +2147,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				}
 
 				var reserveRejection = CommandValidator.ValidateReserveFraction(intent.ReserveFraction);
+				reserveRejection ??= CommandValidator.ValidateReserveJustification(
+					intent.ReserveFraction, intent.ReserveJustification);
 				if (reserveRejection != null)
 				{
 					CoalitionTelemetry.Log(world, $"Command validator: {reserveRejection}");
 					intent.ReserveFraction = 0;
+					intent.ReserveJustification = null;
 				}
 
 				// Production-directive unit names are checked against the local buildable-item set so an

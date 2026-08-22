@@ -264,7 +264,7 @@ The commander is offered tools; it must use them instead of estimating mechanics
 | `set_expansion_priority` | region, priority | accepted | production director |
 | `create_mission` / `modify_mission` / `cancel_mission` | mission.v1 | mission_id / REJECTED_* | mission manager |
 | `assign_force` / `release_force` | force_id, mission_id | accepted / REJECTED_CONFLICT | order arbiter |
-| `set_reserve` | fraction | accepted | reserve manager |
+| `set_reserve` | fraction, justification? | accepted / REJECTED_UNJUSTIFIED_RESERVE_COMMITMENT | reserve manager |
 | `request_recon` | region, priority | recon mission created | mission manager |
 | `set_strategic_posture` | posture | accepted | strategic state |
 | `get_mission_status` / `get_force_readiness` / `get_transport_status` | id | status | mission/force/transport |
@@ -276,6 +276,16 @@ implemented and served by `ToolApiBotModule` on `http://127.0.0.1:8766/tools`. T
 `request_recon`, `set_strategic_posture`) are carried by the `command.intent.v1` reply surface (posture,
 missions, production, roles, reserve, retreat) instead of the side-effect-free tool endpoint, so tool calls
 can never issue orders or desync a game.
+
+`fraction` is the denominator of the held reserve (`4` = 25%, `5` = 20%). Values `7`-`10`
+reduce the reserve below roughly 15% and therefore require a concrete `justification` of at least
+20 characters. The validated patch preserves that rationale as `reserve_justification` for the
+game-thread validation pass.
+
+The deterministic commander derives one posture policy per review. The policy jointly controls
+production capabilities, acceptable loss, reserve size/commitment, expansion timing, and the budget
+for secondary operations. Each map region may independently override the global posture from its own
+friendly control, enemy pressure, and expansion value.
 
 **Rule:** the commander may *not* move/attack individual units except through a
 tightly-scoped `emergency_unit_order` tool (survival only).

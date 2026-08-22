@@ -256,8 +256,10 @@ namespace OpenRA.Mods.Common.Traits
 		// the last reinforcement sent to that ally.
 		readonly Dictionary<string, int> lastReinforceTick = [];
 
-		// LLM reserve override: when >0, replaces the difficulty-scaled reserve fraction.
+		// Commander reserve policy: when >0, replaces the difficulty-scaled reserve fraction.
 		int reserveFractionOverride;
+		float acceptableLossFraction;
+		bool teamCommitReserve;
 
 		// Reserve manager: tracks reserve commitments and their reasons for telemetry (reqs 355-360).
 		readonly ReserveManager reserveManager = new();
@@ -497,6 +499,9 @@ namespace OpenRA.Mods.Common.Traits
 			public int AttackTick { get; set; }
 			public string DefenseKind { get; set; }
 			public string DeceptionKind { get; set; }
+			public int ExpansionPriority { get; set; }
+			public float AcceptableLoss { get; set; }
+			public bool CommitReserve { get; set; }
 		}
 
 		sealed class TeamForce
@@ -551,8 +556,12 @@ namespace OpenRA.Mods.Common.Traits
 			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
 			defenseKind = plan.DefenseKind;
 			deceptionKind = plan.DeceptionKind;
+			acceptableLossFraction = Math.Clamp(plan.AcceptableLoss, 0f, 1f);
+			teamCommitReserve = plan.CommitReserve;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
+			foreach (var expansion in player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>())
+				expansion.SetStrategicPriority(plan.ExpansionPriority);
 			if (plan.Force != null)
 			{
 				coalitionArmy = plan.Force.Army;
@@ -728,7 +737,9 @@ namespace OpenRA.Mods.Common.Traits
 			var retreatCell = RetreatCell(baseCenter.Value);
 
 			// Micro-precision scales the retreat threshold: a precise bot pulls units earlier.
-			var retreatThreshold = info.ResolvedDifficulty().RetreatHealthPercent();
+			var retreatThreshold = acceptableLossFraction > 0f
+				? (int)Math.Clamp(50f - acceptableLossFraction * 40f, 10f, 50f)
+				: info.ResolvedDifficulty().RetreatHealthPercent();
 
 			foreach (var a in units)
 			{
@@ -762,7 +773,8 @@ namespace OpenRA.Mods.Common.Traits
 			// Strategic reserve: missions commit only the available army (everything minus the held-back
 			// reserve), unless the reserve is committed for a decisive push. Zero scouted enemies means
 			// unknown (fog), not weak - the reserve is only committed against a scouted, outnumbered enemy.
-			reserveCommitted = enemyArmyCount > 0 && enemyArmyCount <= OwnCombatUnits().Count() * info.CommitReserveRatio;
+			reserveCommitted = teamCommitReserve
+				|| (enemyArmyCount > 0 && enemyArmyCount <= OwnCombatUnits().Count() * info.CommitReserveRatio);
 			if (reserveCommitted != lastReserveCommitted)
 			{
 				lastReserveCommitted = reserveCommitted;

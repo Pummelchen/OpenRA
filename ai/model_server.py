@@ -117,11 +117,13 @@ TOOLS (engine-validated: results come from the engine, never fabricated):
 - get_force_readiness(force) / get_transport_status() / get_route_status(from_region, to_region)
 - set_production_directive(units), set_expansion_priority(priority), request_capability(capability)
 - create_mission(type, x, y, priority?), modify_mission(mission), cancel_mission(mission)
-- assign_force(force, mission), release_force(force), set_reserve(fraction)
+- assign_force(force, mission), release_force(force), set_reserve(fraction, justification?)
 - request_recon(region), set_strategic_posture(posture)
 
 Mutation tools return a validated plan_patch. Merge each accepted plan_patch into your final plan;
 the engine validates the resulting plan again before execution.
+Reducing the reserve below 15% (fraction 7-10) is exceptional and set_reserve requires a concrete
+justification of at least 20 characters; preserve reserve_justification in the final plan patch.
 
 Before estimating mechanics (combat odds, routes, target value, enemy behavior), call the matching
 tool. You may issue several tool calls at once; you then receive the engine's verified results.

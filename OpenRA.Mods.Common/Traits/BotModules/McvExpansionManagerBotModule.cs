@@ -137,6 +137,17 @@ namespace OpenRA.Mods.Common.Traits
 		int attackrespondcooldown = 20;
 
 		int pathDistanceSquareFactor;
+		int strategicPriority;
+
+		/// <summary>
+		/// Applies the coalition posture's expansion timing (-1 suppress, 0 normal, 1 prioritize).
+		/// Existing MCVs still deploy for safety; the priority changes replacement cadence and the
+		/// number of construction yards the production request tries to maintain.
+		/// </summary>
+		internal void SetStrategicPriority(int priority)
+		{
+			strategicPriority = Math.Clamp(priority, -1, 1);
+		}
 
 		public McvExpansionManagerBotModule(Actor self, McvExpansionManagerBotModuleInfo info)
 			: base(info)
@@ -547,7 +558,8 @@ namespace OpenRA.Mods.Common.Traits
 
 			if (--buildMCVInterval <= 0)
 			{
-				buildMCVInterval = Info.BuildMcvInterval;
+				buildMCVInterval = strategicPriority > 0 ? Math.Max(1, Info.BuildMcvInterval / 2)
+					: strategicPriority < 0 ? Info.BuildMcvInterval * 2 : Info.BuildMcvInterval;
 				BuildMCV(bot);
 			}
 
@@ -575,6 +587,10 @@ namespace OpenRA.Mods.Common.Traits
 
 			var mcvShouldHave = playerResources.GetCashAndResources() >= Info.BuildAdditionalMCVCashAmount
 				? Info.MinimumConstructionYardCount + Info.AdditionalConstructionYardCount : Info.MinimumConstructionYardCount;
+			if (strategicPriority > 0)
+				mcvShouldHave++;
+			else if (strategicPriority < 0)
+				mcvShouldHave = Info.MinimumConstructionYardCount;
 
 			// If we only have 1 MCV and no conyard, we should be allowed to build another MCV.
 			// Otherwise, when an mcv is on the move and we should wait.

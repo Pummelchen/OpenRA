@@ -53,6 +53,65 @@ namespace OpenRA.Test
 			Assert.That(PostureSelection.Select(0.1f, 0f, 20, false), Is.EqualTo(StrategicPosture.AllIn));
 		}
 
+		[TestCase(TestName = "A safe high-value opportunity selects expansion.")]
+		public void Expansion()
+		{
+			Assert.That(PostureSelection.Select(0.9f, 0f, 20, false, expansionOpportunity: true),
+				Is.EqualTo(StrategicPosture.Expansion));
+		}
+
+		[TestCase(TestName = "A recovered defensive front counterattacks.")]
+		public void Counterattack()
+		{
+			Assert.That(PostureSelection.Select(0.9f, 0f, 20, false, recentlyDefended: true),
+				Is.EqualTo(StrategicPosture.Counterattack));
+		}
+
+		[TestCase(TestName = "Heavy coalition casualties select recovery.")]
+		public void Recovery()
+		{
+			Assert.That(PostureSelection.Select(0.9f, 0f, 20, false, casualtyFraction: 0.6f),
+				Is.EqualTo(StrategicPosture.Recovery));
+		}
+
+		[TestCase(TestName = "Local theater posture ignores the global force ratio.")]
+		public void LocalPostures()
+		{
+			Assert.That(PostureSelection.SelectLocal(0.2f, 0.8f, 0f), Is.EqualTo(StrategicPosture.Defensive));
+			Assert.That(PostureSelection.SelectLocal(0.8f, 0.2f, 0f), Is.EqualTo(StrategicPosture.Breakthrough));
+			Assert.That(PostureSelection.SelectLocal(0.1f, 0.1f, 0.8f), Is.EqualTo(StrategicPosture.Expansion));
+			Assert.That(PostureSelection.SelectLocal(0.3f, 0.3f, 0.3f), Is.EqualTo(StrategicPosture.None));
+		}
+
+		[TestCase(TestName = "Every strategic posture has a bounded cross-system policy.")]
+		public void EveryPostureHasPolicy()
+		{
+			foreach (var posture in System.Enum.GetValues<StrategicPosture>())
+			{
+				var policy = PostureSelection.PolicyFor(posture);
+				Assert.That(policy, Is.Not.Null, posture.ToString());
+				Assert.That(policy.AcceptableLossFraction, Is.InRange(0f, 1f), posture.ToString());
+				Assert.That(policy.ReserveFraction, Is.InRange(1, 10), posture.ToString());
+				Assert.That(policy.ExpansionPriority, Is.InRange(-1, 1), posture.ToString());
+				Assert.That(policy.SecondaryOperationBudget, Is.InRange(0f, 1f), posture.ToString());
+				Assert.That(policy.RequiredDefensiveFraction, Is.InRange(0f, 1f), posture.ToString());
+			}
+		}
+
+		[TestCase(TestName = "Postures materially change production, risk, reserves, and expansion timing.")]
+		public void PosturePolicyChangesOperationalConstraints()
+		{
+			var expansion = PostureSelection.PolicyFor(StrategicPosture.Expansion);
+			var defensive = PostureSelection.PolicyFor(StrategicPosture.Defensive);
+			var allIn = PostureSelection.PolicyFor(StrategicPosture.AllIn);
+
+			Assert.That(expansion.ProductionCapabilities, Does.Contain("recon"));
+			Assert.That(expansion.ExpansionPriority, Is.EqualTo(1));
+			Assert.That(defensive.AcceptableLossFraction, Is.LessThan(allIn.AcceptableLossFraction));
+			Assert.That(defensive.RequiredDefensiveFraction, Is.GreaterThan(allIn.RequiredDefensiveFraction));
+			Assert.That(allIn.CommitReserve, Is.True);
+		}
+
 		[TestCase(TestName = "Posture selects the target-scoring profile.")]
 		public void TargetWeightsFor()
 		{

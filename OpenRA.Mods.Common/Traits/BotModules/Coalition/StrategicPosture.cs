@@ -10,6 +10,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -40,16 +41,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	public static class PostureSelection
 	{
 		public static StrategicPosture Select(float enemyToFriendlyRatio, float enemyStaticDefense,
-			int ownArmy, bool enemyEconomyStrong)
+			int ownArmy, bool enemyEconomyStrong, bool expansionOpportunity = false,
+			bool recentlyDefended = false, float casualtyFraction = 0f)
 		{
 			if (ownArmy < 8)
 				return StrategicPosture.Opening;
 
+			if (casualtyFraction >= 0.5f)
+				return StrategicPosture.Recovery;
+
 			if (enemyToFriendlyRatio >= 3f)
 				return StrategicPosture.Desperation;
 
+			if (recentlyDefended && enemyToFriendlyRatio < 1f)
+				return StrategicPosture.Counterattack;
+
 			if (enemyToFriendlyRatio >= 1.5f)
 				return StrategicPosture.Defensive;
+
+			if (expansionOpportunity && enemyToFriendlyRatio <= 1f)
+				return StrategicPosture.Expansion;
 
 			if (enemyStaticDefense > 0.7f)
 				return StrategicPosture.Siege;
@@ -98,6 +109,76 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public static bool CommitsReserve(StrategicPosture posture)
 		{
 			return posture is StrategicPosture.AllIn or StrategicPosture.Desperation;
+		}
+
+		/// <summary>
+		/// Selects an override for one theater from that region's own control, pressure, and expansion
+		/// value. This deliberately does not accept the global force ratio: fronts must be able to make
+		/// different decisions during the same review.
+		/// </summary>
+		public static StrategicPosture SelectLocal(float friendlyControl, float enemyPressure, float expansionValue)
+		{
+			if (enemyPressure > 0.5f && enemyPressure > friendlyControl)
+				return StrategicPosture.Defensive;
+
+			if (friendlyControl >= 0.6f && friendlyControl >= enemyPressure * 2f && enemyPressure > 0f)
+				return StrategicPosture.Breakthrough;
+
+			if (expansionValue >= 0.6f && enemyPressure <= 0.2f)
+				return StrategicPosture.Expansion;
+
+			return StrategicPosture.None;
+		}
+
+		/// <summary>
+		/// The operational constraints implied by a posture. Keeping them in one exhaustive mapping
+		/// prevents target selection, production, reserves, combat risk, expansion, and secondary
+		/// operations from silently drifting into contradictory stances.
+		/// </summary>
+		public static PosturePolicy PolicyFor(StrategicPosture posture)
+		{
+			return posture switch
+			{
+				StrategicPosture.Opening => new(["recon", "base_defense"], 0.20f, 4, 0, 0.05f, 0.30f, false),
+				StrategicPosture.Expansion => new(["recon", "base_defense"], 0.20f, 4, 1, 0.10f, 0.35f, false),
+				StrategicPosture.Pressure => new(["anti_armor", "artillery"], 0.45f, 5, 0, 0.20f, 0.25f, false),
+				StrategicPosture.Containment => new(["artillery", "base_defense"], 0.30f, 4, 0, 0.15f, 0.35f, false),
+				StrategicPosture.Attrition => new(["artillery", "anti_armor"], 0.35f, 4, -1, 0.15f, 0.35f, false),
+				StrategicPosture.Breakthrough => new(["artillery", "anti_armor"], 0.60f, 6, -1, 0.25f, 0.20f, false),
+				StrategicPosture.Siege => new(["artillery", "anti_air"], 0.35f, 4, -1, 0.20f, 0.35f, false),
+				StrategicPosture.Raiding => new(["recon", "transport"], 0.35f, 5, 0, 0.30f, 0.30f, false),
+				StrategicPosture.Defensive => new(["base_defense", "anti_air"], 0.15f, 3, -1, 0.05f, 0.55f, false),
+				StrategicPosture.Counterattack => new(["anti_armor", "recon"], 0.50f, 5, -1, 0.20f, 0.25f, false),
+				StrategicPosture.Recovery => new(["base_defense"], 0.10f, 3, -1, 0f, 0.60f, false),
+				StrategicPosture.Desperation => new(["base_defense", "anti_armor"], 0.75f, 10, -1, 0.10f, 0.15f, true),
+				StrategicPosture.AllIn => new(["anti_armor", "artillery"], 0.85f, 10, -1, 0.10f, 0.10f, true),
+				_ => new([], 0.30f, 4, 0, 0.10f, 0.30f, false)
+			};
+		}
+	}
+
+	/// <summary>Immutable cross-system policy derived from one strategic posture.</summary>
+	public sealed class PosturePolicy
+	{
+		public readonly IReadOnlyList<string> ProductionCapabilities;
+		public readonly float AcceptableLossFraction;
+		public readonly int ReserveFraction;
+		public readonly int ExpansionPriority;
+		public readonly float SecondaryOperationBudget;
+		public readonly float RequiredDefensiveFraction;
+		public readonly bool CommitReserve;
+
+		public PosturePolicy(IReadOnlyList<string> productionCapabilities, float acceptableLossFraction,
+			int reserveFraction, int expansionPriority, float secondaryOperationBudget,
+			float requiredDefensiveFraction, bool commitReserve)
+		{
+			ProductionCapabilities = productionCapabilities;
+			AcceptableLossFraction = acceptableLossFraction;
+			ReserveFraction = reserveFraction;
+			ExpansionPriority = expansionPriority;
+			SecondaryOperationBudget = secondaryOperationBudget;
+			RequiredDefensiveFraction = requiredDefensiveFraction;
+			CommitReserve = commitReserve;
 		}
 	}
 }

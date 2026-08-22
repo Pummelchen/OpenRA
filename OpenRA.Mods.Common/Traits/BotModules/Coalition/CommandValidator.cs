@@ -209,6 +209,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// Reducing the reserve below roughly 15% (a denominator of seven or more) consumes the last
+		/// meaningful safety margin. The model must state a concrete justification of sufficient detail
+		/// for that exceptional choice; ordinary 20-25% reserves do not require one.
+		/// </summary>
+		public static string ValidateReserveJustification(int fraction, string justification)
+		{
+			return fraction < 7 || justification?.Trim().Length >= 20
+				? null
+				: "REJECTED_UNJUSTIFIED_RESERVE_COMMITMENT: reserve below 15% requires a concrete justification of at least 20 characters";
+		}
+
+		/// <summary>
 		/// Validates production-directive unit names against the buildable-item set of the live
 		/// ruleset. Blank entries are reported by <see cref="ValidateProduce"/>, so they are
 		/// skipped here; unknown names are rejected with a machine-readable reason.

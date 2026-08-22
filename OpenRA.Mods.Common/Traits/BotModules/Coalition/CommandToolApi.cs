@@ -824,7 +824,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var rejection = CommandValidator.ValidateReserveFraction(fraction);
 			if (rejection != null)
 				throw new ArgumentException(rejection);
-			return Patch("reserve_fraction", fraction);
+
+			var justification = args.TryGetProperty("justification", out var reason)
+				&& reason.ValueKind == JsonValueKind.String ? reason.GetString() : null;
+			rejection = CommandValidator.ValidateReserveJustification(fraction, justification);
+			if (rejection != null)
+				throw new ArgumentException(rejection);
+
+			return Ok(new JsonObject
+			{
+				["accepted"] = true,
+				["plan_patch"] = new JsonObject
+				{
+					["reserve_fraction"] = fraction,
+					["reserve_justification"] = justification
+				}
+			});
 		}
 
 		static string RequestRecon(ToolContext context, JsonElement args)

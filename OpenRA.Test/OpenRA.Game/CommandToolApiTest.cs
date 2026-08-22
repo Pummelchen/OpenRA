@@ -570,5 +570,21 @@ namespace OpenRA.Test
 				Assert.That(root.GetProperty("error").GetString(), Is.EqualTo("INVALID_ARGUMENTS"), tool);
 			}
 		}
+
+		[TestCase(TestName = "Consuming the last meaningful reserve requires strong justification.")]
+		public void ReserveCommitmentRequiresJustification()
+		{
+			var context = Context();
+			var rejected = Result(Call(context, "set_reserve", "{\"fraction\":10}"));
+			Assert.That(rejected.GetProperty("ok").GetBoolean(), Is.False);
+			Assert.That(rejected.GetProperty("message").GetString(), Does.Contain("REJECTED_UNJUSTIFIED_RESERVE_COMMITMENT"));
+
+			var accepted = Result(Call(context, "set_reserve",
+				"{\"fraction\":10,\"justification\":\"Decisive breach is open and the enemy reserve is depleted.\"}"));
+			Assert.That(accepted.GetProperty("ok").GetBoolean(), Is.True);
+			var patch = accepted.GetProperty("result").GetProperty("plan_patch");
+			Assert.That(patch.GetProperty("reserve_fraction").GetInt32(), Is.EqualTo(10));
+			Assert.That(patch.GetProperty("reserve_justification").GetString(), Does.Contain("breach"));
+		}
 	}
 }
