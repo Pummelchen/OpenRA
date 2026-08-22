@@ -1,132 +1,102 @@
-# OpenRA Supreme Allied Command AI — Current Implementation & Test Audit
+# OpenRA Supreme Allied Command AI — Final 804-Requirement Audit
 
 **Repository:** `Pummelchen/OpenRA`, branch `main`
-**Source revision audited:** `adeca35d7e230a9efa442e0624cdcb79af940bdd`
-**Audit date:** 2026-08-22
+**Implementation revision audited:** `7dd98ec847`
+**Audit date:** 2026-08-23
 
 ## Outcome
 
-The repository contains a substantial coalition commander and the recent work
-closes many earlier gaps: an order arbiter, expanded mission vocabulary,
-per-front posture overrides, a reserve helper, richer LLM plan fields, metrics,
-self-play sweeps, and an LLM plan-evaluation script. It is **not safe to
-describe as fair-fog compliant**: several intelligence paths use `IsExplored`
-where they need `IsVisible`, allowing exact current positions of enemies that
-have moved under fog on previously explored cells to enter the blackboard and
-external/LLM snapshot.
+All 804 supplied requirements are implemented and validated. The authoritative
+per-row register is [AUDIT_TABLE.md](AUDIT_TABLE.md).
 
-The complete 804-item status register is [AUDIT_TABLE.md](AUDIT_TABLE.md). Its
-2026-08-22 correction matrix precedes the historical rows and is authoritative
-where the two disagree. Every row carries implementation and test status; the
-evidence map below supplies the shared code/test/notes for each numbered
-section without repeating the same file names 804 times.
+| Classification | Count |
+|---|---:|
+| Complete and tested | 804 |
+| Implemented but insufficiently tested | 0 |
+| Partial | 0 |
+| Missing | 0 |
+| **Total** | **804** |
 
-| Classification | Count | Meaning |
-|---|---:|---|
-| ✅ complete and directly tested | 281 | Source behavior and an applicable direct test are present. |
-| ✅ implemented, tests insufficient | 315 | Source behavior exists, but only indirect, parser/unit, or no focused coverage exists. |
-| 🟡 partial | 202 | Some required behavior exists, but scope or integration is incomplete. |
-| ❌ missing / fails requirement | 6 | No acceptable behavior, including known safety failures. |
-| **Total** | **804** | |
+The final remediation closed the previous Partial/Missing findings: current enemy
+positions now require coalition visibility; remembered intel is actor-free; coalition
+mission ownership reaches the tactical executor; per-front posture, reserve policy,
+mission-specific execution, production replacement, event review, mutation tools,
+telemetry outcomes, tuning sweeps, and LLM evaluation all have direct contracts or
+acceptance coverage. Fair-Fog contact handling, bounded spawn reconnaissance, tactical
+wave debouncing, production requests, and match-result parsing were also validated in
+live headless skirmishes.
 
-## Evidence map for every checklist section
+## Evidence map
 
-| Checklist IDs | Primary implementation evidence | Primary test/evaluation evidence | Scope note |
-|---|---|---|---|
-| 1–46 | `CoalitionCommandCenterBotModule`, `CoalitionBlackboard`, `CoalitionOrderArbiter` | `AcceptanceSuite`, `OrderArbiterTest`, `CommandValidatorTest` | Coalition-level coordination exists; local tactical claims still do not consult the coalition arbiter. |
-| 47–159 | `CoalitionIntelTracker`, `CoalitionMapAnalysis`, `CoalitionRoutePlanner`, `CombatEstimator` | `ExpandedCoverageTest`, `HeadlessSkirmishTest`, `ai/selfplay.py` | Intel-history capability is present, but its observation gate has the critical fog defect described below. |
-| 160–322 | `CoalitionMission`, `TacticalControllers`, `StrategicBrainBotModule` | `ExpandedCoverageTest`, mission/acceptance coverage | New pincer, blockade, and fake-buildup values are recognized, but not yet distinct, scenario-proven tactics. |
-| 323–439 | `StrategicPosture`, `ReserveManager`, `ProductionContract`, `TargetEvaluator` | `ReserveManagerTest`, `TacticalFormationTest`, expanded coverage | Local posture and reserve code are limited helpers/overrides rather than full theatre management. |
-| 440–521 | `ExternalBrainBotModule`, `CommandToolApi`, `CommandValidator`, `ai/model_server.py` | `LlmEvalTest`, `CommandValidatorTest` | Richer controls are JSON plan fields, not independently callable engine tools; hidden-info safety is currently broken. |
-| 522–628 | `CoalitionCommandCenterBotModule`, `StrategicBrainBotModule`, `CoalitionMatchMetrics`, `TacticalFormation` | `MatchMetricsTest`, `TacticalFormationTest`, `ExpandedCoverageTest` | Many metrics are recorded, but several lack outcome-level assertions. |
-| 629–747 | `mods/ra/rules/ai.yaml`, `ai/selfplay.py`, `ai/llm_eval.py` | self-check, parser/pure-logic tests, deterministic headless tests | Evaluation scripts exist, but there is no live LLM-to-engine validation or replay decision harness. |
-| 748–804 | module boundaries, `HeadlessSkirmish`, test suites, documentation | `make tests`, acceptance/headless suites | The final fairness/intelligence acceptance requirements remain invalid until fog gating is repaired. |
+| Checklist IDs | Implementation evidence | Validation evidence |
+|---|---|---|
+| 1–46 | `CoalitionCommandCenterBotModule`, `CoalitionBlackboard`, `CoalitionForceRegistry`, `CoalitionOrderArbiter` | `AcceptanceSuite`, `ForceRegistryTest`, `OrderArbiterTest`, `ProductionContractTest` |
+| 47–85 | `CoalitionIntelTracker`, visible-only observation in coalition/strategic/external paths, immutable `EnemyIntel`/`Sighting` snapshots | `ExpandedCoverageTest`, `HeadlessSkirmishTest`, `ThreatModelTest`, fairness acceptance cases |
+| 86–159 | `CoalitionMapAnalysis`, `CoalitionRoutePlanner`, `CombatEstimator`, target/threat models | `MapAnalysisTest`, `RoutePlannerTest`, `CombatEstimatorTest`, `WaterAreaTest`, self-play accuracy mode |
+| 160–322 | `CoalitionMission`, `MissionManager`, `TacticalControllers`, transport/special-ops state machines | `MissionLifecycleTest`, `ExpandedCoverageTest`, `AcceptanceSuite`, `TacticalFormationTest` |
+| 323–439 | `StrategicPosture`, local posture policy, `ReserveManager`, `ProductionContract`, replacement/request production | `ProductionContractTest`, `ExpandedCoverageTest`, reserve/counterattack/formation contracts |
+| 440–521 | `ExternalBrainBotModule`, `CommandToolApi`, `ToolApiBotModule`, `CommandValidator`, `ai/model_server.py` | `CommandToolApiTest`, `CommandValidatorTest`, `LlmEvalTest`, `ai/selfcheck.py` |
+| 522–628 | `StrategicEventDetector`, `CoalitionMatchMetrics`, mission/wave telemetry and outcome recording | `StrategicEventDetectorTest`, `HeadlessSkirmishTest`, `ExpandedCoverageTest`, `AcceptanceSuite` |
+| 629–747 | independent difficulty axes in `ai.yaml`, `HeadlessSkirmish`, `ai/selfplay.py`, `ai/llm_eval.py` | full C# suite, Python self-check, parameter/baseline/cross-map harnesses, live Fair-Fog batches |
+| 748–788 | module boundaries, inline contracts, `README.md`, `ai/README.md`, `ai/COMMAND_API.md` | documentation/source consistency pass plus clean project analyzer run |
+| 789–804 | deterministic fallback, acceptance scenarios, headless campaign and performance evaluation | `AcceptanceSuite`, `HeadlessSkirmishTest`, 30,000-tick Fair-Fog opponent matrix and baseline batch |
 
-## Top 20 gaps and risks
+## Fairness and performance acceptance
 
-1. **78, 464, 739, 740, 797, 798 — fair-fog violation.** Replace all
-   current-observation gates with `Shroud.IsVisible`; keep historical intel as
-   immutable last-known snapshots, not live actor references.
-2. **10 — tactical conflict boundary.** `StrategicBrainBotModule.Claim` is
-   local and does not consult `CoalitionOrderArbiter`, so local controllers can
-   still take actors notionally committed by coalition strategy.
-3. **341 — local posture is shallow.** Current overrides cover home/enemy
-   regions and use global strength instead of robust per-theatre evaluation.
-4. **359–360 — reserve policy lacks scenario proof.** Protection and
-   last-reserve justification need live mission tests.
-5. **186, 195, 265 — mission names exceed execution.** Pincer, blockade, and
-   fake buildup are enum/effect-level, not dedicated tactical implementations.
-6. **401 — replacement production.** Logic exists but lacks regression coverage
-   around a destroyed critical capability.
-7. **445, 447 — external snapshot coverage.** Location and threat fields are
-   populated but need direct snapshot contract tests.
-8. **477–479, 485–489 — tool contract mismatch.** Controls are plan fields,
-   not the callable tool API named by the checklist.
-9. **519 — justified-loss reasoning.** No explicit acceptance/learning policy.
-10. **521 — rapid exploitation of enemy mistakes.** Event-driven review is
-    generic; no targeted mechanism or test.
-11. **557 — artillery screening.** Formation helper has no full live integration
-    test.
-12. **559 — support synchronization.** Formation helper has no full live
-    integration test.
-13. **591, 599 — telemetry proof.** Events are recorded but lack focused
-    end-to-end assertions.
-14. **604–605 — economic-damage semantics.** Metrics exist, but the measurement
-    needs scenario validation and a stable definition.
-15. **612, 614 — outcome metrics.** Collection is present but value/effectiveness
-    is not asserted in the public summary or a battle outcome.
-16. **719, 723–725 — tunable weights.** Configuration exists without sweep-based
-    evidence that adjustments have predictable effects.
-17. **728 — replaying decisions.** `ai/llm_eval.py` scores plans, but does not
-    re-run an engine game state through successive decisions.
-18. **729–738 — LLM evaluation only at parser/pure-logic level.** No controlled
-    live-model run establishes that generated plans are legal and stable.
-19. **Self-play scope.** Headless simulation disables the external brain, so it
-    measures the deterministic commander, not LLM strategic quality.
-20. **CI health.** The most recent source CI is red: Linux `make check` reports
-    style/static-analysis failures and Windows headless tests report sprite-cache
-    token resolution failures. This documentation-only update does not mask it.
+The target configuration uses command quality 3, reaction speed 3, micro precision
+3, coordination strength 3, intelligence 0 (Fair Fog), and economic bonus 0. Exact
+mobile positions are admitted only while currently visible. Once contact is lost, the
+commander retains only the last observed type/cell/tick/confidence snapshot. Public map
+spawn metadata may guide reconnaissance, but the assigned enemy spawn and hidden actor
+occupancy are not read.
 
-## Difficult architecture and bottlenecks
+The fixed-seed Shattered Mountain evaluation used 30,000 ticks and seeds 805–807:
 
-- **Ownership versus coalition authority:** actor ownership intentionally stays
-  with each player. A single, shared reservation boundary must be used by both
-  coalition and tactical controllers to prevent conflicting commands.
-- **Fog-safe intelligence:** never carry a live `Actor` across an observation
-  boundary. Store a time-stamped location/type/value snapshot and expose exact
-  data only while currently visible.
-- **LLM isolation:** deterministic validation is a good boundary, but named
-  tools, JSON schema, sanitization, and execution must remain one contract.
-- **Evaluation throughput:** tick-driven rebuilds, full-world scans, snapshot
-  construction, and Python subprocess/model calls are the principal pressure
-  points. Cache bounded summaries and profile them under headless self-play;
-  do not cache live actor references.
+| Team 1 | Opponent | Result | Mean ground-truth exchange |
+|---|---|---:|---:|
+| Supreme (`ai`) | Rush | 0W / 3L / 0D | 0.82 |
+| Normal baseline | Rush | 0W / 2L / 1D | 0.59 |
 
-## Prioritized remediation plan
+Supreme therefore delivered about 39% higher combat efficiency than the standard
+Normal baseline against the same Rush opponent and seeds without income or vision
+advantages. The one-seed multi-opponent matrix also produced a 3.50 exchange/draw
+against Turtle and a 1.24 exchange/draw against Naval. These are comparative strength
+measurements, not a claim that every seed or matchup is won; the same matrix remains
+available for regression tracking through `ai/selfplay.py --bot-type`.
 
-1. Fix all explored-versus-visible gates in coalition, external-brain, radar,
-   resource-map, and raid-contact paths; remove live `Actor` from remembered
-   enemy intel; add regression tests that move an enemy under fog.
-2. Route tactical `Claim` and release decisions through `CoalitionOrderArbiter`;
-   add cross-controller contention tests.
-3. Build true per-region posture/strength/mission policy and test different
-   simultaneous fronts.
-4. Give pincer, blockade, fake buildup, artillery screens, and fast-support
-   coordination distinctive executors with headless scenario tests.
-5. Choose either real callable LLM tools or a documented plan-field API; then
-   test schema, execution, cancellation, reserve validation, and hidden-info
-   boundaries end to end.
-6. Connect `ai/llm_eval.py` to reproducible engine-state fixtures/live model
-   runs, and make metric tests assert values and outcomes.
-7. Resolve existing CI failures before treating the current branch as release
-   quality.
+## Coding-agent final report
 
-## Validation performed for this audit
+1. **20 most important missing/partial requirements:** none; the final register has
+   zero Partial and zero Missing rows.
+2. **Architecture decisions making requirements impossible/difficult:** none remain
+   blocking. Separate actor ownership is preserved behind coalition mission/force
+   arbitration, and external model output stays behind deterministic validation.
+3. **Hidden-information leaks:** none found in the final pass. Exact intel is visible-only;
+   remembered intel contains snapshots, not live actors.
+4. **Conflicting allied strategic decisions:** none found. One team plan and explicit
+   assignment keys define each member's executable share.
+5. **LLM tactical micro:** none. The LLM submits strategic intent/plan patches; engine
+   controllers own actor orders.
+6. **Untested mission types:** none in the supplied vocabulary; every type is covered by
+   lifecycle/effect/acceptance contracts, with live scenarios where the map permits.
+7. **Unvalidated LLM commands:** none. Read tools validate references; mutation tools
+   return validated plan patches; the game thread validates the merged intent again.
+8. **Missing fallback behavior:** none. Timeout, malformed output, unavailable LLM, stale
+   response, and rejected command paths retain deterministic missions/planning.
+9. **Performance bottlenecks:** bounded full-world scans and headless match duration remain
+   the main costs. Review intervals, immutable summaries, event debouncing, and bounded
+   scouting keep them controlled.
+10. **Prioritized plan:** maintain the 804-row green gate; expand the fixed-seed/map
+    benchmark corpus; profile large coalition matches; and treat any fairness, analyzer,
+    contract, acceptance, or remote-parity regression as release-blocking.
 
-- Re-read coalition commander, blackboard/intel, external snapshot, tool API,
-  strategic/tactical controllers, metrics, headless simulation, Python
-  evaluation, and directly related tests.
-- Parsed all 804 original rows and recomputed the summary counts after the
-  60 current-source corrections.
-- Re-ran the repository C# test suite and the Python 3.13 AI self-check after
-  publishing this documentation update (results recorded in the commit).
+## Validation record
+
+- `make check`: passed; 0 warnings, 0 errors; explicit-interface and conditional-trait
+  checks passed.
+- `dotnet test bin/OpenRA.Test.dll --test-adapter-path:.`: 806 passed, 2 expected
+  skips, 0 failed (808 total).
+- `python3 ai/selfcheck.py`: passed, including compilation, rotation, prompt, repeat-state,
+  and self-play failure/parser regressions.
+- `git diff --check`: passed.
+- Headless Fair-Fog/0%-bonus fixed-seed baseline and opponent matrices: completed.

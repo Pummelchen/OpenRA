@@ -3,7 +3,8 @@
 The `AI` bot (selectable in the skirmish lobby) combines a deterministic in-game strategic
 brain with an optional **external model server** that refines its decisions — including a
 vision channel: the bot's full-map radar (terrain, water, mountains, explored-vs-unexplored
-shroud, unit dots) is sent to a vision-capable model.
+shroud, and currently visible unit dots) is sent to a vision-capable model. Exact enemy
+positions require current visibility; lost contacts become actor-free last-known snapshots.
 
 ## Architecture
 
@@ -73,6 +74,21 @@ Set `AI_TOOL_ENDPOINT` (default `http://127.0.0.1:8766/tools`, empty disables) t
 server at a different engine; at startup the server probes the endpoint and only enables
 tool calls when the engine answers. Mutation calls return validated `plan_patch` objects and never
 issue orders directly; the complete final plan is validated again on the game thread.
+
+## Headless evaluation
+
+Run fixed-seed Fair-Fog matches and compare Supreme with a standard scripted baseline:
+
+```sh
+python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
+  --vs rush,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0
+python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
+  --bot-type normal --vs rush --runs 3 --ticks 30000 --seed-base 805 --intelligence 0
+```
+
+The report separates fog-limited commander exchange from ground-truth player statistics
+and reports wins, losses, and time-limit draws. A nonzero simulation exit or missing
+`Finished:` marker fails the batch instead of being counted as a match.
 
 ## Terminal monitor
 

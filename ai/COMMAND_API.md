@@ -332,8 +332,10 @@ the results verbatim:
 ```
 
 Error codes: `INVALID_REQUEST`, `INVALID_ARGUMENTS`, `UNKNOWN_TOOL`, `UNKNOWN_REFERENCE`,
-`NOT_READY` (engine state not yet built). The endpoint is read-only — tool calls never
-issue orders, so serving it cannot desync a game.
+`NOT_READY` (engine state not yet built). Read calls are side-effect free. Mutation calls
+also never issue actor orders: they return validated `plan_patch` data that is merged into
+the command intent and validated again on the game thread, so the endpoint cannot bypass
+the deterministic execution boundary.
 
 ---
 
