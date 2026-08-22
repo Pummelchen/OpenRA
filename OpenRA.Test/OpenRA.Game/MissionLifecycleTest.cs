@@ -88,6 +88,32 @@ namespace OpenRA.Test
 			}));
 		}
 
+		[TestCase(TestName = "Route disruptions replan twice before a deterministic abort.")]
+		public void RouteDisruptionReplansThenAborts()
+		{
+			var mission = new MissionManager().CreateMission(MissionType.Attack, 80, new CPos(4, 4), "Advance");
+			mission.Phase = MissionPhase.Breach;
+			mission.PlannedRegions = [0, 1, 2];
+
+			Assert.That(MissionManager.HandleRouteDisruption(mission, 100), Is.True);
+			Assert.That(mission.Phase, Is.EqualTo(MissionPhase.Recon));
+			Assert.That(mission.PlannedRegions, Is.Empty);
+			Assert.That(MissionManager.HandleRouteDisruption(mission, 200), Is.True);
+			Assert.That(MissionManager.HandleRouteDisruption(mission, 300), Is.False);
+			Assert.That(mission.Status, Is.EqualTo(MissionStatus.Aborted));
+		}
+
+		[TestCase(TestName = "Outmatched missions enter withdrawal before becoming terminal.")]
+		public void FailedMissionWithdraws()
+		{
+			var mission = new MissionManager().CreateMission(MissionType.Attack, 80, new CPos(4, 4), "Advance");
+			MissionManager.BeginWithdrawal(mission, 120, "coalition outmatched");
+
+			Assert.That(mission.Status, Is.EqualTo(MissionStatus.Ready));
+			Assert.That(mission.Phase, Is.EqualTo(MissionPhase.Withdrawal));
+			Assert.That(mission.OutcomeReason, Does.Contain("outmatched"));
+		}
+
 		[TestCase(TestName = "The directive JSON names the chosen missions and their targets.")]
 		public void DirectiveJson()
 		{

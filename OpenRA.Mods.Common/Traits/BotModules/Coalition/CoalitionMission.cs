@@ -148,6 +148,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>0..1 progress through the mission phase machine.</summary>
 		public float Progress;
 
+		/// <summary>How many times a battlefield disruption forced this mission back to reconnaissance.</summary>
+		public int ReplanAttempts;
+
 		// Telemetry.
 		public int FriendlyValueCommitted;
 		public int EnemyValueEngaged;
@@ -423,6 +426,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					case MissionStatus.Executing:
 						if (!AdvancePhase(blackboard, mission))
 							continue;
+						if (mission.Phase == MissionPhase.Withdrawal)
+						{
+							mission.Status = MissionStatus.Aborted;
+							mission.OutcomeReason ??= "withdrawal completed";
+							continue;
+						}
 
 						if (IsOffensive(mission.Type))
 						{
@@ -485,18 +494,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						// brain's retreat logic manages a losing engagement.
 						if (enemyStrength > coalitionStrength * 3.0f)
 						{
-							mission.Status = MissionStatus.Aborted;
-							mission.OutcomeReason = "coalition outmatched";
-							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason} (coalition {coalitionStrength:0} vs enemy {enemyStrength:0})");
+							BeginWithdrawal(mission, blackboard.Tick, "coalition outmatched");
+							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} withdrawing: {mission.OutcomeReason} (coalition {coalitionStrength:0} vs enemy {enemyStrength:0})");
 							continue;
 						}
 
 						if (mission.Target != null && !CoalitionRoutePlanner.RouteExists(blackboard.MapAnalysis,
 							blackboard.HomeRegion, blackboard.RegionOf(mission.Target.Value).Index, MovementClass.Ground))
 						{
-							mission.Status = MissionStatus.Aborted;
-							mission.OutcomeReason = "target unreachable on the ground";
-							CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason}");
+							if (HandleRouteDisruption(mission, blackboard.Tick))
+								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} replanning: {mission.OutcomeReason}");
+							else
+								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} aborted: {mission.OutcomeReason}");
 							continue;
 						}
 
@@ -519,6 +528,36 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						break;
 				}
 			}
+		}
+
+		/// <summary>Moves a failed operation into an explicit withdrawal phase before force release.</summary>
+		public static void BeginWithdrawal(CoalitionMission mission, int tick, string reason)
+		{
+			mission.Phase = MissionPhase.Withdrawal;
+			mission.PhaseTick = tick;
+			mission.OutcomeReason = reason;
+		}
+
+		/// <summary>
+		/// Replans twice after a route/bridge disruption, then aborts deterministically if no route can
+		/// be established. Returns true when the mission was sent back to reconnaissance.
+		/// </summary>
+		public static bool HandleRouteDisruption(CoalitionMission mission, int tick, int maximumReplans = 2)
+		{
+			if (mission.ReplanAttempts >= maximumReplans)
+			{
+				mission.Status = MissionStatus.Aborted;
+				mission.OutcomeReason = "target unreachable after replanning";
+				return false;
+			}
+
+			mission.ReplanAttempts++;
+			mission.Phase = MissionPhase.Recon;
+			mission.PhaseTick = tick;
+			mission.PlannedRegions = [];
+			mission.StagingRegion = -1;
+			mission.OutcomeReason = "route disrupted; replanning";
+			return true;
 		}
 
 		/// <summary>
@@ -623,21 +662,33 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var recon = active.FirstOrDefault(m => IsRecon(m.Type));
 			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
 			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps || m.Type == MissionType.DecoyTransport);
-			var airStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike || m.Type == MissionType.NavalStrike);
+			var domainStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike
+				|| m.Type == MissionType.NavalStrike || m.Type == MissionType.NavalBlockade);
+			var pincer = active.FirstOrDefault(m => m.Type == MissionType.Pincer);
 			var supportPower = active.FirstOrDefault(m => m.Type == MissionType.SupportPowerStrike);
-			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat);
+			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat || m.Phase == MissionPhase.Withdrawal);
 
 			var sb = new StringBuilder();
 			var strategy = attack != null ? "attack" : defend != null ? "defend" : "build";
 			sb.Append("{\"strategy\":\"").Append(strategy).Append('"');
 			if (attack != null && attack.Target != null)
 				AppendTarget(sb, "attack", attack.Target.Value);
-			if (airStrike != null && airStrike.Target != null)
-				AppendTarget(sb, "strike", airStrike.Target.Value);
+			if (domainStrike != null && domainStrike.Target != null)
+			{
+				AppendTarget(sb, "strike", domainStrike.Target.Value);
+				sb.Append(",\"strikeKind\":\"")
+					.Append(domainStrike.Type == MissionType.AirStrike ? "air" : "naval").Append('"');
+			}
+			if (pincer != null && pincer.Target != null)
+				AppendTarget(sb, "pincer", pincer.Target.Value + new CVec(8, 0));
 			if (supportPower != null && supportPower.Target != null)
 				AppendTarget(sb, "supportPower", supportPower.Target.Value);
 			if (feint != null && feint.Target != null)
+			{
 				AppendTarget(sb, "feint", feint.Target.Value);
+				sb.Append(",\"deceptionKind\":\"")
+					.Append(feint.Type.ToString().ToLowerInvariant()).Append('"');
+			}
 			if (recon != null && recon.Target != null)
 				AppendTarget(sb, "recon", recon.Target.Value);
 			if (bait != null && bait.Target != null)

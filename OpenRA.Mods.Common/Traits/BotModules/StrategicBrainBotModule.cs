@@ -213,6 +213,7 @@ namespace OpenRA.Mods.Common.Traits
 		readonly HashSet<Actor> retreating = [];
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
+		readonly HashSet<Actor> deceptionForce = [];
 
 		// Exposed to the tactical controllers.
 		internal World World => world;
@@ -273,6 +274,7 @@ namespace OpenRA.Mods.Common.Traits
 		string teamStrategy;
 		string teamRole;
 		CPos? attackTarget;
+		CPos? pincerTarget;
 		CPos? feintTarget;
 		CPos? reconTarget;
 		CPos? baitTarget;
@@ -281,7 +283,9 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? strikeTarget;
 		CPos? supportPowerTarget;
 		string transportKind;
+		string strikeKind;
 		string defenseKind;
+		string deceptionKind;
 		string[] produceBoost;
 		bool teamRetreat;
 		int feintTick;
@@ -476,6 +480,7 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			public string Strategy { get; set; }
 			public TeamTarget Attack { get; set; }
+			public TeamTarget Pincer { get; set; }
 			public TeamTarget Feint { get; set; }
 			public TeamTarget Recon { get; set; }
 			public TeamTarget Bait { get; set; }
@@ -484,12 +489,14 @@ namespace OpenRA.Mods.Common.Traits
 			public TeamTarget Strike { get; set; }
 			public TeamTarget SupportPower { get; set; }
 			public string TransportKind { get; set; }
+			public string StrikeKind { get; set; }
 			public Dictionary<string, string> Roles { get; set; }
 			public string[] Produce { get; set; }
 			public bool Retreat { get; set; }
 			public TeamForce Force { get; set; }
 			public int AttackTick { get; set; }
 			public string DefenseKind { get; set; }
+			public string DeceptionKind { get; set; }
 		}
 
 		sealed class TeamForce
@@ -532,15 +539,18 @@ namespace OpenRA.Mods.Common.Traits
 			teamRetreat = plan.Retreat;
 			produceBoost = plan.Produce;
 			attackTarget = ClampCell(ToCell(plan.Attack));
+			pincerTarget = ClampCell(ToCell(plan.Pincer));
 			feintTarget = ClampCell(ToCell(plan.Feint));
 			reconTarget = ClampCell(ToCell(plan.Recon));
 			baitTarget = ClampCell(ToCell(plan.Bait));
 			counterTarget = ClampCell(ToCell(plan.Counter));
 			transportTarget = ClampCell(ToCell(plan.Transport));
 			transportKind = plan.TransportKind;
+			strikeKind = plan.StrikeKind;
 			strikeTarget = ClampCell(ToCell(plan.Strike));
 			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
 			defenseKind = plan.DefenseKind;
+			deceptionKind = plan.DeceptionKind;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
 			if (plan.Force != null)
@@ -952,16 +962,43 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
-			// Feint: divert a small fraction of the available army to a decoy position. Feint units are
-			// claimed, so the main wave never orders the same units (the feint is no longer overwritten).
-			if (feintTarget != null && availableArmy.Length > info.FeintFraction && world.WorldTick - feintTick > info.TacticInterval * 5)
+			// Deception forces have a strict exposure window and withdraw early once their purpose is
+			// served or their health falls below the regroup threshold. Fake buildups move to a safe
+			// forward staging point and never issue an attack order.
+			deceptionForce.RemoveWhere(a => !a.IsInWorld || a.IsDead);
+			var deceptionDamaged = deceptionForce.Any(a =>
+			{
+				var health = a.TraitOrDefault<IHealth>();
+				return health != null && health.HP * 100 / health.MaxHP < info.RegroupHealthPercent;
+			});
+			if (deceptionForce.Count > 0
+				&& (deceptionDamaged || world.WorldTick - feintTick >= info.TacticInterval * 2))
+			{
+				var withdrawing = Claim(deceptionForce).ToArray();
+				if (withdrawing.Length > 0)
+					bot.QueueOrder(new Order("Move", null, Target.FromCell(world, retreatCell), false,
+						groupedActors: withdrawing));
+				deceptionForce.Clear();
+				CoalitionTelemetry.Log(world, $"Deception force withdrew early ({(deceptionDamaged ? "loss limit" : "purpose complete")})");
+			}
+
+			if (feintTarget != null && deceptionForce.Count == 0 && availableArmy.Length > info.FeintFraction
+				&& world.WorldTick - feintTick > info.TacticInterval * 5)
 			{
 				feintTick = world.WorldTick;
 				var feint = Claim(availableArmy).Take(availableArmy.Length / info.FeintFraction).ToArray();
 				if (feint.Length > 0)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, feintTarget.Value), false, groupedActors: feint));
-					CoalitionTelemetry.Log(world, $"Feint of {feint.Length} units to {feintTarget.Value}");
+					deceptionForce.UnionWith(feint);
+					var destination = feintTarget.Value;
+					if (deceptionKind == "fakebuildup")
+					{
+						var baseCell = world.Map.CellContaining(baseCenter.Value);
+						destination = baseCell + (destination - baseCell) / 2;
+					}
+					var order = deceptionKind == "fakebuildup" ? "Move" : "AttackMove";
+					bot.QueueOrder(new Order(order, null, Target.FromCell(world, destination), false, groupedActors: feint));
+					CoalitionTelemetry.Log(world, $"{deceptionKind ?? "feint"} of {feint.Length} units to {destination}");
 
 					// Record the feint launch (req 627) so the commander can later measure whether it
 					// opened a launch window for the main wave.
@@ -978,8 +1015,10 @@ namespace OpenRA.Mods.Common.Traits
 			// Air/naval strike: send only that domain at a high-value target, exempt from the ground gate.
 			if (strikeTarget != null)
 			{
-				var strikeUnits = Claim(activeArmy.Where(a =>
-					info.AirUnitTypes.Contains(a.Info.Name) || info.NavalPriority.Contains(a.Info.Name))).ToArray();
+				var strikeUnits = Claim(activeArmy.Where(a => strikeKind == "air"
+					? info.AirUnitTypes.Contains(a.Info.Name)
+					: strikeKind == "naval" ? info.NavalPriority.Contains(a.Info.Name)
+					: info.AirUnitTypes.Contains(a.Info.Name) || info.NavalPriority.Contains(a.Info.Name))).ToArray();
 				if (strikeUnits.Length > 0)
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, strikeTarget.Value), false, groupedActors: strikeUnits));
@@ -1055,6 +1094,18 @@ namespace OpenRA.Mods.Common.Traits
 
 			lastAttackTick = world.WorldTick;
 			var priorClaims = claimedUnits.Count;
+			if (pincerTarget != null)
+			{
+				var secondAxis = Claim(availableArmy.Where(a => !info.AirUnitTypes.Contains(a.Info.Name)
+					&& !info.NavalPriority.Contains(a.Info.Name)))
+					.Take(Math.Max(1, availableArmy.Length / 3)).ToArray();
+				if (secondAxis.Length > 0)
+				{
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, pincerTarget.Value), false,
+						groupedActors: secondAxis));
+					CoalitionTelemetry.Log(world, $"Pincer second axis of {secondAxis.Length} units to {pincerTarget.Value}");
+				}
+			}
 			ground?.Attack(availableArmy, target.Value);
 			air?.Attack(availableArmy, target.Value);
 			naval?.Attack(availableArmy, target.Value);

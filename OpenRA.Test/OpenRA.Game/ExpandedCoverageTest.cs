@@ -49,10 +49,40 @@ namespace OpenRA.Test
 			Assert.That(CoalitionMission.DesiredEffectsFor(MissionType.FakeBuildup), Is.Not.Null);
 		}
 
+		[TestCase(TestName = "Pincer directives expose two distinct attack axes.")]
+		public void PincerHasSecondAxis()
+		{
+			var manager = new MissionManager();
+			var mission = manager.CreateMission(MissionType.Pincer, 80, new CPos(10, 10), "Envelop");
+			mission.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			Assert.That(directive, Does.Contain("\"attack\":{\"x\":10,\"y\":10}"));
+			Assert.That(directive, Does.Contain("\"pincer\":{\"x\":18,\"y\":10}"));
+		}
+
+		[TestCase(TestName = "Naval blockade directives launch naval-only strike execution.")]
+		public void NavalBlockadeHasNavalDirective()
+		{
+			var manager = new MissionManager();
+			var mission = manager.CreateMission(MissionType.NavalBlockade, 75, new CPos(6, 9), "Block coast");
+			mission.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			Assert.That(directive, Does.Contain("\"strike\":{\"x\":6,\"y\":9}"));
+			Assert.That(directive, Does.Contain("\"strikeKind\":\"naval\""));
+		}
+
 		[TestCase(TestName = "IntendedReactionFor returns non-null for FakeBuildup.")]
 		public void FakeBuildupIntendedReaction()
 		{
 			Assert.That(CoalitionMission.IntendedReactionFor(MissionType.FakeBuildup), Is.Not.Null);
+
+			var manager = new MissionManager();
+			var mission = manager.CreateMission(MissionType.FakeBuildup, 50, new CPos(4, 7), "Deceive");
+			mission.Status = MissionStatus.Executing;
+			Assert.That(manager.BuildDirectiveJson(null, null, false),
+				Does.Contain("\"deceptionKind\":\"fakebuildup\""));
 		}
 
 		[TestCase(TestName = "ValidateCapability accepts known capabilities.")]
