@@ -87,14 +87,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// a specific target-scoring profile regardless of the global posture.
 			var profile = Environment.GetEnvironmentVariable("TARGET_WEIGHT_PROFILE");
 			if (!string.IsNullOrEmpty(profile))
-			{
+				return TargetWeightsForProfile(posture, profile);
+
+			return TargetWeightsForProfile(posture, null);
+		}
+
+		/// <summary>Pure target-profile selector used by tuning sweeps and their regression tests.</summary>
+		public static TargetWeights TargetWeightsForProfile(StrategicPosture posture, string profile)
+		{
+			if (!string.IsNullOrEmpty(profile))
 				return profile.ToLowerInvariant() switch
 				{
 					"breakthrough" => TargetWeights.Breakthrough(),
 					"raiding" => TargetWeights.Raiding(),
 					_ => TargetWeights.Balanced()
 				};
-			}
 
 			return posture switch
 			{

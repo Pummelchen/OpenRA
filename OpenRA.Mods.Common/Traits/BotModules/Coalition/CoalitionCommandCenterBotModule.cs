@@ -1127,7 +1127,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					+ route.Cost * 0.5f;
 
 				// Skip targets above the risk threshold (req 725).
-				if (risk > specialopsThreshold)
+				if (!WithinSpecialOpsRisk(risk, specialopsThreshold))
 					continue;
 
 				var score = value * 2f - risk;
@@ -1140,6 +1140,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			return best;
+		}
+
+		/// <summary>Pure special-operations risk gate used by configurable tuning sweeps.</summary>
+		public static bool WithinSpecialOpsRisk(float risk, float maximumRisk)
+		{
+			return risk <= maximumRisk;
 		}
 
 		/// <summary>

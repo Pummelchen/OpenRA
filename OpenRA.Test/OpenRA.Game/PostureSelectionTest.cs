@@ -10,6 +10,7 @@
 #endregion
 
 using NUnit.Framework;
+using OpenRA.Mods.Common.Traits;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
 namespace OpenRA.Test
@@ -118,6 +119,27 @@ namespace OpenRA.Test
 			Assert.That(PostureSelection.TargetWeightsFor(StrategicPosture.Breakthrough).PositionalValue, Is.EqualTo(TargetWeights.Breakthrough().PositionalValue));
 			Assert.That(PostureSelection.TargetWeightsFor(StrategicPosture.Raiding).EconomicDamage, Is.EqualTo(TargetWeights.Raiding().EconomicDamage));
 			Assert.That(PostureSelection.TargetWeightsFor(StrategicPosture.Defensive).StrategicValue, Is.EqualTo(TargetWeights.Balanced().StrategicValue));
+		}
+
+		[TestCase(TestName = "Target-profile sweeps materially change target scoring weights.")]
+		public void TunableTargetProfiles()
+		{
+			var balanced = PostureSelection.TargetWeightsForProfile(StrategicPosture.Defensive, "balanced");
+			var breakthrough = PostureSelection.TargetWeightsForProfile(StrategicPosture.Defensive, "breakthrough");
+			var raiding = PostureSelection.TargetWeightsForProfile(StrategicPosture.Defensive, "raiding");
+
+			Assert.That(breakthrough.PositionalValue, Is.GreaterThan(balanced.PositionalValue));
+			Assert.That(raiding.EconomicDamage, Is.GreaterThan(balanced.EconomicDamage));
+		}
+
+		[TestCase(TestName = "Feint commitment and special-operations risk thresholds are tunable and fail safe.")]
+		public void TunableDeceptionAndSpecialOps()
+		{
+			Assert.That(StrategicBrainBotModule.FeintCommitment(24, 4), Is.EqualTo(6));
+			Assert.That(StrategicBrainBotModule.FeintCommitment(24, 8), Is.EqualTo(3));
+			Assert.That(StrategicBrainBotModule.FeintCommitment(24, 0), Is.Zero);
+			Assert.That(CoalitionCommandCenterBotModule.WithinSpecialOpsRisk(2f, 1.5f), Is.False);
+			Assert.That(CoalitionCommandCenterBotModule.WithinSpecialOpsRisk(2f, 2.5f), Is.True);
 		}
 
 		[TestCase(TestName = "All-in and desperation commit the reserve.")]

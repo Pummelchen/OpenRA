@@ -18,6 +18,7 @@ Telemetry is parsed from ai-telemetry.log in the platform support directory
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -29,6 +30,28 @@ if sys.version_info < (3, 11):
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORT_PATH = os.path.join(REPO, "ai", "llm_eval_report.json")
+
+
+def replay_same_state(state: dict, count: int, decide) -> dict:
+    """Runs an identical immutable snapshot through several commander decisions.
+
+    `decide` is injected so the contract is testable without a model server. Each call receives a fresh
+    JSON round-trip copy; commander-side mutation can therefore never contaminate the next replay.
+    """
+    if count < 2:
+        raise ValueError("decision replay count must be at least 2")
+    canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
+    decisions = [decide(json.loads(canonical)) for _ in range(count)]
+    fingerprints = [hashlib.sha256(
+        json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest() for plan in decisions]
+    return {
+        "snapshot_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "decision_count": count,
+        "unique_decisions": len(set(fingerprints)),
+        "decision_sha256": fingerprints,
+        "decisions": decisions,
+    }
 
 
 def telemetry_log_path() -> str:
@@ -404,12 +427,25 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="deterministic seed")
     parser.add_argument("--no-sim", action="store_true",
                         help="skip simulation; parse the existing ai-telemetry.log only")
+    parser.add_argument("--snapshot", help="JSON world snapshot to replay through repeated live LLM decisions")
+    parser.add_argument("--decision-replays", type=int, default=3,
+                        help="number of decisions for --snapshot (minimum 2, default 3)")
     args = parser.parse_args()
 
     det_result: dict | None = None
     llm_result: dict | None = None
 
-    if not args.no_sim:
+    repeat_state = None
+    if args.snapshot:
+        from model_server import MODEL_API_KEY, MODEL_ENDPOINT, MODEL_NAME, TOOL_ENDPOINT, llm_plan
+
+        with open(args.snapshot, encoding="utf-8") as snapshot_file:
+            snapshot = json.load(snapshot_file)
+        repeat_state = replay_same_state(snapshot, args.decision_replays,
+            lambda state: llm_plan(state, MODEL_ENDPOINT, MODEL_NAME, MODEL_API_KEY,
+                                   vision=False, tools=bool(TOOL_ENDPOINT)))
+        lines = read_telemetry()
+    elif not args.no_sim:
         # Clear the telemetry log so only this run's lines are captured.
         log_path = telemetry_log_path()
         if os.path.exists(log_path):
@@ -436,6 +472,8 @@ def main() -> None:
         lines = read_telemetry()
 
     report = evaluate(lines, det_result, llm_result)
+    if repeat_state is not None:
+        report["repeat_state"] = repeat_state
 
     # Attach run metadata.
     report["metadata"] = {
@@ -445,6 +483,8 @@ def main() -> None:
         "deterministic_result": det_result,
         "llm_result": llm_result,
         "telemetry_lines": len(lines),
+        "snapshot": args.snapshot,
+        "decision_replays": args.decision_replays if args.snapshot else None,
     }
 
     # Output JSON to stdout and save to file.

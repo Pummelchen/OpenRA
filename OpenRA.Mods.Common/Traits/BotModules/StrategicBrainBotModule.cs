@@ -1044,11 +1044,12 @@ namespace OpenRA.Mods.Common.Traits
 				CoalitionTelemetry.Log(world, $"Deception force withdrew early ({(deceptionDamaged ? "loss limit" : "purpose complete")})");
 			}
 
-			if (feintTarget != null && deceptionForce.Count == 0 && availableArmy.Length > info.FeintFraction
+			var feintCommitment = FeintCommitment(availableArmy.Length, info.FeintFraction);
+			if (feintTarget != null && deceptionForce.Count == 0 && feintCommitment > 0
 				&& world.WorldTick - feintTick > info.TacticInterval * 5)
 			{
 				feintTick = world.WorldTick;
-				var feint = Claim(availableArmy).Take(availableArmy.Length / info.FeintFraction).ToArray();
+				var feint = Claim(availableArmy).Take(feintCommitment).ToArray();
 				if (feint.Length > 0)
 				{
 					deceptionForce.UnionWith(feint);
@@ -1215,6 +1216,12 @@ namespace OpenRA.Mods.Common.Traits
 					$"(sync error {world.WorldTick - attackTick}t) " +
 					$"[{waveLand} land ({waveArtillery} artillery, {waveAA} aa), {waveAir} air, {waveNaval} naval]");
 			}
+		}
+
+		/// <summary>Returns the configured feint commitment, or zero when the force/config is unsafe.</summary>
+		public static int FeintCommitment(int availableUnits, int fraction)
+		{
+			return fraction > 0 && availableUnits > fraction ? Math.Max(1, availableUnits / fraction) : 0;
 		}
 
 		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>

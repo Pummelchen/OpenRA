@@ -114,5 +114,14 @@ namespace OpenRA.Test
 				Artillery, Submarines, Detection, Superweapons, Production).ToArray();
 			Assert.That(caps, Is.Empty);
 		}
+
+		[TestCase(TestName = "Threat tuning scales materially change values without violating field bounds.")]
+		public void TunableThreatScale()
+		{
+			Assert.That(CoalitionBlackboard.ScaleThreat(0.4f, 0.5f), Is.EqualTo(0.2f).Within(0.001f));
+			Assert.That(CoalitionBlackboard.ScaleThreat(0.4f, 1.5f), Is.EqualTo(0.6f).Within(0.001f));
+			Assert.That(CoalitionBlackboard.ScaleThreat(0.8f, 2f), Is.EqualTo(1f));
+			Assert.That(CoalitionBlackboard.ScaleThreat(0.4f, -1f), Is.EqualTo(0.4f));
+		}
 	}
 }

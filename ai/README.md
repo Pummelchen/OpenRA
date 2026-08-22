@@ -99,6 +99,13 @@ match outcomes: win/loss and duration, combat exchange, economic damage, army/pr
 cohesion, reserve availability, expansion timing, wave synchronization error, retreat preservation,
 recon efficiency, transport survival, counterattack results, defense response, mission/special-ops
 success rates, and deception response. `ai/llm_eval.py` consumes this log for repeatable plan scoring.
+It can also replay one immutable world state through several live commander decisions:
+
+```sh
+python3 ai/llm_eval.py --snapshot ai/world-snapshot.json --decision-replays 5
+```
+
+The report preserves the snapshot hash, every plan and plan hash, and the number of unique decisions.
 
 ## Wiring
 

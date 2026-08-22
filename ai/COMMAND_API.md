@@ -404,6 +404,13 @@ the actor; historical information comes only from actor-free intelligence record
 call ID and arguments), the full engine result, and the validated final plan. Its 10 MiB rotation cap keeps
 that reconstructable record bounded.
 
+The commander policy does not equate force preservation with zero casualties. It may accept an
+engine-estimated loss within the active posture's acceptable-loss bound when the mission purchases a higher
+strategic value or decisive follow-on, but it must retain an explicit withdrawal threshold. Conversely,
+verified short-lived mistakes (depleted attackers, exposed production, missing counters, undefended
+expansions, or newly open routes) are exploited in the same review using the response/window/engagement
+tools; uncertain intelligence cannot be promoted to a “mistake.”
+
 ---
 
 ## 9. Recommended build order (per the architecture)

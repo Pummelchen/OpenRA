@@ -69,6 +69,11 @@ def commander_contract_regression():
         "combined-arms capabilities",
         "Preserve a valid plan",
         "strategically pointless attrition",
+        "Calculated losses are acceptable",
+        "higher strategic value or decisive follow-on",
+        "Exploit a major verified enemy mistake in the current review",
+        "short-lived window",
+        "Never call an uncertain guess a mistake",
     )
     missing = [rule for rule in required if rule not in SYSTEM_PROMPT]
     assert not missing, "commander prompt contract missing: %s" % ", ".join(missing)
@@ -82,10 +87,31 @@ def commander_contract_regression():
     print("commander prompt contract OK")
 
 
+def repeat_state_regression():
+    from llm_eval import replay_same_state
+
+    snapshot = {"tick": 123, "team": [{"player": "Multi0", "cash": 5000}]}
+    calls = []
+
+    def decide(state):
+        calls.append(state)
+        state["tick"] = 999
+        return {"posture": "build", "strategy": "build"}
+
+    report = replay_same_state(snapshot, 3, decide)
+    assert snapshot["tick"] == 123, "replay must not mutate the source snapshot"
+    assert [call["tick"] for call in calls] == [999, 999, 999]
+    assert report["decision_count"] == 3
+    assert report["unique_decisions"] == 1
+    assert len(set(report["decision_sha256"])) == 1
+    print("repeat-state evaluation OK")
+
+
 def main():
     compile_all()
     rotation_regression()
     commander_contract_regression()
+    repeat_state_regression()
     print("selfcheck OK")
     return 0
 

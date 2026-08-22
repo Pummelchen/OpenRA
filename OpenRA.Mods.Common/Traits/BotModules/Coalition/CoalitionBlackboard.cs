@@ -796,7 +796,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// how much the AI weights enemy threats in route planning and target scoring.
 			var threatScale = 1f;
 			var envScale = Environment.GetEnvironmentVariable("THREAT_WEIGHT_SCALE");
-			if (float.TryParse(envScale, out var parsed))
+			if (float.TryParse(envScale, out var parsed) && parsed > 0f)
 				threatScale = parsed;
 
 			foreach (var intel in EnemyIntel)
@@ -805,11 +805,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var threats = region.Threats;
 				foreach (var capability in CapabilitiesFor(intel.Class, intel.Type, artilleryTypes, submarineTypes,
 					detectionTypes, supportPowerStructures, productionStructures))
-					threats[(int)capability] = Max(threats[(int)capability], intel.Confidence * threatScale);
+					threats[(int)capability] = Max(threats[(int)capability], ScaleThreat(intel.Confidence, threatScale));
 
 				// Active combat: recently-observed enemy presence marks a region as a live combat zone.
 				if (intel.Status == IntelStatus.Observed)
-					threats[(int)CoalitionCapability.ActiveCombat] = Max(threats[(int)CoalitionCapability.ActiveCombat], intel.Confidence * threatScale);
+					threats[(int)CoalitionCapability.ActiveCombat] = Max(threats[(int)CoalitionCapability.ActiveCombat],
+						ScaleThreat(intel.Confidence, threatScale));
 			}
 
 			// Exposure: regions with little friendly coverage are riskier to move through.
@@ -817,6 +818,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				region.Threats[(int)CoalitionCapability.VisionExposure] = 1f - region.FriendlyControl;
 
 			ComputeCongestion();
+		}
+
+		/// <summary>Applies a tuning scale while preserving the threat-field 0..1 contract.</summary>
+		public static float ScaleThreat(float confidence, float scale)
+		{
+			return Math.Clamp(confidence * (scale > 0f ? scale : 1f), 0f, 1f);
 		}
 
 		/// <summary>
