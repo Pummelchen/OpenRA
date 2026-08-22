@@ -272,10 +272,11 @@ The commander is offered tools; it must use them instead of estimating mechanics
 The **read-only** tools (`estimate_engagement`, `plan_routes`, `score_targets`, `compare_force_packages`,
 `estimate_enemy_response`, `find_attack_windows`, `find_special_ops_routes`, `get_*`, `inspect_*`) are
 implemented and served by `ToolApiBotModule` on `http://127.0.0.1:8766/tools`. The **mutation** tools
-(`set_production_directive`, `set_expansion_priority`, `create_mission`, `assign_force`, `set_reserve`,
-`request_recon`, `set_strategic_posture`) are carried by the `command.intent.v1` reply surface (posture,
-missions, production, roles, reserve, retreat) instead of the side-effect-free tool endpoint, so tool calls
-can never issue orders or desync a game.
+(`set_production_directive`, `set_expansion_priority`, `request_capability`, `create_mission`,
+`modify_mission`, `cancel_mission`, `assign_force`, `release_force`, `set_reserve`, `request_recon`,
+`set_strategic_posture`) are also callable, but remain side-effect free: each returns an engine-validated
+`plan_patch`. The model merges accepted patches into its final `command.intent.v1`; the game thread then
+validates the complete intent again before executing it.
 
 `fraction` is the denominator of the held reserve (`4` = 25%, `5` = 20%). Values `7`-`10`
 reduce the reserve below roughly 15% and therefore require a concrete `justification` of at least
@@ -309,8 +310,8 @@ paratroopers are reinforcement, and parabombs/nukes are strikes; chronoshift pow
 specialized multi-target controller. Strike powers require sufficient observed target value and are
 withheld when friendly units crowd the blast area.
 
-**Rule:** the commander may *not* move/attack individual units except through a
-tightly-scoped `emergency_unit_order` tool (survival only).
+**Rule:** the commander may not move or attack with individual units. Emergency survival remains in the
+deterministic tactical controllers, so there is no LLM direct-control bypass.
 
 ### Tool endpoint (`tool.call.v1`)
 
@@ -369,6 +370,11 @@ special_unit_available | transport_loaded | transport_detected | mission_objecti
 bridge_lost | resource_situation_change | support_power_available | enemy_high_value_discovered |
 enemy_army_lost_from_observation`
 
+The current detector directly observes major allied attack starts, failed/aborted missions, newly ready
+transports, completed missions, bridge-state/route-signature changes, and coalition-cash changes. These
+events use the same review debounce as the established discovery, base-loss, support-power, and
+loss-of-contact triggers.
+
 Cadence: unit micro = engine tick · mission execution ≈ 0.2–1 s · operational reassessment
 ≈ 1–3 s · **LLM strategic review = every ~5–15 s or on significant events** (already the
 15 s `ExternalBrainBreakSeconds` pacing).
@@ -379,13 +385,24 @@ Cadence: unit micro = engine tick · mission execution ≈ 0.2–1 s · operatio
 
 | Contract element | Current code | Status |
 |---|---|---|
-| `world.snapshot.v1` (team, forces, enemies, economy) | `ExternalBrainBotModule.BuildSnapshot` (TeamState/MemberState/UnitState) | partial — needs `forces` aggregation, `regions`, `threats`, `unique_assets` |
+| `world.snapshot.v1` (team, forces, enemies, economy) | `ExternalBrainBotModule.BuildSnapshot` plus coalition blackboard summaries | done |
 | round-based caching (one plan per team) | `PLAN_CACHE` in `model_server.py` | done |
-| `command.intent.v1` (strategy/roles/produce/retreat) | `TeamPlan` in `StrategicBrainBotModule.ApplyTeamPlan` | partial — needs missions, postures, reserve |
+| `command.intent.v1` (strategy/roles/produce/retreat) | `TeamPlan` in `StrategicBrainBotModule.ApplyTeamPlan` | done |
 | feint / counter / transport / roles | `UpdateTactics`, `ExecuteTransportMission` | done (v0 of these primitives) |
-| honesty ladder + confidence | `sightings` (tick + explored gate) | partial — needs status/confidence/age in the payload |
-| tools (estimate_engagement, plan_routes, …) | `CommandToolApi` + `ToolApiBotModule` (HTTP `127.0.0.1:8766/tools`) | done — read-only, engine-validated; `model_server.py` forwards tool calls and relays results |
+| honesty ladder + confidence | `CoalitionIntelTracker` and bounded snapshot summaries | done |
+| tools (estimate_engagement, plan_routes, …) | `CommandToolApi` + `ToolApiBotModule` (HTTP `127.0.0.1:8766/tools`) | done — engine-validated; mutations return plan patches |
 | deterministic fallback | scripted brain on timeout/invalid plan | done |
+
+### Context and decision-log bounds
+
+Variable-size snapshot sections are deterministically capped before JSON serialization: 8 notable unique
+assets per ally, 16 army groups, 32 newest events, 32 distinct uncertainties, and 64 enemy type buckets.
+Enemy actor coordinates enter the external snapshot only while at least one coalition member currently sees
+the actor; historical information comes only from actor-free intelligence records.
+
+`ai/brain.log` records every consultation with game tick and round, the full structured tool call (including
+call ID and arguments), the full engine result, and the validated final plan. Its 10 MiB rotation cap keeps
+that reconstructable record bounded.
 
 ---
 

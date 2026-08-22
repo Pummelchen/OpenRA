@@ -84,5 +84,25 @@ namespace OpenRA.Test
 			for (var i = 0; i < 10; i++)
 				Assert.That(detector.Detect(2, 3, 4, 3, true), Is.Null);
 		}
+
+		[TestCase(TestName = "Operational state changes trigger immediate strategic reviews.")]
+		public void OperationalTriggers()
+		{
+			string Trigger(System.Func<int, int, int, int, int, int, (int Attack, int Failed, int Transport, int Complete, int Route, int Cash)> next)
+			{
+				var detector = new StrategicEventDetector();
+				detector.Detect(2, 2, 4, 3, true, 0, 0, 0, 0, 10, 4000);
+				var state = next(0, 0, 0, 0, 10, 4000);
+				return detector.Detect(2, 2, 4, 3, true, state.Attack, state.Failed,
+					state.Transport, state.Complete, state.Route, state.Cash);
+			}
+
+			Assert.That(Trigger((_, f, t, c, r, cash) => (1, f, t, c, r, cash)), Is.EqualTo("major allied attack started"));
+			Assert.That(Trigger((a, _, t, c, r, cash) => (a, 1, t, c, r, cash)), Is.EqualTo("major attack failed"));
+			Assert.That(Trigger((a, f, _, c, r, cash) => (a, f, 1, c, r, cash)), Is.EqualTo("transport ready"));
+			Assert.That(Trigger((a, f, t, _, r, cash) => (a, f, t, 1, r, cash)), Is.EqualTo("mission completed"));
+			Assert.That(Trigger((a, f, t, c, _, cash) => (a, f, t, c, 11, cash)), Is.EqualTo("major route or bridge changed"));
+			Assert.That(Trigger((a, f, t, c, r, _) => (a, f, t, c, r, 6000)), Is.EqualTo("major economy change"));
+		}
 	}
 }

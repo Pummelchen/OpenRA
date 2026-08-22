@@ -408,26 +408,39 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var highValueSeen = blackboard.EnemyIntel.Any(i =>
 				TargetEvaluator.TechnologyValue(i.Type) > 0 || TargetEvaluator.EconomicValue(i.Type) > 0);
 
+			var activeAttacks = missions.Missions.Count(m => MissionManager.IsOffensive(m.Type)
+				&& m.Status == MissionStatus.Executing);
+			var failedMissions = missions.Missions.Count(m => m.Status is MissionStatus.Failed or MissionStatus.Aborted);
+			var completedMissions = missions.Missions.Count(m => m.Status == MissionStatus.Succeeded);
+			var routeSignature = 17;
+			foreach (var actor in world.Actors)
+				foreach (var bridge in actor.TraitsImplementing<IBridgeSegment>())
+					if (bridge.Valid)
+						routeSignature = routeSignature * 31 + (int)bridge.DamageState;
+
 			var detected = eventDetector.Detect(blackboard.EnemyRegion, enemyStructures, ownStructures,
-				blackboard.EnemyIntel.Count, highValueSeen);
+				blackboard.EnemyIntel.Count, highValueSeen, activeAttacks, failedMissions,
+				blackboard.Transports.Count, completedMissions, routeSignature, blackboard.CoalitionCash);
 			if (detected != null)
 				return detected;
 
 			// A ready strategic superweapon wakes the commander to plan a support-power strike.
 			if (blackboard.HasReadySuperweapon && !lastSuperweaponReady)
 			{
-				lastSuperweaponReady = true;
-				return "support power ready";
-			}
+					lastSuperweaponReady = true;
+					return "support power ready";
+				}
+
 			lastSuperweaponReady = blackboard.HasReadySuperweapon;
 
 			// A newly available special asset (Tanya, spy, engineer) wakes special-operations planning.
 			var specialCount = blackboard.SpecialAssets.Count;
 			if (specialCount > lastSpecialAssetCount)
 			{
-				lastSpecialAssetCount = specialCount;
-				return "special unit available";
-			}
+					lastSpecialAssetCount = specialCount;
+					return "special unit available";
+				}
+
 			lastSpecialAssetCount = specialCount;
 
 			return null;

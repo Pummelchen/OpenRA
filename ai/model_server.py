@@ -63,7 +63,8 @@ MAX_TOOL_ROUNDS = 4
 # Units the dummy backend prefers to produce, in priority order.
 DUMMY_ARMY_PRIORITY = ["e1", "e3", "2tnk", "3tnk", "4tnk", "ttnk", "v2rl", "heli", "mig"]
 
-SYSTEM_PROMPT = """You are the tactical command center of a team of OpenRA bots. The team members are listed under
+SYSTEM_PROMPT = """You are the Supreme Allied Command of a team of OpenRA bots. Coalition victory is your primary
+objective. The team members are listed under
 "team"; they fight as ONE force. Decide the team's strategy, roles, production, and maneuvers from the game state.
 
 The image in the user message (if any) is the team's strategic radar: the whole map with terrain, water, mountains,
@@ -92,10 +93,17 @@ Intelligence honesty (do not cheat or invent):
 Plan discipline:
 - Identify one main effort: concentrate the coalition on a single primary objective; secondary missions
   (feints, raids, air strikes) support it, they do not spread the army evenly.
+- Before assigning a force, inspect its readiness and current mission. Never double-commit a force or assume
+  an unavailable force can participate.
 - Keep a reserve in mind: do not commit every unit; a held-back reserve stops counterattacks and exploits
   breakthroughs. Consider the coalition's reserve before going all-in.
-- Each major operation should have a launch condition (enough force, a route) and a fallback if it fails
-  (withdraw, convert to a feint). State the mission list accordingly.
+- Each major operation needs a concrete objective, launch and abort conditions, a contingency, and a
+  withdrawal or extraction path. Consider the likely enemy response, reconnaissance gaps, deception windows,
+  and the combined-arms capabilities required before committing it.
+- Preserve a valid plan while its assumptions and objectives remain sound. Modify or cancel only the affected
+  missions when evidence changes; do not rewrite the coalition plan merely because a review occurred.
+- Reject strategically pointless attrition. Every expected loss must buy a stated coalition-level objective,
+  positional advantage, economic effect, force preservation, or decisive follow-on opportunity.
 
 TOOLS (engine-validated: results come from the engine, never fabricated):
 - get_global_summary() -> posture, force ratio, cash, army/enemy strength
@@ -295,7 +303,8 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool,
                 "image_url": {"url": f"data:image/png;base64,{encoded}"},
             })
 
-    log_brain(f"PROMPT -> {model}: {prompt}{image_note}")
+    consultation = f"tick={state.get('tick', '?')} round={state.get('round', '?')}"
+    log_brain(f"PROMPT [{consultation}] -> {model}: {prompt}{image_note}")
 
     system_prompt = SYSTEM_PROMPT + (
         "\n\nThe engine tool API is available: call tools before estimating mechanics."
@@ -321,16 +330,15 @@ def llm_plan(state: dict, endpoint: str, model: str, api_key: str, vision: bool,
 
         if not tool_calls:
             plan = sanitize_team_plan(parse_plan_content(reply_text), state)
-            log_brain(f"PLAN  -> {json.dumps(plan)}")
+            log_brain(f"PLAN [{consultation}] -> {json.dumps(plan, sort_keys=True)}")
             return plan
 
         messages.append({"role": "assistant", "content": reply_text, "tool_calls": tool_calls})
-        log_brain(f"TOOL CALLS -> {model}: " + ", ".join(
-            tc.get("function", {}).get("name", "?") for tc in tool_calls))
+        log_brain(f"TOOL CALLS [{consultation}] -> {model}: {json.dumps(tool_calls, sort_keys=True)}")
 
         for tool_call in tool_calls:
             result = execute_tool_call(tool_call, TOOL_ENDPOINT)
-            log_brain(f"TOOL RESULT <- {json.dumps(result)[:300]}")
+            log_brain(format_tool_trace(consultation, tool_call, result))
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.get("id", ""),
@@ -397,6 +405,14 @@ def execute_tool_call(tool_call: dict, endpoint: str) -> dict:
             return json.loads(response.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001 - the model sees an honest failure, not a fabricated result
         return {"ok": False, "error": "TOOL_ENDPOINT_UNREACHABLE", "message": str(exc)}
+
+
+def format_tool_trace(consultation: str, tool_call: dict, result: dict) -> str:
+    """Losslessly correlates a tool result with its call ID, name, arguments, tick, and round."""
+    return "TOOL TRACE [%s] <- %s" % (
+        consultation,
+        json.dumps({"call": tool_call, "result": result}, sort_keys=True),
+    )
 
 
 def probe_tool_endpoint(endpoint: str) -> bool:

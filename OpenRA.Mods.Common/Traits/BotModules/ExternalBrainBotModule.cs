@@ -49,6 +49,27 @@ namespace OpenRA.Mods.Common.Traits
 
 	public sealed class ExternalBrainBotModule : ConditionalTrait<ExternalBrainBotModuleInfo>, IBotTick
 	{
+		public const int MaxNotableUnits = 8;
+		public const int MaxArmyGroups = 16;
+		public const int MaxRecentEvents = 32;
+		public const int MaxUncertainties = 32;
+		public const int MaxEnemyTypes = 64;
+
+		/// <summary>Deterministic context bound used by every variable-size snapshot section.</summary>
+		public static T[] LimitContext<T>(IEnumerable<T> values, int limit, bool newest = false)
+		{
+			if (limit <= 0)
+				return [];
+			var array = values.ToArray();
+			return (newest ? array.TakeLast(limit) : array.Take(limit)).ToArray();
+		}
+
+		/// <summary>Fair-fog external snapshots may report an actor only while it is currently visible.</summary>
+		public static bool MayExposeEnemyActor(bool currentlyVisible)
+		{
+			return currentlyVisible;
+		}
+
 		sealed class TeamState
 		{
 			public int Round { get; set; }
@@ -225,23 +246,33 @@ namespace OpenRA.Mods.Common.Traits
 
 			var round = breakTicks > 0 ? tick / breakTicks : 0;
 
-			var members = team.Select(p => new MemberState
+			var members = team.Select(p =>
 			{
-				Player = p.InternalName,
-				Cash = p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0,
-				Units = Summarize(TeamActors(world, p, false).ToArray()),
-				Structures = Summarize(TeamActors(world, p, true).ToArray()),
-				Notable = TeamActors(world, p, false)
-					.OrderBy(a => HealthPercent(a))
-					.Take(6)
-					.Select(a => new UnitState
-					{
-						Type = a.Info.Name,
-						X = a.Location.X,
-						Y = a.Location.Y,
-						HealthPercent = HealthPercent(a)
-					})
-					.ToArray()
+				var units = TeamActors(world, p, false).ToArray();
+				var structures = TeamActors(world, p, true).ToArray();
+				var brain = p.PlayerActor.TraitsImplementing<StrategicBrainBotModule>().FirstOrDefault();
+				var notableActors = units.Where(a => a.Info.Name == "mcv"
+						|| brain?.Info.SpecialTypes.Contains(a.Info.Name) == true
+						|| brain?.Info.TransportTypes.Contains(a.Info.Name) == true)
+					.OrderBy(a => a.ActorID)
+					.Concat(units.OrderBy(a => HealthPercent(a)))
+					.DistinctBy(a => a.ActorID);
+
+				return new MemberState
+				{
+					Player = p.InternalName,
+					Cash = p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0,
+					Units = Summarize(units),
+					Structures = Summarize(structures),
+					Notable = LimitContext(notableActors, MaxNotableUnits)
+						.Select(a => new UnitState
+						{
+							Type = a.Info.Name,
+							X = a.Location.X,
+							Y = a.Location.Y,
+							HealthPercent = HealthPercent(a)
+						}).ToArray()
+				};
 			}).ToArray();
 
 			// Enemy intel is shared through allied vision: an enemy is reported only while at least one
@@ -250,7 +281,7 @@ namespace OpenRA.Mods.Common.Traits
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner != player
 					&& a.OccupiesSpace != null
 					&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
-					&& team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition)))
+					&& MayExposeEnemyActor(team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition))))
 				.ToArray();
 
 			var enemyByType = new Dictionary<string, int>();
@@ -260,9 +291,12 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				enemyByType.TryGetValue(a.Info.Name, out var n);
 				enemyByType[a.Info.Name] = n + 1;
-				sumX += a.Location.X;
-				sumY += a.Location.Y;
-			}
+					sumX += a.Location.X;
+					sumY += a.Location.Y;
+				}
+
+			enemyByType = enemyByType.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key)
+				.Take(MaxEnemyTypes).ToDictionary(kv => kv.Key, kv => kv.Value);
 
 			var enemies = new EnemyState
 			{
@@ -364,7 +398,8 @@ namespace OpenRA.Mods.Common.Traits
 			if (blackboard == null)
 				return [];
 
-			return blackboard.Forces.Select(f =>
+			return blackboard.Forces.OrderByDescending(f => f.TotalUnits).ThenBy(f => f.Owner)
+				.Take(MaxArmyGroups).Select(f =>
 			{
 				var region = blackboard.RegionOf(f.Center);
 				var nearbyThreats = new Dictionary<string, float>();
@@ -398,9 +433,9 @@ namespace OpenRA.Mods.Common.Traits
 		static string[] CommanderRecentEvents(Player player)
 		{
 			var commander = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>().FirstOrDefault();
-			return commander?.Blackboard?.Events
+			return LimitContext(commander?.Blackboard?.Events
 				.Select(e => $"{e.Type}{(e.Payload != null ? ":" + e.Payload : string.Empty)}")
-				.ToArray() ?? [];
+				?? [], MaxRecentEvents, newest: true);
 		}
 
 		/// <summary>Unresolved intelligence uncertainties, summarized for the snapshot.</summary>
@@ -411,12 +446,12 @@ namespace OpenRA.Mods.Common.Traits
 			if (blackboard == null)
 				return [];
 
-			return blackboard.EnemyIntel
+			return LimitContext(blackboard.EnemyIntel
 				.Where(i => i.Status == IntelStatus.Suspected || i.Confidence < 0.5f)
 				.Select(i => i.Status == IntelStatus.Suspected
 					? $"suspected_enemy_in_region_{blackboard.RegionOf(i.LastSeenCell).Index}"
 					: $"enemy_{i.Type}_position_conf{System.Math.Round(i.Confidence, 2)}")
-				.ToArray();
+				.Distinct(), MaxUncertainties);
 		}
 
 		/// <summary>Compresses an actor list into per-type counts plus average health.</summary>

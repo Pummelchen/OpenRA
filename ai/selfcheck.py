@@ -53,9 +53,39 @@ def rotation_regression():
     print("rotation regression OK")
 
 
+def commander_contract_regression():
+    import json
+    from model_server import SYSTEM_PROMPT, format_tool_trace
+
+    required = (
+        "Coalition victory is your primary",
+        "inspect its readiness and current mission",
+        "Never double-commit",
+        "concrete objective, launch and abort conditions",
+        "withdrawal or extraction path",
+        "likely enemy response",
+        "reconnaissance gaps",
+        "deception windows",
+        "combined-arms capabilities",
+        "Preserve a valid plan",
+        "strategically pointless attrition",
+    )
+    missing = [rule for rule in required if rule not in SYSTEM_PROMPT]
+    assert not missing, "commander prompt contract missing: %s" % ", ".join(missing)
+
+    call = {"id": "call-7", "function": {"name": "plan_routes", "arguments": "{\"from_region\":1}"}}
+    result = {"ok": True, "result": {"route": [1, 2, 3], "cost": 7.25}}
+    trace = format_tool_trace("tick=123 round=4", call, result)
+    payload = json.loads(trace.split(" <- ", 1)[1])
+    assert "tick=123 round=4" in trace
+    assert payload == {"call": call, "result": result}, "tool trace must be lossless and reconstructable"
+    print("commander prompt contract OK")
+
+
 def main():
     compile_all()
     rotation_regression()
+    commander_contract_regression()
     print("selfcheck OK")
     return 0
 
