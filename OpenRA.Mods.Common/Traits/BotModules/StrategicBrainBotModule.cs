@@ -202,10 +202,14 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			public WPos Position;
 			public int Tick;
+			public string Type;
+			public bool IsStructure;
 		}
 
 		readonly StrategicBrainBotModuleInfo info;
-		readonly Dictionary<Actor, Sighting> sightings = [];
+		// Enemy memory deliberately contains snapshots, never live actors. A live Actor can reveal
+		// a mobile enemy's current position after it has moved back under fog.
+		readonly Dictionary<uint, Sighting> sightings = [];
 		readonly HashSet<Actor> retreating = [];
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
@@ -360,8 +364,7 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>
-		/// Refreshes enemy intelligence. The bot only records enemy actors inside explored territory
-		/// (radar-style awareness of uncovered regions, but no wallhacks on unexplored map), and forgets
+		/// Refreshes enemy intelligence. The bot records only currently visible enemy actors and forgets
 		/// sightings after a limited time. The scouted force is classified to drive adaptive production
 		/// and posture.
 		/// </summary>
@@ -383,20 +386,25 @@ namespace OpenRA.Mods.Common.Traits
 				if (a.OccupiesSpace == null)
 					continue;
 
-				// Fog-respecting awareness: only record actors in territory we have explored.
-				if (!player.Shroud.IsExplored(a.CenterPosition))
+				// Fog-respecting awareness: explored terrain is not current observation.
+				if (!player.Shroud.IsVisible(a.CenterPosition))
 					continue;
 
-				sightings[a] = new Sighting { Position = a.CenterPosition, Tick = tick };
+				sightings[a.ActorID] = new Sighting
+				{
+					Position = a.CenterPosition,
+					Tick = tick,
+					Type = a.Info.Name,
+					IsStructure = a.Info.HasTraitInfo<BuildingInfo>()
+				};
 			}
 
-			bool IsStructure(Actor a) => a.Info.HasTraitInfo<BuildingInfo>();
-			bool IsArmy(Actor a) => !IsStructure(a) && !info.ExcludeFromArmyTypes.Contains(a.Info.Name);
+			bool IsArmy(Sighting s) => !s.IsStructure && !info.ExcludeFromArmyTypes.Contains(s.Type);
 
-			enemyArmyCount = sightings.Keys.Count(IsArmy);
-			enemyAirSpotted = sightings.Keys.Any(a => info.AirUnitTypes.Contains(a.Info.Name));
-			enemyArmorSpotted = sightings.Keys.Any(a => info.ArmorUnitTypes.Contains(a.Info.Name));
-			enemyInfantrySpotted = sightings.Keys.Any(a => info.InfantryUnitTypes.Contains(a.Info.Name));
+			enemyArmyCount = sightings.Values.Count(IsArmy);
+			enemyAirSpotted = sightings.Values.Any(s => info.AirUnitTypes.Contains(s.Type));
+			enemyArmorSpotted = sightings.Values.Any(s => info.ArmorUnitTypes.Contains(s.Type));
+			enemyInfantrySpotted = sightings.Values.Any(s => info.InfantryUnitTypes.Contains(s.Type));
 
 			var composition = $"armor={enemyArmorSpotted} air={enemyAirSpotted} infantry={enemyInfantrySpotted}";
 			if (composition != lastComposition)
@@ -405,7 +413,7 @@ namespace OpenRA.Mods.Common.Traits
 				CoalitionTelemetry.Log(world, $"Enemy composition: {composition} (army {enemyArmyCount})");
 			}
 
-			var structureSightings = sightings.Keys.Where(IsStructure).Select(a => a.CenterPosition).ToArray();
+			var structureSightings = sightings.Values.Where(s => s.IsStructure).Select(s => s.Position).ToArray();
 			enemyBaseCenter = structureSightings.Length > 0 ? structureSightings.Average() : null;
 
 			UpdatePosture();
@@ -764,16 +772,16 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				SetPosture(Posture.Defend);
 				lastDefendTick = world.WorldTick;
-				counterPos = world.Map.CellContaining(baseThreat.CenterPosition);
+				counterPos = world.Map.CellContaining(baseThreat.Value);
 				enemyCountAtDefense = enemyArmyCount;
 
-				var nearby = sightings.Count(kv => kv.Key.IsInWorld && !kv.Key.IsDead
-					&& (kv.Key.CenterPosition - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
+				var nearby = sightings.Values.Count(s =>
+					(s.Position - defendedPos).LengthSquared <= BaseRadiusSquared(info.BaseDefenseScanRadius));
 				var minCommitment = Math.Min(info.MinWaveSize, activeArmy.Length);
 				var commitment = Math.Clamp(nearby * 3, minCommitment, activeArmy.Length);
 				var defenders = Claim(activeArmy).Take(commitment).ToArray();
 				if (defenders.Length > 0)
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.CenterPosition), false, groupedActors: defenders));
+					bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.Value), false, groupedActors: defenders));
 				return;
 			}
 
@@ -818,7 +826,7 @@ namespace OpenRA.Mods.Common.Traits
 				var interceptors = Claim(reserve).ToArray();
 				if (interceptors.Length > 0)
 				{
-					ReserveCounterattack(bot, interceptors, raidThreat);
+					ReserveCounterattack(bot, interceptors, raidThreat.Value);
 				}
 			}
 
@@ -1073,7 +1081,7 @@ namespace OpenRA.Mods.Common.Traits
 					var enemiesNearRaid = world.Actors.Count(a =>
 						a.IsInWorld && !a.IsDead && a.Owner != player && a.OccupiesSpace != null
 						&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
-						&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition))
+						&& team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition))
 						&& (a.CenterPosition - world.Map.CenterOfCell(raidCell)).LengthSquared <= BaseRadiusSquared(20));
 					commander.RecordRaidContact(enemiesNearRaid);
 				}
@@ -1123,13 +1131,13 @@ namespace OpenRA.Mods.Common.Traits
 		/// Directs the reserve to stop counterattacks by intercepting enemy attackers (req 355).
 		/// Called when the enemy is attacking and the reserve can intercept.
 		/// </summary>
-		void ReserveCounterattack(IBot bot, Actor[] reserve, Actor raidThreat)
+		void ReserveCounterattack(IBot bot, Actor[] reserve, WPos raidThreat)
 		{
-			if (raidThreat == null || reserve.Length < info.MinWaveSize / 2)
+			if (reserve.Length < info.MinWaveSize / 2)
 				return;
 
 			reserveManager.Commit(world.WorldTick, reserve.Length, "counterattack interception", world, info.MinWaveSize);
-			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat.CenterPosition), false, groupedActors: reserve));
+			bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(raidThreat), false, groupedActors: reserve));
 		}
 
 		/// <summary>
@@ -1394,22 +1402,18 @@ namespace OpenRA.Mods.Common.Traits
 				!info.ExcludeFromArmyTypes.Contains(a.Info.Name));
 		}
 
-		/// <summary>Returns the closest remembered enemy to a position within the given squared radius, or null.</summary>
-		Actor ClosestEnemyTo(WPos pos, long radiusSquared)
+		/// <summary>Returns the closest remembered enemy position within the given squared radius, or null.</summary>
+		WPos? ClosestEnemyTo(WPos pos, long radiusSquared)
 		{
-			Actor closest = null;
+			WPos? closest = null;
 			var closestDistance = long.MaxValue;
-			foreach (var kv in sightings)
+			foreach (var sighting in sightings.Values)
 			{
-				var a = kv.Key;
-				if (!a.IsInWorld || a.IsDead)
-					continue;
-
-				var distance = (a.CenterPosition - pos).LengthSquared;
+				var distance = (sighting.Position - pos).LengthSquared;
 				if (distance > radiusSquared || distance >= closestDistance)
 					continue;
 
-				closest = a;
+				closest = sighting.Position;
 				closestDistance = distance;
 			}
 
@@ -1490,18 +1494,18 @@ namespace OpenRA.Mods.Common.Traits
 			if (enemyBaseCenter != null)
 				return enemyBaseCenter;
 
-			Actor newest = null;
+			WPos? newest = null;
 			var newestTick = int.MinValue;
 			foreach (var kv in sightings)
 			{
 				if (kv.Value.Tick > newestTick)
 				{
-					newest = kv.Key;
+					newest = kv.Value.Position;
 					newestTick = kv.Value.Tick;
 				}
 			}
 
-			return newest == null ? null : sightings[newest].Position;
+			return newest;
 		}
 
 		static long BaseRadiusSquared(int cells)

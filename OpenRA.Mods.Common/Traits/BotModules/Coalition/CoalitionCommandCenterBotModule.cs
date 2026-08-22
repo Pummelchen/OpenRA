@@ -860,14 +860,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
-		/// The fog-of-war gate for enemy observation. Fair fog (levels 0-1) only sees explored cells;
+		/// The fog-of-war gate for enemy observation. Fair fog (levels 0-1) only sees currently visible cells;
 		/// level 2 additionally reveals enemy structures (but not mobile units); level 3 is omniscient.
 		/// </summary>
 		bool SeesEnemy(Actor a, IEnumerable<Player> team)
 		{
 			if (info.IsOmniscient)
 				return true;
-			if (team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+			if (team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition)))
 				return true;
 			if (info.EffectiveIntelligence >= 2 && Classify(a) == UnitClass.Structure)
 				return true;

@@ -40,6 +40,15 @@ namespace OpenRA.Test
 			Assert.That(intel.MaxCount, Is.EqualTo(1));
 		}
 
+		[TestCase(TestName = "Remembered coalition intel is a snapshot and retains no live actor reference.")]
+		public void EnemyIntelDoesNotRetainActor()
+		{
+			var hasActorReference = typeof(EnemyIntel).GetFields()
+				.Any(field => typeof(Actor).IsAssignableFrom(field.FieldType));
+
+			Assert.That(hasActorReference, Is.False);
+		}
+
 		[TestCase(TestName = "Losing contact downgrades a mobile sighting to LAST_KNOWN with decaying confidence.")]
 		public void MobileBecomesLastKnown()
 		{

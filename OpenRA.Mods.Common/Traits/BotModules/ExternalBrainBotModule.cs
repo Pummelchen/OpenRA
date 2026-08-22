@@ -243,13 +243,13 @@ namespace OpenRA.Mods.Common.Traits
 					.ToArray()
 			}).ToArray();
 
-			// Enemy intel is shared through allied shroud: an enemy is reported if any team member has
-			// explored its position (radar-style team awareness). Compressed to counts + centroid.
+			// Enemy intel is shared through allied vision: an enemy is reported only while at least one
+			// team member can currently see it. Compressed to counts + centroid.
 			var enemyActors = world.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner != player
 					&& a.OccupiesSpace != null
 					&& player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
-					&& team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+					&& team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition)))
 				.ToArray();
 
 			var enemyByType = new Dictionary<string, int>();

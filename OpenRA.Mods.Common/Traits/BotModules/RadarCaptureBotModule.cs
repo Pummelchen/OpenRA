@@ -76,7 +76,7 @@ namespace OpenRA.Mods.Common.Traits
 			var isRectangularIsometric = map.Grid.Type == MapGridType.RectangularIsometric;
 			var bitmapWidth = isRectangularIsometric ? 2 * width - 1 : width;
 
-			// Per-cell dot colors: own units are green, explored enemies are red.
+			// Per-cell dot colors: own units are green, currently visible enemies are red.
 			var dotColors = new Dictionary<CPos, Color>();
 			foreach (var a in player.World.Actors)
 			{
@@ -89,7 +89,7 @@ namespace OpenRA.Mods.Common.Traits
 					continue;
 				}
 
-				if (player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy && player.Shroud.IsExplored(a.CenterPosition))
+				if (player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy && player.Shroud.IsVisible(a.CenterPosition))
 					dotColors[a.Location] = Color.Red;
 			}
 

@@ -188,9 +188,10 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					if (a.Owner.RelationshipWith(player) == PlayerRelationship.Enemy)
 					{
-						// Fog-of-war gate: only count enemies the player can actually see.
-						if (!player.Shroud.IsExplored(a.CenterPosition))
-							return Info.ResourceCreatorTypes.Contains(a.Info.Name);
+						// Fog-of-war gate: never let resource or expansion decisions use a
+						// current enemy actor that has moved back under fog.
+						if (!player.Shroud.IsVisible(a.CenterPosition))
+							return false;
 
 						if (Info.EnemyBaseBuildingTypes.Contains(a.Info.Name))
 							highThreatEnemyCount++;

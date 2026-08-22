@@ -111,7 +111,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 	/// <summary>One tracked enemy actor sighting with confidence decay and honesty status.</summary>
 	public sealed class EnemyIntel
 	{
-		public readonly Actor Actor;
 		public readonly string Type;
 		public readonly UnitClass Class;
 		public CPos LastSeenCell;
@@ -132,7 +131,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public EnemyIntel(Actor actor, UnitClass unitClass)
 		{
-			Actor = actor;
 			Type = actor.Info.Name;
 			Class = unitClass;
 			Confidence = 1f;
@@ -593,10 +591,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					continue;
 				if (Player.RelationshipWith(a.Owner) != PlayerRelationship.Enemy)
 					continue;
-				if (!omniscient && !Team.Any(ally => ally.Shroud.IsExplored(a.CenterPosition)))
+				if (!omniscient && !Team.Any(ally => ally.Shroud.IsVisible(a.CenterPosition)))
 					continue;
 
-				EnemyIntel.Add(new EnemyIntel(a, classify(a)) { Status = IntelStatus.Observed });
+				EnemyIntel.Add(new EnemyIntel(a, classify(a))
+				{
+					LastSeenCell = a.Location,
+					LastSeenTick = Tick,
+					Status = IntelStatus.Observed
+				});
 			}
 		}
 
