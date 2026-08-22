@@ -188,6 +188,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int lastWaveTick = int.MinValue;
 		int lastFeintTick = int.MinValue;
 		int raidContactTicks;
+		int raidResponseSamples;
+		int raidResponseSuccesses;
 
 		// Durable peak unit count per owner, for casualty tracking across blackboard rebuilds.
 		readonly Dictionary<string, int> peakForceUnits = [];
@@ -203,6 +205,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		// Durable peak construction-yard count, for detecting new expansions (req 608).
 		int peakConyardCount;
+		readonly HashSet<CPos> knownConyardCells = [];
+		bool expansionBaselineInitialized;
+		CPos? recentExpansionCell;
+		int recentExpansionTick = int.MinValue;
 
 		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
 		public CoalitionBlackboard Blackboard => blackboard;
@@ -544,7 +550,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Bait: an over-responsive enemy is lured by a small exposed force into an ambush position
 			// halfway to our base, where the main army waits to pounce.
 			if (missions.Missions.Any(m => m.Type == MissionType.Attack && m.Status == MissionStatus.Executing)
-				&& (blackboard.Opponent.MovesWholeArmyToDefend || blackboard.Opponent.RespondsStronglyToRaids)
+				&& (blackboard.Opponent.ShouldExploit(blackboard.Opponent.MovesWholeArmyToDefend)
+					|| blackboard.Opponent.ShouldExploit(blackboard.Opponent.RespondsStronglyToRaids))
 				&& !missions.Missions.Any(m => m.Type == MissionType.Bait)
 				&& !DeceptionSaturated())
 			{
@@ -662,7 +669,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// boost (already validated and cleaned by ApplyLlmIntent).
 			var produceJson = MergeProduce(BuildProduceJson(), llmIntent?.Produce);
 			foreach (var capability in posturePolicy.ProductionCapabilities)
-				produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(capability));
+				if (!ProductionContract.IsSatisfied(capability, blackboard.Forces))
+					produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(capability));
+
+			foreach (var requirement in CurrentProductionRequirements())
+				if (!ProductionContract.IsSatisfied(requirement, blackboard.Forces))
+					produceJson = MergeProduce(produceJson, ResolveCapabilityUnits(requirement));
 
 			// LLM capability directive: translate the requested capability into the matching
 			// counter-unit list and merge it into the production directive.
@@ -709,9 +721,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var expansionPriority = llmIntent?.ExpansionPriority is 1 or -1
 				? llmIntent.ExpansionPriority : posturePolicy.ExpansionPriority;
 			var postureDirective = FormattableString.Invariant(
-				$",\"expansionPriority\":{expansionPriority}," +
-				$"\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00}," +
-				$"\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()}");
+				$",\"expansionPriority\":{expansionPriority},\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00},\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()},\"attackPhase\":\"{attack?.Phase.ToString().ToLowerInvariant() ?? "none"}\"");
+			if (recentExpansionCell != null && world.WorldTick - recentExpansionTick <= 600)
+				postureDirective += $",\"expansionGuard\":{{\"x\":{recentExpansionCell.Value.X},\"y\":{recentExpansionCell.Value.Y}}}";
 			directiveJson = directiveJson.Insert(directiveJson.Length - 1, postureDirective);
 
 			if (llmIntent != null)
@@ -799,13 +811,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// Expansion detection (req 608): record the tick when a new construction yard appears.
 			// Construction yards are identified by the BuildingInfo trait and being a "fact" type
 			// (the standard RA construction yard). This is a heuristic but sufficient for telemetry.
-			var conyardCount = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName)
-				&& a.Info.HasTraitInfo<BuildingInfo>() && a.Info.Name == "fact");
-			if (conyardCount > peakConyardCount)
+			var conyardCells = world.Actors.Where(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName)
+				&& a.Info.HasTraitInfo<BuildingInfo>() && a.Info.Name == "fact")
+				.Select(a => a.Location).ToHashSet();
+			if (!expansionBaselineInitialized)
 			{
-				for (var i = peakConyardCount; i < conyardCount; i++)
+				expansionBaselineInitialized = true;
+				knownConyardCells.UnionWith(conyardCells);
+				peakConyardCount = conyardCells.Count;
+			}
+			else
+			{
+				var newCells = conyardCells.Where(c => !knownConyardCells.Contains(c)).ToArray();
+				foreach (var cell in newCells)
+				{
 					matchMetrics.RecordExpansion(world.WorldTick);
-				peakConyardCount = conyardCount;
+					recentExpansionCell = cell;
+					recentExpansionTick = world.WorldTick;
+					blackboard.AddEvent("expansion_built", cell, "protect new construction yard");
+				}
+
+				knownConyardCells.Clear();
+				knownConyardCells.UnionWith(conyardCells);
+				peakConyardCount = Math.Max(peakConyardCount, conyardCells.Count);
 			}
 
 			matchMetrics.RecordEstimate(CombatEstimator.Estimate(friendlyValue, enemyValue).WinRatio);
@@ -968,6 +996,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			opponent.RespondsStronglyToRaids = raidContactTicks > 0;
+			opponent.RaidResponseSamples = raidResponseSamples;
+			opponent.RaidResponseRate = raidResponseSamples == 0 ? 0f : raidResponseSuccesses * 1f / raidResponseSamples;
+			opponent.RespondsStronglyToFeints = missions.DeceptionAttempts >= 2
+				&& blackboard.DeceptionEffectiveness >= 0.5f;
+			opponent.FeintResponseSamples = missions.DeceptionAttempts;
+			opponent.FeintResponseRate = blackboard.DeceptionEffectiveness;
+			opponent.ExpansionSamples = matchMetrics.ExpansionTimings.Count;
+			opponent.AverageExpansionTick = opponent.ExpansionSamples == 0 ? 0f
+				: (float)matchMetrics.ExpansionTimings.Average();
 
 			// Report the derived profile when it changes, so scripted-opponent validation and replays
 			// can observe what the coalition believes about the enemy.
@@ -986,8 +1023,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		public void RecordRaidContact(int enemyUnitsNearRaid)
 		{
+			raidResponseSamples++;
 			if (enemyUnitsNearRaid >= 2)
+			{
 				raidContactTicks++;
+				raidResponseSuccesses++;
+			}
 			else
 				raidContactTicks = Math.Max(0, raidContactTicks - 1);
 		}
@@ -1306,7 +1347,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				"artillery" => info.ArtilleryTypes.ToArray(),
 				"naval" => info.NavalPriority.ToArray(),
 				"recon" => brain?.Info.ScoutUnitTypes?.ToArray(),
+				"mobility" => info.ArmyPriority.ToArray(),
+				"fast_raiding" => brain?.Info.ScoutUnitTypes?.ToArray(),
+				"air_superiority" => brain?.Info.AirUnitTypes?.ToArray(),
 				"transport" => brain?.Info.TransportTypes?.ToArray(),
+				"special_operations" => info.SpecialTypes.ToArray(),
 				"base_defense" => info.AntiAirUnits
 					.Concat(info.AntiArmorUnits)
 					.Concat(info.AntiInfantryUnits)
@@ -1315,10 +1360,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			};
 		}
 
+		/// <summary>Current operation-driven capability requirements, independent of unit names.</summary>
+		string[] CurrentProductionRequirements()
+		{
+			var active = missions.Missions.Where(m => m.Status is MissionStatus.Ready or MissionStatus.Executing).ToArray();
+			return ProductionContract.DetermineRequirements(
+				blackboard.EnemyRegion < 0 || active.Any(m => MissionManager.IsRecon(m.Type)),
+				blackboard.EnemyIntel.Any(i => i.Class == UnitClass.Air),
+				active.Any(m => m.PlannedRegions.Length >= 3),
+				active.Any(m => m.Type is MissionType.Raid or MissionType.Harassment
+					or MissionType.EconomyRaid or MissionType.ProductionRaid),
+				active.Any(m => m.Type is MissionType.Transport or MissionType.DecoyTransport),
+				active.Any(m => m.Type == MissionType.SpecialOps),
+				active.Any(m => m.Type is MissionType.NavalStrike or MissionType.NavalBlockade
+					or MissionType.NavalScreen or MissionType.NavalRecon),
+				blackboard.HasBigWater);
+		}
+
 		/// <summary>
-		/// Assigns this bot a corps role within the coalition: the strongest naval builder becomes
-		/// the naval corps, the largest army becomes the main corps, everyone else escorts. Without a
-		/// explored water body big enough for a navy, no naval corps is assigned at all.
+		/// Assigns this bot a non-overlapping coalition specialization: main, naval, expansion, or escort.
 		/// </summary>
 		string AssignRole()
 		{
@@ -1326,31 +1386,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (mine == null || blackboard.Forces.Count == 0)
 				return null;
 
-			if (!blackboard.HasBigWater)
-			{
-				// No usable water: no shipyards, no naval production, and no naval corps. Everyone
-				// fights as main/escort so the coalition does not invest in a navy it cannot use.
-				var armyMax = blackboard.Forces.Max(f => f.TotalUnits);
-				return "{\"" + player.InternalName + "\":\"" + (mine.TotalUnits == armyMax && mine.TotalUnits > 0 ? "main" : "escort") + "\"}";
-			}
-
-			var teamNavalMax = blackboard.Forces.Max(f => f.Counts[(int)UnitClass.Naval]);
-			var teamMax = blackboard.Forces.Max(f => f.TotalUnits);
-
-			string role;
-			if (teamNavalMax == 0)
-			{
-				// No navy yet: fix a naval corps to a deterministic team member so shipyards and naval
-				// production actually get built (otherwise nobody is naval, so nobody builds a navy).
-				var ordered = blackboard.Forces.OrderBy(f => f.Owner).ToArray();
-				role = ordered.Length > 1 && mine.Owner == ordered[1].Owner ? "naval" : "escort";
-			}
-			else if (mine.Counts[(int)UnitClass.Naval] > 0 && mine.Counts[(int)UnitClass.Naval] == teamNavalMax)
-				role = "naval";
-			else if (mine.TotalUnits == teamMax && mine.TotalUnits > 0)
-				role = "main";
-			else
-				role = "escort";
+			var cash = TeamPlayers().ToDictionary(p => p.InternalName,
+				p => p.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0);
+			var roles = CoalitionForceRegistry.AssignRoles(blackboard.Forces, cash, blackboard.HasBigWater);
+			var role = roles.GetValueOrDefault(mine.Owner, "escort");
 
 			return "{\"" + player.InternalName + "\":\"" + role + "\"}";
 		}
@@ -1647,7 +1686,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				ActiveHarvesterCount = blackboard.ActiveHarvesterCount,
 				ResourceCellsRemaining = blackboard.ResourceCellsRemaining,
 				MapAnalysis = blackboard.MapAnalysis,
-				ThreatField = blackboard.ThreatField()
+				ThreatField = blackboard.ThreatField(),
+				ProductionRequirements = CurrentProductionRequirements()
 			};
 		}
 
@@ -1708,7 +1748,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		int FeintPriority()
 		{
 			var effectiveness = missions.DeceptionAttempts == 0 ? 0.5f : blackboard.DeceptionEffectiveness;
-			var basePriority = blackboard.Opponent.MovesWholeArmyToDefend ? 75 : 60;
+			var basePriority = blackboard.Opponent.ShouldExploit(blackboard.Opponent.MovesWholeArmyToDefend) ? 75 : 60;
 			return (int)(basePriority + 15 * (2 * effectiveness - 1));
 		}
 

@@ -282,18 +282,16 @@ namespace OpenRA.Test
 					Is.True, $"{type} has no canonical wire form in KnownMissionTypes");
 		}
 
-		[TestCase(TestName = "KnownCapabilities includes all 8 capabilities.")]
+		[TestCase(TestName = "KnownCapabilities includes every supported production capability.")]
 		public void KnownCapabilitiesComplete()
 		{
-			Assert.That(CommandValidator.KnownCapabilities.Count, Is.EqualTo(8));
-			Assert.That(CommandValidator.KnownCapabilities.Contains("anti_air"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("anti_armor"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("anti_infantry"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("artillery"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("naval"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("recon"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("transport"), Is.True);
-			Assert.That(CommandValidator.KnownCapabilities.Contains("base_defense"), Is.True);
+			var expected = new[]
+			{
+				"anti_air", "anti_armor", "anti_infantry", "artillery", "naval", "recon",
+				"mobility", "fast_raiding", "air_superiority", "transport", "special_operations",
+				"base_defense"
+			};
+			Assert.That(CommandValidator.KnownCapabilities, Is.EquivalentTo(expected));
 		}
 
 		[TestCase(TestName = "ValidateReserveFraction accepts 0..MaxReserveFraction.")]

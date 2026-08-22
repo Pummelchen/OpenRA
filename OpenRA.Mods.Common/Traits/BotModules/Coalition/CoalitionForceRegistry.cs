@@ -11,6 +11,7 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -26,7 +27,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Naval,
 		Air,
 		Detection,
-		AntiStructure
+		AntiStructure,
+		Mobility,
+		FastRaiding,
+		AirSuperiority,
+		SpecialOperations,
+		BaseDefense
 	}
 
 	/// <summary>Coarse movement/activity state of a force group.</summary>
@@ -95,7 +101,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Friendly capabilities a unit contributes, deduplicated and in declaration order.</summary>
 		public static IReadOnlyList<FriendlyCapability> FriendlyCapabilitiesFor(UnitClass unitClass, string type,
 			FrozenSet<string> artilleryTypes, FrozenSet<string> submarineTypes, FrozenSet<string> detectionTypes,
-			FrozenSet<string> transportTypes, FrozenSet<string> scoutTypes, FrozenSet<string> antiAirTypes)
+			FrozenSet<string> transportTypes, FrozenSet<string> scoutTypes, FrozenSet<string> antiAirTypes,
+			FrozenSet<string> specialTypes = null)
 		{
 			var emitted = new List<FriendlyCapability>();
 			void Emit(FriendlyCapability capability)
@@ -109,9 +116,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				case UnitClass.Air:
 					Emit(FriendlyCapability.Air);
 					Emit(FriendlyCapability.AntiAir);
+					Emit(FriendlyCapability.AirSuperiority);
+					Emit(FriendlyCapability.Mobility);
 					break;
 				case UnitClass.Armor:
 					Emit(FriendlyCapability.AntiArmor);
+					Emit(FriendlyCapability.Mobility);
 					break;
 				case UnitClass.Infantry:
 					Emit(FriendlyCapability.AntiInfantry);
@@ -133,9 +143,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (transportTypes.Contains(type))
 				Emit(FriendlyCapability.Transport);
 			if (scoutTypes.Contains(type))
+			{
 				Emit(FriendlyCapability.Recon);
+				Emit(FriendlyCapability.FastRaiding);
+			}
 			if (antiAirTypes.Contains(type))
+			{
 				Emit(FriendlyCapability.AntiAir);
+				Emit(FriendlyCapability.BaseDefense);
+			}
+			if (specialTypes?.Contains(type) == true)
+				Emit(FriendlyCapability.SpecialOperations);
 
 			return emitted;
 		}
@@ -144,6 +162,39 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public static void Record(FriendlyCapability capability, float[] profile)
 		{
 			profile[(int)capability] = 1f;
+		}
+
+		/// <summary>
+		/// Assigns non-overlapping coalition production specializations. The strongest army is main,
+		/// a deterministic naval owner is selected only when usable water exists, and the richest
+		/// remaining ally specializes in expansion. All remaining allies escort.
+		/// </summary>
+		public static IReadOnlyDictionary<string, string> AssignRoles(IReadOnlyList<ForceGroup> forces,
+			IReadOnlyDictionary<string, int> memberCash, bool hasBigWater)
+		{
+			var roles = forces.ToDictionary(f => f.Owner, _ => "escort");
+			if (forces.Count == 0)
+				return roles;
+
+			var main = forces.OrderByDescending(f => f.TotalUnits).ThenBy(f => f.Owner).First();
+			roles[main.Owner] = "main";
+
+			ForceGroup naval = null;
+			if (hasBigWater && forces.Count > 1)
+			{
+				naval = forces.Where(f => f.Owner != main.Owner)
+					.OrderByDescending(f => f.Counts[(int)UnitClass.Naval])
+					.ThenBy(f => f.Owner).First();
+				roles[naval.Owner] = "naval";
+			}
+
+			var expansion = forces.Where(f => f.Owner != main.Owner && f.Owner != naval?.Owner)
+				.OrderByDescending(f => memberCash.GetValueOrDefault(f.Owner))
+				.ThenBy(f => f.Owner).FirstOrDefault();
+			if (expansion != null)
+				roles[expansion.Owner] = "expansion";
+
+			return roles;
 		}
 	}
 }

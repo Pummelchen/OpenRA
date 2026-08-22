@@ -26,27 +26,33 @@ namespace OpenRA.Test
 		static readonly FrozenSet<string> Transports = new[] { "lst", "heli" }.ToFrozenSet();
 		static readonly FrozenSet<string> Scouts = new[] { "e1" }.ToFrozenSet();
 		static readonly FrozenSet<string> AntiAir = new[] { "v2rl", "e3", "mig" }.ToFrozenSet();
+		static readonly FrozenSet<string> Special = new[] { "e7", "spy" }.ToFrozenSet();
 
 		static IReadOnlyList<FriendlyCapability> CapabilitiesOf(UnitClass unitClass, string type)
 		{
 			return CoalitionForceRegistry.FriendlyCapabilitiesFor(unitClass, type,
-				Artillery, Submarines, Detection, Transports, Scouts, AntiAir);
+				Artillery, Submarines, Detection, Transports, Scouts, AntiAir, Special);
 		}
 
 		[TestCase(TestName = "A fighter contributes air and anti-air capability.")]
 		public void AirCapabilities()
 		{
 			Assert.That(CapabilitiesOf(UnitClass.Air, "mig"),
-				Is.EqualTo(new[] { FriendlyCapability.Air, FriendlyCapability.AntiAir }));
+				Is.EqualTo(new[]
+				{
+					FriendlyCapability.Air, FriendlyCapability.AntiAir,
+					FriendlyCapability.AirSuperiority, FriendlyCapability.Mobility,
+					FriendlyCapability.BaseDefense
+				}));
 		}
 
 		[TestCase(TestName = "Armor contributes anti-armor; infantry contributes anti-infantry.")]
 		public void ClassCapabilities()
 		{
 			Assert.That(CapabilitiesOf(UnitClass.Armor, "4tnk"),
-				Is.EqualTo(new[] { FriendlyCapability.AntiArmor }));
+				Is.EqualTo(new[] { FriendlyCapability.AntiArmor, FriendlyCapability.Mobility }));
 			Assert.That(CapabilitiesOf(UnitClass.Infantry, "e7"),
-				Is.EqualTo(new[] { FriendlyCapability.AntiInfantry }));
+				Is.EqualTo(new[] { FriendlyCapability.AntiInfantry, FriendlyCapability.SpecialOperations }));
 		}
 
 		[TestCase(TestName = "Artillery types also contribute siege/anti-structure capability, deduplicated.")]
@@ -56,8 +62,9 @@ namespace OpenRA.Test
 			Assert.That(CapabilitiesOf(UnitClass.Armor, "v2rl"),
 				Is.EqualTo(new[]
 				{
-					FriendlyCapability.AntiArmor, FriendlyCapability.Artillery,
-					FriendlyCapability.AntiStructure, FriendlyCapability.AntiAir
+					FriendlyCapability.AntiArmor, FriendlyCapability.Mobility,
+					FriendlyCapability.Artillery, FriendlyCapability.AntiStructure,
+					FriendlyCapability.AntiAir, FriendlyCapability.BaseDefense
 				}));
 		}
 
@@ -67,7 +74,11 @@ namespace OpenRA.Test
 			Assert.That(CapabilitiesOf(UnitClass.Naval, "lst"),
 				Is.EqualTo(new[] { FriendlyCapability.Naval, FriendlyCapability.Transport }));
 			Assert.That(CapabilitiesOf(UnitClass.Infantry, "e1"),
-				Is.EqualTo(new[] { FriendlyCapability.AntiInfantry, FriendlyCapability.Recon }));
+				Is.EqualTo(new[]
+				{
+					FriendlyCapability.AntiInfantry, FriendlyCapability.Recon,
+					FriendlyCapability.FastRaiding
+				}));
 		}
 
 		[TestCase(TestName = "A detector contributes detection on top of its class capability.")]
@@ -109,6 +120,28 @@ namespace OpenRA.Test
 			Assert.That(CoalitionBlackboard.ComputeCohesion(tight), Is.GreaterThan(0.9f));
 			Assert.That(CoalitionBlackboard.ComputeCohesion(loose), Is.LessThan(0.6f));
 			Assert.That(CoalitionBlackboard.ComputeCohesion([]), Is.EqualTo(1f));
+		}
+
+		[TestCase(TestName = "Coalition roles specialize main, naval, and expansion allies without overlap.")]
+		public void ProductionSpecializations()
+		{
+			var forces = new[]
+			{
+				new ForceGroup("A") { TotalUnits = 20 },
+				new ForceGroup("B") { TotalUnits = 10 },
+				new ForceGroup("C") { TotalUnits = 5 }
+			};
+			forces[1].Counts[(int)UnitClass.Naval] = 4;
+			var cash = new Dictionary<string, int> { ["A"] = 1000, ["B"] = 2000, ["C"] = 5000 };
+
+			var roles = CoalitionForceRegistry.AssignRoles(forces, cash, hasBigWater: true);
+			Assert.That(roles["A"], Is.EqualTo("main"));
+			Assert.That(roles["B"], Is.EqualTo("naval"));
+			Assert.That(roles["C"], Is.EqualTo("expansion"));
+
+			roles = CoalitionForceRegistry.AssignRoles(forces, cash, hasBigWater: false);
+			Assert.That(roles.Values, Does.Not.Contain("naval"));
+			Assert.That(roles["C"], Is.EqualTo("expansion"));
 		}
 	}
 }

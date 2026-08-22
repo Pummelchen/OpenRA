@@ -166,7 +166,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The capability vocabulary the LLM may request via request_capability.</summary>
 		public static readonly IReadOnlySet<string> KnownCapabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 		{
-			"anti_air", "anti_armor", "anti_infantry", "artillery", "naval", "recon", "transport", "base_defense"
+			"anti_air", "anti_armor", "anti_infantry", "artillery", "naval", "recon", "mobility",
+			"fast_raiding", "air_superiority", "transport", "special_operations", "base_defense"
 		};
 
 		/// <summary>

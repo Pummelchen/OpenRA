@@ -136,5 +136,51 @@ namespace OpenRA.Test
 			var material = Profile((CoalitionCapability.AntiAir, 1f));
 			Assert.That(ProductionContract.Resolve(material, Contracts(), _ => 0, true, 0.1f), Is.Null);
 		}
+
+		[TestCase(TestName = "Operational missions create explicit non-counter capability requirements.")]
+		public void OperationalRequirements()
+		{
+			var requirements = ProductionContract.DetermineRequirements(
+				enemyLocationUnknown: true, enemyAirPresent: true, longGroundRoute: true,
+				raidMission: true, transportMission: true, specialOperationsMission: true,
+				navalMission: true, hasBigWater: true);
+
+			Assert.That(requirements, Is.EqualTo(new[]
+			{
+				"recon", "mobility", "fast_raiding", "air_superiority", "transport",
+				"special_operations", "naval"
+			}));
+			Assert.That(ProductionContract.DetermineRequirements(false, false, false, false, false, false, true, false),
+				Is.Empty, "naval capability must not be requested without usable water");
+		}
+
+		[TestCase(TestName = "An allied capability satisfies the coalition requirement and prevents duplication.")]
+		public void AlliedCapabilitySatisfiesRequirement()
+		{
+			var ally = new ForceGroup("Multi1");
+			CoalitionForceRegistry.Record(FriendlyCapability.Transport, ally.Capabilities);
+			CoalitionForceRegistry.Record(FriendlyCapability.SpecialOperations, ally.Capabilities);
+
+			Assert.That(ProductionContract.IsSatisfied("transport", new[] { ally }), Is.True);
+			Assert.That(ProductionContract.IsSatisfied("special_operations", new[] { ally }), Is.True);
+			Assert.That(ProductionContract.IsSatisfied("air_superiority", new[] { ally }), Is.False);
+		}
+
+		[TestCase(TestName = "Destroyed production infrastructure triggers the first valid emergency replacement.")]
+		public void EmergencyReplacement()
+		{
+			var critical = new[] { "weap", "barr", "proc" };
+			var existing = new HashSet<string> { "barr" };
+			var queued = new HashSet<string> { "proc" };
+			var buildable = new HashSet<string> { "weap", "barr", "proc" };
+
+			Assert.That(ProductionContract.SelectEmergencyReplacement(true, critical,
+				existing.Contains, queued.Contains, buildable.Contains), Is.EqualTo("weap"));
+			existing.Add("weap");
+			Assert.That(ProductionContract.SelectEmergencyReplacement(true, critical,
+				existing.Contains, queued.Contains, buildable.Contains), Is.Null);
+			Assert.That(ProductionContract.SelectEmergencyReplacement(false, critical,
+				_ => false, _ => false, _ => true), Is.Null);
+		}
 	}
 }

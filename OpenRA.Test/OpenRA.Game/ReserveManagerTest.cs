@@ -43,5 +43,14 @@ namespace OpenRA.Test
 			Assert.That(ReserveManager.RequiresJustification(5, 10), Is.False);
 			Assert.That(ReserveManager.RequiresJustification(9, 10), Is.False);
 		}
+
+		[TestCase(TestName = "Breakthrough reserve is committed only during exploitation.")]
+		public void ExploitationPhaseGate()
+		{
+			Assert.That(ReserveManager.ShouldExploit("breach"), Is.False);
+			Assert.That(ReserveManager.ShouldExploit("Exploitation"), Is.True);
+			Assert.That(ReserveManager.ShouldExploit("consolidation"), Is.False);
+			Assert.That(ReserveManager.ShouldExploit(null), Is.False);
+		}
 	}
 }

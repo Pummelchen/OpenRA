@@ -67,6 +67,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int ResourceCellsRemaining;
 		public CoalitionMapAnalysis MapAnalysis;
 		public float[][] ThreatField;
+		public string[] ProductionRequirements = [];
 
 		/// <summary>The region containing a cell, matching the blackboard's partition.</summary>
 		public int RegionOf(CPos cell)
@@ -98,7 +99,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public static readonly string[] FriendlyCapabilityKeys =
 		{
 			"anti_air", "anti_armor", "anti_infantry", "artillery", "recon", "transport",
-			"naval", "air", "detection", "anti_structure"
+			"naval", "air", "detection", "anti_structure", "mobility", "fast_raiding",
+			"air_superiority", "special_operations", "base_defense"
 		};
 
 		/// <summary>
@@ -236,6 +238,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["enemy_army_count"] = context.EnemyArmyCount,
 				["home_region"] = context.HomeRegion,
 				["enemy_region"] = context.EnemyRegion,
+				["production_requirements"] = new JsonArray(
+					context.ProductionRequirements.Select(r => (JsonNode)r).ToArray()),
 				["deception_effectiveness"] = Round(context.DeceptionEffectiveness),
 				["deception_enemies_drawn"] = context.DeceptionEnemiesDrawn
 			});
@@ -359,9 +363,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["average_response_time"] = Round(opponent.AverageResponseTime),
 				["response_samples"] = opponent.ResponseSamples,
 				["responds_strongly_to_raids"] = opponent.RespondsStronglyToRaids,
+				["raid_response_rate"] = Round(opponent.RaidResponseRate),
+				["raid_response_samples"] = opponent.RaidResponseSamples,
+				["responds_strongly_to_feints"] = opponent.RespondsStronglyToFeints,
+				["feint_response_rate"] = Round(opponent.FeintResponseRate),
+				["feint_response_samples"] = opponent.FeintResponseSamples,
 				["moves_whole_army_to_defend"] = opponent.MovesWholeArmyToDefend,
 				["attacks_harvesters"] = opponent.AttacksHarvesters,
 				["expansion_count"] = opponent.ExpansionCount,
+				["average_expansion_tick"] = Round(opponent.AverageExpansionTick),
+				["expansion_samples"] = opponent.ExpansionSamples,
 				["confidence"] = Round(opponent.Confidence),
 				["playstyle"] = opponent.Playstyle,
 				["predicted_build"] = opponent.PredictedBuild

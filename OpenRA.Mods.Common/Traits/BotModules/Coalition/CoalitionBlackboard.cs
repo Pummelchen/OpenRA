@@ -160,9 +160,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public float AverageResponseTime;
 		public int ResponseSamples;
 		public bool RespondsStronglyToRaids;
+		public float RaidResponseRate;
+		public int RaidResponseSamples;
+		public bool RespondsStronglyToFeints;
+		public float FeintResponseRate;
+		public int FeintResponseSamples;
 		public bool MovesWholeArmyToDefend;
 		public bool AttacksHarvesters;
 		public int ExpansionCount;
+		public float AverageExpansionTick;
+		public int ExpansionSamples;
 
 		/// <summary>0..1 confidence in the profile: more observations make the model more reliable.</summary>
 		public float Confidence;
@@ -177,6 +184,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			AverageResponseTime = (AverageResponseTime * ResponseSamples + seconds) / (ResponseSamples + 1);
 			ResponseSamples++;
+		}
+
+		/// <summary>
+		/// Historical patterns only alter plans once the model is reliable. Below the threshold they
+		/// remain context for reconnaissance, never a guaranteed prediction.
+		/// </summary>
+		public bool ShouldExploit(bool pattern, float minimumConfidence = 0.6f)
+		{
+			return pattern && Confidence >= minimumConfidence;
 		}
 
 		/// <summary>
@@ -416,7 +432,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var activity = a.CurrentActivity?.GetType().Name ?? "Idle";
 				group.ActivityCounts[activity] = group.ActivityCounts.GetValueOrDefault(activity) + 1;
 				foreach (var capability in CoalitionForceRegistry.FriendlyCapabilitiesFor(unitClass, a.Info.Name,
-					artilleryTypes, submarineTypes, detectionTypes, transportTypes, scoutTypes, antiAirTypes))
+					artilleryTypes, submarineTypes, detectionTypes, transportTypes, scoutTypes, antiAirTypes, specialTypes))
 					CoalitionForceRegistry.Record(capability, group.Capabilities);
 
 				if (group.Status != ForceStatus.Moving && !a.IsIdle)

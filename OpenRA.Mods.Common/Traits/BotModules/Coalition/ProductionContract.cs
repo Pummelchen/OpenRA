@@ -110,5 +110,77 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			return result.ToArray();
 		}
+
+		/// <summary>
+		/// Derives non-counter capability requirements from current operational commitments. These
+		/// requirements are tracked separately from enemy counter contracts because reconnaissance,
+		/// mobility, raiding, transport, and special operations may be needed without a matching enemy
+		/// unit type.
+		/// </summary>
+		public static string[] DetermineRequirements(bool enemyLocationUnknown, bool enemyAirPresent,
+			bool longGroundRoute, bool raidMission, bool transportMission, bool specialOperationsMission,
+			bool navalMission, bool hasBigWater)
+		{
+			var requirements = new List<string>();
+			void Add(string requirement)
+			{
+				if (!requirements.Contains(requirement))
+					requirements.Add(requirement);
+			}
+
+			if (enemyLocationUnknown)
+				Add("recon");
+			if (longGroundRoute)
+				Add("mobility");
+			if (raidMission)
+				Add("fast_raiding");
+			if (enemyAirPresent)
+				Add("air_superiority");
+			if (transportMission)
+				Add("transport");
+			if (specialOperationsMission)
+				Add("special_operations");
+			if (navalMission && hasBigWater)
+				Add("naval");
+
+			return requirements.ToArray();
+		}
+
+		/// <summary>True when any allied force already supplies a requested functional capability.</summary>
+		public static bool IsSatisfied(string requirement, IEnumerable<ForceGroup> forces)
+		{
+			bool Has(FriendlyCapability capability) => forces.Any(f => f.Capabilities[(int)capability] > 0f);
+			return requirement switch
+			{
+				"anti_air" => Has(FriendlyCapability.AntiAir),
+				"anti_armor" => Has(FriendlyCapability.AntiArmor),
+				"anti_infantry" => Has(FriendlyCapability.AntiInfantry),
+				"artillery" => Has(FriendlyCapability.Artillery),
+				"recon" => Has(FriendlyCapability.Recon),
+				"mobility" => Has(FriendlyCapability.Mobility),
+				"fast_raiding" => Has(FriendlyCapability.FastRaiding),
+				"air_superiority" => Has(FriendlyCapability.AirSuperiority),
+				"transport" => Has(FriendlyCapability.Transport),
+				"special_operations" => Has(FriendlyCapability.SpecialOperations),
+				"naval" => Has(FriendlyCapability.Naval),
+				"base_defense" => Has(FriendlyCapability.BaseDefense),
+				_ => false
+			};
+		}
+
+		/// <summary>
+		/// Selects the first buildable, absent, and not-already-queued critical structure while under
+		/// defensive emergency. Re-evaluating live existence each build review makes destruction of a
+		/// previously healthy factory immediately create a replacement order.
+		/// </summary>
+		public static string SelectEmergencyReplacement(bool defending, IEnumerable<string> criticalBuildings,
+			Func<string, bool> exists, Func<string, bool> queued, Func<string, bool> buildable)
+		{
+			if (!defending)
+				return null;
+
+			return criticalBuildings.FirstOrDefault(building =>
+				!exists(building) && !queued(building) && buildable(building));
+		}
 	}
 }

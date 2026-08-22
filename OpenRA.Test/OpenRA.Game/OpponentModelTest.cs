@@ -88,5 +88,16 @@ namespace OpenRA.Test
 			Assert.That(OpponentModel.DerivePredictedBuild("weap"), Is.EqualTo("armor"));
 			Assert.That(OpponentModel.DerivePredictedBuild("barr"), Is.Null, "A barracks reveals no tech direction.");
 		}
+
+		[TestCase(TestName = "Opponent history is exploited only after confidence becomes reliable.")]
+		public void ReliablePatternsOnly()
+		{
+			var model = new OpponentModel { MovesWholeArmyToDefend = true, Confidence = 0.4f };
+			Assert.That(model.ShouldExploit(model.MovesWholeArmyToDefend), Is.False);
+
+			model.Confidence = 0.7f;
+			Assert.That(model.ShouldExploit(model.MovesWholeArmyToDefend), Is.True);
+			Assert.That(model.ShouldExploit(pattern: false), Is.False);
+		}
 	}
 }

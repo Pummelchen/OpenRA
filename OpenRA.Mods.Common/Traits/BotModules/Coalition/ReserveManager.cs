@@ -48,5 +48,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			return units < minWaveSize / 2;
 		}
+
+		/// <summary>True only during the mission phase that can turn a breach into exploitation.</summary>
+		public static bool ShouldExploit(string missionPhase)
+		{
+			return string.Equals(missionPhase, "exploitation", System.StringComparison.OrdinalIgnoreCase);
+		}
 	}
 }

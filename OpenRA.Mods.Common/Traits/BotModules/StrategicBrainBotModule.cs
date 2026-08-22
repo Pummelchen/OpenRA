@@ -284,10 +284,12 @@ namespace OpenRA.Mods.Common.Traits
 		CPos? transportTarget;
 		CPos? strikeTarget;
 		CPos? supportPowerTarget;
+		CPos? expansionGuardTarget;
 		string transportKind;
 		string strikeKind;
 		string defenseKind;
 		string deceptionKind;
+		string attackPhase;
 		string[] produceBoost;
 		bool teamRetreat;
 		int feintTick;
@@ -499,6 +501,8 @@ namespace OpenRA.Mods.Common.Traits
 			public int AttackTick { get; set; }
 			public string DefenseKind { get; set; }
 			public string DeceptionKind { get; set; }
+			public string AttackPhase { get; set; }
+			public TeamTarget ExpansionGuard { get; set; }
 			public int ExpansionPriority { get; set; }
 			public float AcceptableLoss { get; set; }
 			public bool CommitReserve { get; set; }
@@ -556,12 +560,14 @@ namespace OpenRA.Mods.Common.Traits
 			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
 			defenseKind = plan.DefenseKind;
 			deceptionKind = plan.DeceptionKind;
+			attackPhase = plan.AttackPhase;
+			expansionGuardTarget = ClampCell(ToCell(plan.ExpansionGuard));
 			acceptableLossFraction = Math.Clamp(plan.AcceptableLoss, 0f, 1f);
 			teamCommitReserve = plan.CommitReserve;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
 			foreach (var expansion in player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>())
-				expansion.SetStrategicPriority(plan.ExpansionPriority);
+				expansion.SetStrategicPriority(teamRole == "expansion" ? 1 : plan.ExpansionPriority);
 			if (plan.Force != null)
 			{
 				coalitionArmy = plan.Force.Army;
@@ -644,16 +650,15 @@ namespace OpenRA.Mods.Common.Traits
 				if (buildingQueue != null)
 				{
 					var criticalBuildings = new[] { "weap", "barr", "tent", "proc", "powr", "apwr" };
-					foreach (var building in criticalBuildings)
+					var replacement = ProductionContract.SelectEmergencyReplacement(true, criticalBuildings,
+						building => world.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.Name == building),
+						building => queues.Any(q => q.AllQueued().Any(i => i.Item == building)),
+						building => buildingQueue.BuildableItems().Any(i => i.Name == building));
+					if (replacement != null)
 					{
-						var exists = world.Actors.Any(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.Info.Name == building);
-						var alreadyQueued = queues.Any(q => q.AllQueued().Any(i => i.Item == building));
-						if (!exists && !alreadyQueued && buildingQueue.BuildableItems().Any(i => i.Name == building))
-						{
-							bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, building, 1));
-							CoalitionTelemetry.Log(world, $"Emergency replacement: {building} ordered");
-							return;
-						}
+						bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, replacement, 1));
+						CoalitionTelemetry.Log(world, $"Emergency replacement: {replacement} ordered");
+						return;
 					}
 				}
 			}
@@ -794,7 +799,10 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				SetPosture(Posture.Defend);
 				lastDefendTick = world.WorldTick;
-				counterPos = world.Map.CellContaining(baseThreat.Value);
+				// The counterattack objective is the best observed estimate of where the attackers
+				// originated: a currently/previously observed enemy base center when available, otherwise
+				// the contact cell. No hidden actor position is consulted.
+				counterPos = world.Map.CellContaining(enemyBaseCenter ?? baseThreat.Value);
 				enemyCountAtDefense = enemyArmyCount;
 
 				var nearby = sightings.Values.Count(s =>
@@ -857,7 +865,8 @@ namespace OpenRA.Mods.Common.Traits
 			var ccModule = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 			var sharedBB = ccModule?.Blackboard;
-			if (attackTarget != null && reserve.Length >= info.MinWaveSize / 2)
+			if (attackTarget != null && ReserveManager.ShouldExploit(attackPhase)
+				&& reserve.Length >= info.MinWaveSize / 2)
 			{
 				var exploitReserve = Claim(reserve).ToArray();
 				if (exploitReserve.Length > 0)
@@ -866,25 +875,24 @@ namespace OpenRA.Mods.Common.Traits
 
 			// Reserve protect expansion (req 359): when a new expansion is detected, assign a small
 			// reserve force to guard it.
-			var expansionManager = player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>()
-				.FirstOrDefault(m => !m.IsTraitDisabled);
-			if (expansionManager != null && reserve.Length >= info.MinWaveSize / 2)
+			if (expansionGuardTarget != null && reserve.Length >= info.MinWaveSize / 2)
 			{
 				var expansionGuard = Claim(reserve).Take(Math.Min(reserve.Length, info.MinWaveSize / 2)).ToArray();
 				if (expansionGuard.Length > 0)
-				{
-					var expansionCenter = BaseCenter();
-					var expansionCell = expansionCenter != null
-						? world.Map.CellContaining(expansionCenter.Value)
-						: player.HomeLocation;
-					ReserveProtectExpansion(bot, expansionGuard, expansionCell);
-				}
+					ReserveProtectExpansion(bot, expansionGuard, expansionGuardTarget.Value);
 			}
 
 			// Counterattack-after-defense: shortly after repelling an attack, strike back at the
 			// attacker with the whole army - no coordinated gate, the enemy force is weakened.
 			// Gate on the shared blackboard so only one bot fires the counterattack per window.
-			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && activeArmy.Length >= info.MinWaveSize
+			var enemyNearOrigin = counterPos == null ? 0 : sightings.Values.Count(s => !s.IsStructure
+				&& (s.Position - world.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
+			var productionAtOrigin = counterPos != null && sightings.Values.Any(s => s.IsStructure
+				&& s.Type is "weap" or "afld" or "hpad" or "barr" or "tent" or "spen" or "syrd" or "fact"
+				&& (s.Position - world.Map.CenterOfCell(counterPos.Value)).LengthSquared <= BaseRadiusSquared(15));
+			var counterDecision = CounterattackAssessment.Evaluate(activeArmy.Length, enemyCountAtDefense,
+				enemyArmyCount, enemyNearOrigin, productionAtOrigin, info.MinWaveSize);
+			if (world.WorldTick - lastDefendTick <= info.CounterDelayTicks && counterPos != null && counterDecision.ShouldLaunch
 				&& (sharedBB == null || world.WorldTick - sharedBB.LastCounterattackTick >= info.CounterDelayTicks / 2))
 			{
 				if (sharedBB != null)
@@ -893,16 +901,15 @@ namespace OpenRA.Mods.Common.Traits
 				if (counter.Length > 0)
 				{
 					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, counterPos.Value), false, groupedActors: counter));
-					var depleted = enemyCountAtDefense > 0 && enemyArmyCount < enemyCountAtDefense;
 					CoalitionTelemetry.Log(world,
-						$"Counterattack with {counter.Length} units after defense{(depleted ? " (enemy depleted)" : string.Empty)}");
+						$"Counterattack with {counter.Length} units toward estimated origin {counterPos.Value}: {counterDecision.Reason}");
 
 					// Record counterattack and base defense response telemetry (reqs 620, 621).
 					var ccModuleForCounter = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
 						.FirstOrDefault(m => !m.IsTraitDisabled);
 					if (ccModuleForCounter != null)
 					{
-						var enemyDestroyed = depleted ? enemyCountAtDefense - enemyArmyCount : 0;
+						var enemyDestroyed = counterDecision.EnemyDepleted ? enemyCountAtDefense - enemyArmyCount : 0;
 						ccModuleForCounter.RecordCounterattack(Math.Max(0, enemyDestroyed));
 						ccModuleForCounter.RecordBaseDefenseResponse(lastDefendTick, world.WorldTick);
 					}

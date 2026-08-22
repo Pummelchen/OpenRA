@@ -287,6 +287,17 @@ production capabilities, acceptable loss, reserve size/commitment, expansion tim
 for secondary operations. Each map region may independently override the global posture from its own
 friendly control, enemy pressure, and expansion value.
 
+Operation-driven production requirements are reported in `get_global_summary.production_requirements`.
+The tracked vocabulary is `recon`, `mobility`, `fast_raiding`, `air_superiority`, `transport`,
+`special_operations`, and `naval`. Requirements are coalition-wide: production is not duplicated when
+any ally already supplies the capability. Production roles are non-overlapping (`main`, `naval`,
+`expansion`, `escort`), and the richest otherwise-unassigned ally receives expansion specialization.
+
+`get_opponent_model` reports sample-backed raid and feint response rates plus observed expansion timing.
+Historical tendencies affect bait/feint planning only after model confidence reaches 0.6; lower-confidence
+history remains an uncertainty rather than a guaranteed prediction. Immediate counterattacks likewise
+require observed attacker depletion or an exposed production origin and a verified local advantage.
+
 **Rule:** the commander may *not* move/attack individual units except through a
 tightly-scoped `emergency_unit_order` tool (survival only).
 
