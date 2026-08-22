@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -30,6 +31,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		float idleFractionSum;
 		float cohesionSum;
 		float cashSum;
+		float productionIdleFractionSum;
+		float reserveAvailabilitySum;
+		int operationsSamples;
 
 		// Economic damage: refineries/harvesters destroyed (friendly and enemy), tracked via peak deltas.
 		int friendlyRefineryPeak;
@@ -45,6 +49,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		// Retreat timings: (tick, unitCount) when retreats happen (req 614).
 		readonly List<(int Tick, int UnitCount)> retreatTimings = [];
+		int retreatSurvivors;
+		int completedRetreats;
 
 		// Recon efficiency: (missionsSent, usefulIntelGained) (req 616).
 		int reconMissionsSent;
@@ -72,6 +78,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		// Win/loss result (set at game end).
 		public bool? Won;
+		public int DurationTicks { get; private set; }
 
 		/// <summary>The most recent combat win-ratio estimate, for comparing predictions against actual outcomes.</summary>
 		public float LastWinRatioEstimate;
@@ -124,6 +131,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public float AverageCash => samples == 0 ? 0f : cashSum / samples;
 
+		public float AverageProductionIdleFraction => operationsSamples == 0 ? 0f
+			: productionIdleFractionSum / operationsSamples;
+
+		public float AverageReserveAvailability => operationsSamples == 0 ? 0f
+			: reserveAvailabilitySum / operationsSamples;
+
 		public int FriendlyRefineryLosses => friendlyRefineryLosses;
 		public int EnemyRefineryLosses => enemyRefineryLosses;
 		/// <summary>Expansion (MCV deployment) ticks, in order (req 608).</summary>
@@ -131,6 +144,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>Base-defense response times as (threatTick, responseTick) pairs (req 621).</summary>
 		public IReadOnlyList<(int ThreatTick, int ResponseTick)> BaseDefenseResponseTime => baseDefenseResponseTimes;
+
+		/// <summary>Wave count plus average and worst synchronization error in ticks.</summary>
+		public SynchronizationStats Synchronization => synchronizationErrors.Count == 0
+			? new SynchronizationStats(0, 0f, 0)
+			: new SynchronizationStats(synchronizationErrors.Count,
+				(float)synchronizationErrors.Average(e => e.ErrorTicks),
+				synchronizationErrors.Max(e => e.ErrorTicks));
+
+		/// <summary>Retreat starts and completed outcomes, including the preserved-unit fraction.</summary>
+		public RetreatStats RetreatEffectiveness
+		{
+			get
+			{
+				var committed = retreatTimings.Sum(e => e.UnitCount);
+				return new RetreatStats(retreatTimings.Count, completedRetreats, committed, retreatSurvivors,
+					committed == 0 ? 0f : (float)retreatSurvivors / committed);
+			}
+		}
 
 		/// <summary>Recon missions sent and how many produced useful intel (req 616).</summary>
 		public ReconStats ReconEfficiency => new(reconMissionsSent, reconUsefulIntel);
@@ -157,6 +188,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public readonly record struct FeintStats(int Feints, int OpenedWindow);
 
+		public readonly record struct SynchronizationStats(int Waves, float AverageErrorTicks, int MaximumErrorTicks);
+
+		public readonly record struct RetreatStats(int Started, int Completed, int UnitsCommitted,
+			int UnitsSurvived, float PreservationRate);
+
+		/// <summary>Records production-queue idle time and the fraction of combat power held in reserve.</summary>
+		public void SampleOperations(float productionIdleFraction, float reserveAvailability)
+		{
+			operationsSamples++;
+			productionIdleFractionSum += Math.Clamp(productionIdleFraction, 0f, 1f);
+			reserveAvailabilitySum += Math.Clamp(reserveAvailability, 0f, 1f);
+		}
 
 		/// <summary>Records one sample of economic infrastructure (refinery counts) for damage tracking.</summary>
 		public void SampleEconomy(int friendlyRefineries, int enemyRefineries)
@@ -179,9 +222,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>Records the final win/loss result at game end.</summary>
-		public void RecordResult(bool won)
+		public void RecordResult(bool won, int durationTicks = 0)
 		{
 			Won = won;
+			DurationTicks = Math.Max(0, durationTicks);
 		}
 
 		/// <summary>Records the tick of an MCV deployment/expansion (req 608).</summary>
@@ -199,7 +243,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Records a retreat event with the unit count that withdrew (req 614).</summary>
 		public void RecordRetreat(int tick, int unitCount)
 		{
-			retreatTimings.Add((tick, unitCount));
+			retreatTimings.Add((tick, Math.Max(0, unitCount)));
+		}
+
+		/// <summary>Records how many of the most recently committed retreat force survived withdrawal.</summary>
+		public void RecordRetreatOutcome(int survivingUnits)
+		{
+			if (completedRetreats >= retreatTimings.Count)
+				return;
+
+			var committed = retreatTimings[completedRetreats].UnitCount;
+			retreatSurvivors += Math.Clamp(survivingUnits, 0, committed);
+			completedRetreats++;
 		}
 
 		/// <summary>Records a recon mission and whether it produced useful intel (req 616).</summary>
@@ -258,10 +313,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				? "Match metrics: no samples"
 				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {enemyValueDestroyed:0} / friendly {friendlyValueLost:0} lost), " +
 					$"econ dmg (enemy refineries lost {enemyRefineryLosses}, friendly {friendlyRefineryLosses}), " +
-					$"avg idle {AverageIdleFraction * 100:0}%, cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, " +
-					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, samples {samples}, " +
-					$"expansions {expansionTimings.Count}, sync errors {synchronizationErrors.Count}, " +
-					$"retreats {retreatTimings.Count}, recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
+					$"avg army idle {AverageIdleFraction * 100:0}%, production idle {AverageProductionIdleFraction * 100:0}%, " +
+					$"cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, reserve {AverageReserveAvailability * 100:0}%, " +
+					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {(Won == null ? "ongoing" : Won.Value ? "WIN" : "LOSS")}, duration {DurationTicks} ticks, samples {samples}, " +
+					$"expansions {expansionTimings.Count}, sync {Synchronization.AverageErrorTicks:0.0} avg/{Synchronization.MaximumErrorTicks} max ticks, " +
+					$"retreats {RetreatEffectiveness.Completed}/{RetreatEffectiveness.Started} complete ({RetreatEffectiveness.PreservationRate * 100:0}% preserved), recon {reconMissionsSent}/{reconUsefulIntel} useful, " +
 					$"transports {transportSurvived}/{transportTotal} survived, " +
 					$"counterattacks {counterattacksLaunched} ({counterattackEnemyDestroyed} destroyed), " +
 					$"base defense responses {baseDefenseResponseTimes.Count}, " +

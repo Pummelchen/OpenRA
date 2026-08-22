@@ -288,9 +288,9 @@ namespace OpenRA.Mods.Common.Traits
 			var sumX = 0L;
 			var sumY = 0L;
 			foreach (var a in enemyActors)
-			{
-				enemyByType.TryGetValue(a.Info.Name, out var n);
-				enemyByType[a.Info.Name] = n + 1;
+				{
+					enemyByType.TryGetValue(a.Info.Name, out var n);
+					enemyByType[a.Info.Name] = n + 1;
 					sumX += a.Location.X;
 					sumY += a.Location.Y;
 				}

@@ -202,6 +202,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly CoalitionMatchMetrics matchMetrics = new();
 		int lastMetricsSummaryTick = int.MinValue;
 		int lastFloatingTick = int.MinValue;
+		string lastProductionDirective;
 
 		// Durable peak construction-yard count, for detecting new expansions (req 608).
 		int peakConyardCount;
@@ -284,6 +285,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			matchMetrics.RecordRetreat(tick, unitCount);
 		}
 
+		/// <summary>Records how many units survived the most recently started retreat.</summary>
+		public void RecordRetreatOutcome(int survivingUnits)
+		{
+			matchMetrics.RecordRetreatOutcome(survivingUnits);
+		}
+
 		/// <summary>Records a recon mission outcome for telemetry (req 616).</summary>
 		public void RecordReconMission(bool usefulIntel)
 		{
@@ -327,6 +334,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		static readonly JsonSerializerOptions IntentOptions = new() { PropertyNameCaseInsensitive = true };
+
+		/// <summary>True only when the resolved production priority actually changed.</summary>
+		public static bool ProductionDirectiveChanged(string previous, string current)
+		{
+			return previous != current;
+		}
 
 		public CoalitionCommandCenterBotModule(CoalitionCommandCenterBotModuleInfo info, ActorInitializer init)
 			: base(info)
@@ -427,9 +440,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// A ready strategic superweapon wakes the commander to plan a support-power strike.
 			if (blackboard.HasReadySuperweapon && !lastSuperweaponReady)
 			{
-					lastSuperweaponReady = true;
-					return "support power ready";
-				}
+				lastSuperweaponReady = true;
+				return "support power ready";
+			}
 
 			lastSuperweaponReady = blackboard.HasReadySuperweapon;
 
@@ -437,9 +450,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var specialCount = blackboard.SpecialAssets.Count;
 			if (specialCount > lastSpecialAssetCount)
 			{
-					lastSpecialAssetCount = specialCount;
-					return "special unit available";
-				}
+				lastSpecialAssetCount = specialCount;
+				return "special unit available";
+			}
 
 			lastSpecialAssetCount = specialCount;
 
@@ -719,6 +732,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (llmIntent?.ProductionDirective != null && llmIntent.ProductionDirective.Length > 0)
 				produceJson = MergeProduce(produceJson, llmIntent.ProductionDirective);
 
+			if (ProductionDirectiveChanged(lastProductionDirective, produceJson))
+			{
+				lastProductionDirective = produceJson;
+				CoalitionTelemetry.Log(world, $"Production priorities changed: {produceJson}");
+			}
+
 			// Corps role assignment: specialize this bot within the coalition (naval/main/escort).
 			var rolesJson = AssignRole();
 
@@ -833,6 +852,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				cohesion = 1f;
 
 			matchMetrics.Sample(friendlyValue, enemyValue, idle, cohesion, blackboard.CoalitionCash);
+			var productionIdle = blackboard.Facilities.Count == 0 ? 1f
+				: blackboard.Facilities.Count(f => f.Current == null) * 1f / blackboard.Facilities.Count;
+			var reserveFraction = brain?.CurrentReserveFraction
+				?? PostureSelection.PolicyFor(strategicPosture).ReserveFraction;
+			matchMetrics.SampleOperations(productionIdle, reserveFraction <= 0 ? 0f : 1f / reserveFraction);
 
 			// Economic damage tracking: sample refinery counts for both sides.
 			var friendlyRefineries = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName) && a.Info.HasTraitInfo<RefineryInfo>());
@@ -886,7 +910,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (world.IsGameOver)
 			{
 				var won = player.WinState == WinState.Won;
-				matchMetrics.RecordResult(won);
+				matchMetrics.RecordResult(won, world.WorldTick);
 				CoalitionTelemetry.Log(world, matchMetrics.Summary());
 				CoalitionTelemetry.Log(world, missions.MissionSummary());
 			}
@@ -1467,6 +1491,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					CoalitionTelemetry.Log(world, $"Order arbiter: {rejection}");
 
 				mission.AssignedForces = arbiter.ForcesOf(mission.Id).ToList();
+				if (MissionManager.IsDeception(mission.Type))
+					mission.FriendlyValueCommitted = force.TotalUnits;
 				EnrichMission(mission);
 			}
 

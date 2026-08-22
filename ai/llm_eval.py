@@ -347,7 +347,7 @@ def score_idle_forces(lines: list[str]) -> dict:
     idle_fractions: list[float] = []
     for raw in lines:
         msg = _strip_timestamp(raw)
-        m = re.search(r"avg idle (\d+)%", msg)
+        m = re.search(r"avg (?:army )?idle (\d+)%", msg)
         if m:
             idle_fractions.append(int(m.group(1)) / 100.0)
 

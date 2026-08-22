@@ -59,7 +59,8 @@ The game also serves an **engine-validated tool API** for the commander
 `get_economy_state` (cash, power, refineries, harvesters, resources), `get_production_state`
 (queues + progress), `compare_force_packages`, `estimate_enemy_response`, `find_attack_windows`,
 `find_special_ops_routes`, `get_mission_status`, `get_force_readiness`, `get_transport_status`,
-`get_route_status`. Every call is validated against the live blackboard and answered from
+`get_route_status`, plus the production, mission, force, reserve, reconnaissance, and posture
+mutation tools documented in `COMMAND_API.md`. Every call is validated against the live blackboard and answered from
 deterministic engine computations — the LLM never receives fabricated mechanics. The model
 server forwards the commander's function calls here and relays results back into the conversation:
 
@@ -70,12 +71,12 @@ curl -X POST http://127.0.0.1:8766/tools -d '{"tool":"get_global_summary","argum
 
 Set `AI_TOOL_ENDPOINT` (default `http://127.0.0.1:8766/tools`, empty disables) to point the
 server at a different engine; at startup the server probes the endpoint and only enables
-tool calls when the engine answers. The endpoint is read-only — tool calls never issue
-orders, so serving it cannot desync a game.
+tool calls when the engine answers. Mutation calls return validated `plan_patch` objects and never
+issue orders directly; the complete final plan is validated again on the game thread.
 
 ## Terminal monitor
 
-Every prompt sent to the model, the raw reply, and the parsed plan are written to
+Every prompt sent to the model, each complete tool call/result pair, the raw reply, and the parsed plan are written to
 **`ai/brain.log`** and mirrored to the server's stdout:
 
 ```sh
@@ -85,13 +86,19 @@ tail -f ai/brain.log
 Example:
 
 ```
-[06:12:31] PROMPT -> mlx-community/gemma-4-e4b-it-4bit: Tick 2000. Cash 8000. Own units (16): 2x 2tnk, 1x e1. Enemy sightings: 1x 3tnk, 1x mig. + radar image ai-radar.png (312 KB)
-[06:12:41] REPLY <- mlx-community/gemma-4-e4b-it-4bit: {"produce": ["2tnk"], "attack": {"x": 0, "y": 0}, "retreat": false}
-[06:12:41] PLAN  -> {"produce": ["2tnk"], "attack": {"x": 82, "y": 92}, "retreat": false}
+[06:12:31] PROMPT [tick=2000 round=20] -> mlx-community/gemma-4-e4b-it-4bit: Tick 2000. Cash 8000. Own units (16): 2x 2tnk, 1x e1. Enemy sightings: 1x 3tnk, 1x mig. + radar image ai-radar.png (312 KB)
+[06:12:41] REPLY <- "{\"produce\": [\"2tnk\"], \"attack\": {\"x\": 0, \"y\": 0}, \"retreat\": false}"
+[06:12:41] PLAN [tick=2000 round=20] -> {"produce": ["2tnk"], "attack": {"x": 82, "y": 92}, "retreat": false}
 ```
 
 Degenerate model output is sanitized server-side (e.g. a `(0,0)` attack target is replaced
 by the enemy centroid).
+
+The engine-side `ai-telemetry.log` records posture, mission and production changes plus quantitative
+match outcomes: win/loss and duration, combat exchange, economic damage, army/production idle time,
+cohesion, reserve availability, expansion timing, wave synchronization error, retreat preservation,
+recon efficiency, transport survival, counterattack results, defense response, mission/special-ops
+success rates, and deception response. `ai/llm_eval.py` consumes this log for repeatable plan scoring.
 
 ## Wiring
 

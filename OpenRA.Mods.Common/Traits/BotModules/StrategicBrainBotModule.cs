@@ -220,12 +220,16 @@ namespace OpenRA.Mods.Common.Traits
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
 		readonly HashSet<Actor> deceptionForce = [];
+		readonly HashSet<uint> teamRetreatActorIds = [];
+		bool teamRetreatActive;
 
 		// Exposed to the tactical controllers.
 		internal World World => world;
 		internal Player Player => player;
 		internal IBot Bot => bot;
 		internal StrategicBrainBotModuleInfo Info => info;
+		internal int CurrentReserveFraction => reserveFractionOverride > 0
+			? reserveFractionOverride : info.ScaledReserveFraction();
 
 		/// <summary>Forwards a controller inability to the strategic commander for a debounced review.</summary>
 		internal void RequestStrategicReplan(string reason)
@@ -941,17 +945,33 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
-			// Team-wide retreat: pull the whole army back to the base.
+			if (!teamRetreat && teamRetreatActive)
+			{
+				var survivors = world.Actors.Count(a => a.IsInWorld && !a.IsDead
+					&& teamRetreatActorIds.Contains(a.ActorID));
+				var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+					.FirstOrDefault(m => !m.IsTraitDisabled);
+				ccModuleForRetreat?.RecordRetreatOutcome(survivors);
+				teamRetreatActorIds.Clear();
+				teamRetreatActive = false;
+			}
+
+			// Team-wide retreat: pull the whole army back to the base. Issue and record the order once;
+			// subsequent tactical ticks preserve the active withdrawal without inflating telemetry.
 			if (teamRetreat)
 			{
-				var retreaters = Claim(activeArmy).ToArray();
-				if (retreaters.Length > 0)
+				if (!teamRetreatActive)
 				{
-					bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: retreaters));
-					// Record retreat telemetry (req 614).
-					var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
-						.FirstOrDefault(m => !m.IsTraitDisabled);
-					ccModuleForRetreat?.RecordRetreat(world.WorldTick, retreaters.Length);
+					var retreaters = Claim(activeArmy).ToArray();
+					if (retreaters.Length > 0)
+					{
+						bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(world, retreatCell), false, groupedActors: retreaters));
+						teamRetreatActorIds.UnionWith(retreaters.Select(a => a.ActorID));
+						teamRetreatActive = true;
+						var ccModuleForRetreat = player.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+							.FirstOrDefault(m => !m.IsTraitDisabled);
+						ccModuleForRetreat?.RecordRetreat(world.WorldTick, retreaters.Length);
+					}
 				}
 
 				return;

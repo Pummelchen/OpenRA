@@ -260,6 +260,29 @@ namespace OpenRA.Test
 			Assert.That(manager.DeceptionAttempts, Is.EqualTo(2));
 		}
 
+		[TestCase(TestName = "Mission outcome telemetry exposes success, special-operation, and deception rates.")]
+		public void OutcomeRates()
+		{
+			var manager = new MissionManager
+			{
+				MissionSuccesses = 3,
+				MissionAborts = 1,
+				SpecialOpsSuccesses = 1,
+				SpecialOpsAttempts = 2,
+				DeceptionSuccesses = 2,
+				DeceptionAttempts = 4,
+				DeceptionEnemiesDrawn = 7
+			};
+
+			Assert.That(manager.MissionSuccessRate, Is.EqualTo(0.75f));
+			Assert.That(manager.SpecialOpsSuccessRate, Is.EqualTo(0.5f));
+			Assert.That(manager.DeceptionSuccessRate, Is.EqualTo(0.5f));
+			Assert.That(manager.MissionSummary(), Does.Contain("success 75%"));
+			Assert.That(manager.MissionSummary(), Does.Contain("special ops 1/2"));
+			Assert.That(manager.MissionSummary(), Does.Contain("deception 2/4"));
+			Assert.That(manager.MissionSummary(), Does.Contain("enemy units drawn 7"));
+		}
+
 		[TestCase(TestName = "A demonstration maps to the feint directive.")]
 		public void DemonstrationDirective()
 		{

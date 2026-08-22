@@ -312,15 +312,32 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>Number of special-operations/transport missions that succeeded.</summary>
 		public int SpecialOpsSuccesses;
 
+		/// <summary>Number of special-operations/transport missions created.</summary>
+		public int SpecialOpsAttempts;
+
 		/// <summary>Number of reconnaissance missions that succeeded.</summary>
 		public int ReconSuccesses;
+
+		/// <summary>Fraction of concluded missions that succeeded.</summary>
+		public float MissionSuccessRate => MissionSuccesses + MissionAborts == 0 ? 0f
+			: (float)MissionSuccesses / (MissionSuccesses + MissionAborts);
+
+		/// <summary>Fraction of scarce-asset operations that concluded successfully.</summary>
+		public float SpecialOpsSuccessRate => SpecialOpsAttempts == 0 ? 0f
+			: (float)SpecialOpsSuccesses / SpecialOpsAttempts;
+
+		/// <summary>Fraction of deceptions that produced their intended enemy reaction.</summary>
+		public float DeceptionSuccessRate => DeceptionAttempts == 0 ? 0f
+			: (float)DeceptionSuccesses / DeceptionAttempts;
 
 		/// <summary>One-line mission-outcome summary for the telemetry log.</summary>
 		public string MissionSummary()
 		{
 			var total = MissionSuccesses + MissionAborts;
-			return $"Missions: {total} concluded ({MissionSuccesses} succeeded, {MissionAborts} aborted/failed; " +
-				$"{SpecialOpsSuccesses} special ops, {ReconSuccesses} recon)";
+			return $"Missions: {total} concluded ({MissionSuccesses} succeeded, {MissionAborts} aborted/failed, " +
+				$"success {MissionSuccessRate * 100:0}%; special ops {SpecialOpsSuccesses}/{SpecialOpsAttempts}, " +
+				$"recon {ReconSuccesses}; deception {DeceptionSuccesses}/{DeceptionAttempts}, " +
+				$"enemy units drawn {DeceptionEnemiesDrawn})";
 		}
 
 		public IReadOnlyList<CoalitionMission> Missions => missions;
@@ -336,6 +353,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// A created feint or bait is a deception attempt; the outcome record feeds the planner.
 			if (IsDeception(type))
 				DeceptionAttempts++;
+			if (type == MissionType.SpecialOps || type == MissionType.Transport)
+				SpecialOpsAttempts++;
 
 			return mission;
 		}
