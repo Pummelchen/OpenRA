@@ -128,6 +128,23 @@ namespace OpenRA.Test
 			Assert.That(directive, Does.Not.Contain("\"feint\""));
 		}
 
+		[TestCase(TestName = "Execution directives preserve arbiter force ownership, including unassigned missions.")]
+		public void DirectiveCarriesForceAssignments()
+		{
+			var manager = new MissionManager();
+			var attack = manager.CreateMission(MissionType.Attack, 90, new CPos(12, 34), "Test");
+			attack.Status = MissionStatus.Executing;
+			attack.AssignedForces.Add("Multi1");
+			var recon = manager.CreateMission(MissionType.Recon, 40, new CPos(2, 3), "Scout");
+			recon.Status = MissionStatus.Executing;
+
+			var directive = manager.BuildDirectiveJson(null, null, false);
+			using var json = System.Text.Json.JsonDocument.Parse(directive);
+			var assignments = json.RootElement.GetProperty("assignments");
+			Assert.That(assignments.GetProperty("attack")[0].GetString(), Is.EqualTo("Multi1"));
+			Assert.That(assignments.GetProperty("recon").GetArrayLength(), Is.EqualTo(0));
+		}
+
 		[TestCase(TestName = "Mission status enum covers ready, executing, and all terminal states.")]
 		public void StatusCoverage()
 		{

@@ -65,6 +65,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public IReadOnlyList<ForceCommitment> Commitments => commitments;
 
 		/// <summary>
+		/// Resolves directive ownership. A null assignment map is a legacy broadcast plan; once an
+		/// assignment map is present, only explicitly listed force owners may execute that directive.
+		/// </summary>
+		public static bool IsAssigned(IReadOnlyDictionary<string, string[]> assignments, string directive, string force)
+		{
+			return assignments == null || (assignments.TryGetValue(directive, out var owners)
+				&& owners.Contains(force));
+		}
+
+		/// <summary>
 		/// Assigns a force to a mission. Re-assigning the same mission+force is a no-op. Returns the
 		/// machine-readable rejection when the force is already committed elsewhere at equal or higher
 		/// priority, or an empty list when the assignment is accepted (or supersedes a lower one).

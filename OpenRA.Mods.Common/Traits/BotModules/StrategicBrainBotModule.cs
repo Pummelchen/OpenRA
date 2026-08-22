@@ -164,6 +164,12 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Below this force cohesion the army holds position to regroup instead of launching a wave.")]
 		public readonly float RegroupCohesionThreshold = 0.3f;
 
+		[Desc("Maximum lead in cells before assault units pause for slower support.")]
+		public readonly int FormationMaxLeadCells = 15;
+
+		[Desc("Distance in cells artillery remains behind the screening-force center.")]
+		public readonly int ArtilleryScreenOffsetCells = 4;
+
 		[Desc("Enemy units within this many cells of the base center trigger base defense.")]
 		public readonly int BaseDefenseScanRadius = 25;
 
@@ -221,6 +227,14 @@ namespace OpenRA.Mods.Common.Traits
 		internal IBot Bot => bot;
 		internal StrategicBrainBotModuleInfo Info => info;
 
+		/// <summary>Forwards a controller inability to the strategic commander for a debounced review.</summary>
+		internal void RequestStrategicReplan(string reason)
+		{
+			var commander = player?.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+			commander?.RequestReplan(reason);
+		}
+
 		// Per-domain tactical controllers: each executes its own component of a mission (land/air/
 		// naval waves, transports, special insertions) and claims its own units through the arbiter.
 		GroundController ground;
@@ -271,6 +285,7 @@ namespace OpenRA.Mods.Common.Traits
 		int coalitionLand;
 		bool coalitionHasWater;
 		int attackTick;
+		int supportPowerTick;
 
 		// Team plan state, fed by the external model brain.
 		string teamStrategy;
@@ -499,8 +514,10 @@ namespace OpenRA.Mods.Common.Traits
 			public bool Retreat { get; set; }
 			public TeamForce Force { get; set; }
 			public int AttackTick { get; set; }
+			public int SupportPowerTick { get; set; }
 			public string DefenseKind { get; set; }
 			public string DeceptionKind { get; set; }
+			public Dictionary<string, string[]> Assignments { get; set; }
 			public string AttackPhase { get; set; }
 			public TeamTarget ExpansionGuard { get; set; }
 			public int ExpansionPriority { get; set; }
@@ -544,20 +561,25 @@ namespace OpenRA.Mods.Common.Traits
 			if (plan == null)
 				return;
 
-			teamStrategy = plan.Strategy;
+			bool Assigned(string key)
+			{
+				return CoalitionOrderArbiter.IsAssigned(plan.Assignments, key, player.InternalName);
+			}
+
+			teamStrategy = Assigned("attack") ? plan.Strategy : Assigned("counter") ? "defend" : "build";
 			teamRetreat = plan.Retreat;
 			produceBoost = plan.Produce;
-			attackTarget = ClampCell(ToCell(plan.Attack));
-			pincerTarget = ClampCell(ToCell(plan.Pincer));
-			feintTarget = ClampCell(ToCell(plan.Feint));
-			reconTarget = ClampCell(ToCell(plan.Recon));
-			baitTarget = ClampCell(ToCell(plan.Bait));
-			counterTarget = ClampCell(ToCell(plan.Counter));
-			transportTarget = ClampCell(ToCell(plan.Transport));
+			attackTarget = Assigned("attack") ? ClampCell(ToCell(plan.Attack)) : null;
+			pincerTarget = Assigned("pincer") ? ClampCell(ToCell(plan.Pincer)) : null;
+			feintTarget = Assigned("feint") ? ClampCell(ToCell(plan.Feint)) : null;
+			reconTarget = Assigned("recon") ? ClampCell(ToCell(plan.Recon)) : null;
+			baitTarget = Assigned("bait") ? ClampCell(ToCell(plan.Bait)) : null;
+			counterTarget = Assigned("counter") ? ClampCell(ToCell(plan.Counter)) : null;
+			transportTarget = Assigned("transport") ? ClampCell(ToCell(plan.Transport)) : null;
 			transportKind = plan.TransportKind;
 			strikeKind = plan.StrikeKind;
-			strikeTarget = ClampCell(ToCell(plan.Strike));
-			supportPowerTarget = ClampCell(ToCell(plan.SupportPower));
+			strikeTarget = Assigned("strike") ? ClampCell(ToCell(plan.Strike)) : null;
+			supportPowerTarget = Assigned("supportPower") ? ClampCell(ToCell(plan.SupportPower)) : null;
 			defenseKind = plan.DefenseKind;
 			deceptionKind = plan.DeceptionKind;
 			attackPhase = plan.AttackPhase;
@@ -566,6 +588,7 @@ namespace OpenRA.Mods.Common.Traits
 			teamCommitReserve = plan.CommitReserve;
 			teamRole = plan.Roles != null && plan.Roles.TryGetValue(player.InternalName, out var role) ? role : null;
 			attackTick = plan.AttackTick;
+			supportPowerTick = plan.SupportPowerTick;
 			foreach (var expansion in player.PlayerActor.TraitsImplementing<McvExpansionManagerBotModule>())
 				expansion.SetStrategicPriority(teamRole == "expansion" ? 1 : plan.ExpansionPriority);
 			if (plan.Force != null)
@@ -1046,10 +1069,10 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			// Support-power strike: fire the first ready superweapon at the designated target.
-			if (supportPowerTarget != null)
+			if (supportPowerTarget != null && world.WorldTick >= supportPowerTick)
 			{
-				FireSupportPower(supportPowerTarget.Value);
-				supportPowerTarget = null;
+				if (FireSupportPower(supportPowerTarget.Value))
+					supportPowerTarget = null;
 			}
 
 			// Cohesion: a scattered army regroups before launching, so it does not attack as isolated
@@ -1528,32 +1551,38 @@ namespace OpenRA.Mods.Common.Traits
 		/// Fires the first ready support power at the target. The power has its own cooldown, so an
 		/// unready power is simply skipped; the commander re-requests the strike each review.
 		/// </summary>
-		void FireSupportPower(CPos target)
+		bool FireSupportPower(CPos target)
 		{
 			var manager = player.PlayerActor.TraitOrDefault<SupportPowerManager>();
 			if (manager == null)
-				return;
+				return false;
 
 			// Friendly-fire avoidance: superweapons have a blast radius, so a target crowded with
 			// friendly units is withheld rather than risking them.
 			var targetPos = world.Map.CenterOfCell(target);
 			var friendlyNear = world.Actors.Count(a => a.IsInWorld && !a.IsDead && a.Owner == player && a.OccupiesSpace != null
 				&& (a.CenterPosition - targetPos).LengthSquared <= BaseRadiusSquared(SupportPowerFriendlyFireRadius));
-			if (ShouldWithholdSupportPower(friendlyNear))
-			{
-				CoalitionTelemetry.Log(world, $"Support power withheld: {friendlyNear} friendly units near target {target}");
-				return;
-			}
+			var targetValue = sightings.Values.Where(s =>
+				(s.Position - targetPos).LengthSquared <= BaseRadiusSquared(8))
+				.Sum(s => s.IsStructure ? 1f + TargetEvaluator.EconomicValue(s.Type)
+					+ TargetEvaluator.ProductionValue(s.Type) + TargetEvaluator.TechnologyValue(s.Type) : 1f);
 
 			foreach (var kv in manager.Powers)
 			{
 				if (!kv.Value.Ready)
 					continue;
+				var role = SupportPowerPolicy.Classify(kv.Key);
+				if (!SupportPowerPolicy.ShouldFire(role, targetValue, friendlyNear, shapingWindowOpen: true))
+					continue;
 
 				bot.QueueOrder(new Order(kv.Key, manager.Self, Target.FromCell(world, target), false));
-				CoalitionTelemetry.Log(world, $"Support power {kv.Key} fired at {target}");
-				return;
+				CoalitionTelemetry.Log(world, $"Support power {kv.Key} ({role}) fired at {target} during shaping window");
+				return true;
 			}
+
+			CoalitionTelemetry.Log(world,
+				$"Support power withheld at {target}: no ready supported power met value/safety threshold (value {targetValue:0.0}, friendly {friendlyNear})");
+			return false;
 		}
 
 		/// <summary>

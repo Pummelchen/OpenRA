@@ -11,6 +11,7 @@
 
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
 namespace OpenRA.Test
 {
@@ -36,6 +37,28 @@ namespace OpenRA.Test
 				"The blast radius must be positive.");
 			Assert.That(StrategicBrainBotModule.SupportPowerFriendlyFireThreshold, Is.GreaterThanOrEqualTo(1),
 				"The threshold must be at least one friendly unit.");
+		}
+
+		[TestCase(TestName = "Every RA support-power order has an explicit tactical role.")]
+		public void RaPowerClassification()
+		{
+			Assert.That(SupportPowerPolicy.Classify("SovietSpyPlane"), Is.EqualTo(SupportPowerRole.Recon));
+			Assert.That(SupportPowerPolicy.Classify("SovietParatroopers"), Is.EqualTo(SupportPowerRole.Reinforcement));
+			Assert.That(SupportPowerPolicy.Classify("UkraineParabombs"), Is.EqualTo(SupportPowerRole.Strike));
+			Assert.That(SupportPowerPolicy.Classify("NukePowerInfoOrder"), Is.EqualTo(SupportPowerRole.Strike));
+			Assert.That(SupportPowerPolicy.Classify("Chronoshift"), Is.EqualTo(SupportPowerRole.Unsupported));
+			Assert.That(SupportPowerPolicy.Classify("AdvancedChronoshift"), Is.EqualTo(SupportPowerRole.Unsupported));
+		}
+
+		[TestCase(TestName = "Support powers require a shaping window, target value, and strike safety.")]
+		public void SupportPowerFirePolicy()
+		{
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Recon, 0f, 10, true), Is.True);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Reinforcement, 1f, 0, true), Is.True);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Strike, 3f, 0, true), Is.True);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Strike, 2f, 0, true), Is.False);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Strike, 10f, 3, true), Is.False);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Strike, 10f, 0, false), Is.False);
 		}
 	}
 }

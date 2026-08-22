@@ -209,6 +209,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		bool expansionBaselineInitialized;
 		CPos? recentExpansionCell;
 		int recentExpansionTick = int.MinValue;
+		int lastControllerReplanTick = int.MinValue;
 
 		/// <summary>The current blackboard, for external consumers (LLM snapshot, tests).</summary>
 		public CoalitionBlackboard Blackboard => blackboard;
@@ -253,6 +254,22 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			matchMetrics.RecordExpansion(tick);
 			CoalitionTelemetry.Log(world, $"Expansion recorded at tick {tick}");
+		}
+
+		/// <summary>
+		/// Schedules an early strategic review when a tactical controller cannot execute its mission.
+		/// Requests are debounced so a persistent missing capability cannot cause a review storm.
+		/// </summary>
+		public void RequestReplan(string reason)
+		{
+			if (world == null || (lastControllerReplanTick != int.MinValue
+				&& world.WorldTick - lastControllerReplanTick < info.BlackboardInterval))
+				return;
+
+			lastControllerReplanTick = world.WorldTick;
+			blackboard?.AddEvent("controller_replan", null, reason);
+			lastCommandTick = world.WorldTick - info.CommandInterval;
+			CoalitionTelemetry.Log(world, $"Controller requested strategic replan: {reason}");
 		}
 
 		/// <summary>Records a wave-launch synchronization error for telemetry (req 612).</summary>
@@ -720,8 +737,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// override the posture for this review. Reserve commitment is explicit for all-in stances.
 			var expansionPriority = llmIntent?.ExpansionPriority is 1 or -1
 				? llmIntent.ExpansionPriority : posturePolicy.ExpansionPriority;
+			var supportPowerTick = attackTick >= 0 ? Math.Max(world.WorldTick, attackTick - 40) : world.WorldTick;
 			var postureDirective = FormattableString.Invariant(
-				$",\"expansionPriority\":{expansionPriority},\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00},\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()},\"attackPhase\":\"{attack?.Phase.ToString().ToLowerInvariant() ?? "none"}\"");
+				$",\"expansionPriority\":{expansionPriority},\"acceptableLoss\":{posturePolicy.AcceptableLossFraction:0.00},\"commitReserve\":{posturePolicy.CommitReserve.ToString().ToLowerInvariant()},\"attackPhase\":\"{attack?.Phase.ToString().ToLowerInvariant() ?? "none"}\",\"supportPowerTick\":{supportPowerTick}");
 			if (recentExpansionCell != null && world.WorldTick - recentExpansionTick <= 600)
 				postureDirective += $",\"expansionGuard\":{{\"x\":{recentExpansionCell.Value.X},\"y\":{recentExpansionCell.Value.Y}}}";
 			directiveJson = directiveJson.Insert(directiveJson.Length - 1, postureDirective);

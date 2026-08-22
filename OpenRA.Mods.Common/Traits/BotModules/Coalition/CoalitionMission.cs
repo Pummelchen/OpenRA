@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 
 namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 {
@@ -705,6 +706,28 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				// The brain only runs insertions when a transport kind is named.
 				sb.Append(",\"transportKind\":\"naval\"");
 			}
+
+			// Force ownership is carried with every executable directive. A present empty owner list
+			// means the arbiter could not allocate a force, so no coalition member may execute it by
+			// accident; legacy plans without the assignments object remain backward-compatible.
+			var assignments = new Dictionary<string, string[]>();
+			void Assign(string key, CoalitionMission mission)
+			{
+				if (mission != null)
+					assignments[key] = mission.AssignedForces.Distinct().OrderBy(f => f).ToArray();
+			}
+
+			Assign("attack", attack);
+			Assign("strike", domainStrike);
+			Assign("pincer", pincer);
+			Assign("supportPower", supportPower);
+			Assign("feint", feint);
+			Assign("recon", recon);
+			Assign("bait", bait);
+			Assign("counter", defend);
+			Assign("transport", transport);
+			if (assignments.Count > 0)
+				sb.Append(",\"assignments\":").Append(JsonSerializer.Serialize(assignments));
 
 			if (!string.IsNullOrEmpty(rolesJson))
 				sb.Append(",\"roles\":").Append(rolesJson);

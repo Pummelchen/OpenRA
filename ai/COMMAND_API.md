@@ -298,6 +298,17 @@ Historical tendencies affect bait/feint planning only after model confidence rea
 history remains an uncertainty rather than a guaranteed prediction. Immediate counterattacks likewise
 require observed attacker depletion or an exposed production origin and a verified local advantage.
 
+Executable team-plan directives carry an `assignments` map keyed by `attack`, `strike`, `pincer`,
+`supportPower`, `feint`, `recon`, `bait`, `counter`, and `transport`. Once this map is present, a bot
+executes only keys that explicitly list its player id; an empty list is deliberately inert. Tactical
+controllers expose an inability reason and request a debounced strategic replan when their assigned
+domain or asset is unavailable.
+
+RA support powers are synchronized through `supportPowerTick`. Spy planes are reconnaissance,
+paratroopers are reinforcement, and parabombs/nukes are strikes; chronoshift powers are left to their
+specialized multi-target controller. Strike powers require sufficient observed target value and are
+withheld when friendly units crowd the blast area.
+
 **Rule:** the commander may *not* move/attack individual units except through a
 tightly-scoped `emergency_unit_order` tool (survival only).
 

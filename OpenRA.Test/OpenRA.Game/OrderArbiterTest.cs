@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
@@ -18,6 +19,22 @@ namespace OpenRA.Test
 	[TestFixture]
 	sealed class OrderArbiterTest
 	{
+		[TestCase(TestName = "Directive ownership is explicit once an assignment map is present.")]
+		public void DirectiveOwnership()
+		{
+			Assert.That(CoalitionOrderArbiter.IsAssigned(null, "attack", "Multi0"), Is.True,
+				"legacy plans remain broadcast-compatible");
+			var assignments = new Dictionary<string, string[]>
+			{
+				["attack"] = new[] { "Multi1" },
+				["recon"] = System.Array.Empty<string>()
+			};
+			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "attack", "Multi1"), Is.True);
+			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "attack", "Multi0"), Is.False);
+			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "recon", "Multi1"), Is.False);
+			Assert.That(CoalitionOrderArbiter.IsAssigned(assignments, "feint", "Multi1"), Is.False);
+		}
+
 		[TestCase(TestName = "An assignment records mission and role ownership.")]
 		public void AssignOwnsForce()
 		{

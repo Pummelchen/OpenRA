@@ -52,6 +52,28 @@ namespace OpenRA.Mods.Common.Traits
 
 		/// <summary>True when the controller executed an intent this tick.</summary>
 		public bool Executed { get; protected set; }
+
+		/// <summary>Why the controller could not execute its current intent.</summary>
+		public string FailureReason { get; protected set; }
+
+		/// <summary>True when the inability invalidates the plan and should trigger strategic replanning.</summary>
+		public bool NeedsReplan { get; protected set; }
+
+		protected void Unable(string reason, bool requestReplan)
+		{
+			FailureReason = reason;
+			NeedsReplan = requestReplan;
+			Log($"{GetType().Name} unable: {reason}{(requestReplan ? "; replan requested" : string.Empty)}");
+			if (requestReplan)
+				Brain.RequestStrategicReplan($"{GetType().Name}: {reason}");
+		}
+
+		protected void MarkExecuted()
+		{
+			Executed = true;
+			FailureReason = null;
+			NeedsReplan = false;
+		}
 	}
 
 	/// <summary>Ground controller: the land component of assault waves.</summary>
@@ -70,14 +92,20 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			var land = Claim(LandUnits(available));
 			if (land.Length == 0)
+			{
+				Unable("no available ground force", true);
 				return;
+			}
 
 			// Artillery screening: artillery units (v2rl, arty) hold behind the main force so they
 			// fire from range instead of charging into melee. Send them to a point pulled back from
 			// the target by ~8 cells along the axis from the base to the target.
 			var artilleryTypes = new HashSet<string> { "v2rl", "arty" };
 			var artillery = land.Where(a => artilleryTypes.Contains(a.Info.Name)).ToArray();
-			var mainForce = land.Where(a => !artilleryTypes.Contains(a.Info.Name)).ToArray();
+			var antiAir = land.Where(a => !artilleryTypes.Contains(a.Info.Name)
+				&& Info.AntiAirUnits.Contains(a.Info.Name)).ToArray();
+			var mainForce = land.Where(a => !artilleryTypes.Contains(a.Info.Name)
+				&& !Info.AntiAirUnits.Contains(a.Info.Name)).ToArray();
 
 			if (mainForce.Length > 0)
 			{
@@ -87,7 +115,7 @@ namespace OpenRA.Mods.Common.Traits
 				if (mainForce.Length > 3)
 				{
 					var center = mainForce.Select(a => a.CenterPosition).Average();
-					var spread = 15 * 1024; // 15 cells
+					var spread = Info.FormationMaxLeadCells * 1024;
 					var ahead = mainForce.Where(a => TacticalFormation.IsAheadOfCenter(a.CenterPosition, target, center, (long)spread * spread)).ToArray();
 					var followers = mainForce.Except(ahead).ToArray();
 					if (ahead.Length > 0 && followers.Length > 0)
@@ -103,16 +131,29 @@ namespace OpenRA.Mods.Common.Traits
 					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: mainForce));
 			}
 
+			// Anti-air remains with the valuable screening force instead of racing to the objective.
+			if (antiAir.Length > 0)
+			{
+				var supportAnchor = mainForce.Length > 0 ? mainForce.Select(a => a.CenterPosition).Average() : target;
+				Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(supportAnchor), false, groupedActors: antiAir));
+			}
+
 			if (artillery.Length > 0)
 			{
 				var baseCenter = Brain.BaseCenter();
 				if (baseCenter != null)
-					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(TacticalFormation.ArtilleryPullbackTarget(target, baseCenter.Value, 8 * 1024)), false, groupedActors: artillery));
+				{
+					var screen = mainForce.Concat(antiAir).ToArray();
+					var screenCenter = screen.Length > 0 ? screen.Select(a => a.CenterPosition).Average() : target;
+					var artilleryTarget = TacticalFormation.ArtilleryPullbackTarget(screenCenter,
+						baseCenter.Value, Info.ArtilleryScreenOffsetCells * 1024);
+					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(artilleryTarget), false, groupedActors: artillery));
+				}
 				else
 					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: artillery));
 			}
 
-			Executed = true;
+			MarkExecuted();
 		}
 	}
 
@@ -132,10 +173,13 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			var air = Claim(AirUnits(available));
 			if (air.Length == 0)
+			{
+				Unable("no available air force", true);
 				return;
+			}
 
 			Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: air));
-			Executed = true;
+			MarkExecuted();
 		}
 	}
 
@@ -155,10 +199,13 @@ namespace OpenRA.Mods.Common.Traits
 		{
 			var naval = Claim(NavalUnits(available));
 			if (naval.Length == 0)
+			{
+				Unable("no available naval force", true);
 				return;
+			}
 
 			Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: naval));
-			Executed = true;
+			MarkExecuted();
 		}
 	}
 
@@ -196,14 +243,22 @@ namespace OpenRA.Mods.Common.Traits
 		public bool Execute(CPos? target, string kind, int worldTick)
 		{
 			if (target == null || kind == null)
+			{
+				Unable("transport target or kind missing", true);
 				return false;
+			}
 
 			var transport = World.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == Player && Info.TransportTypes.Contains(a.Info.Name))
 				.OrderBy(a => a.ActorID)
 				.FirstOrDefault();
 			if (transport == null)
+			{
+				Unable("no transport available", true);
 				return false;
+			}
+
+			MarkExecuted();
 
 			var targetCell = target.Value;
 			var cargo = transport.TraitOrDefault<Cargo>();
@@ -259,6 +314,7 @@ namespace OpenRA.Mods.Common.Traits
 					if (fraction < Info.RetreatHealthPercent)
 					{
 						Log($"Transport mission aborted: transport at {fraction}% health during transit");
+						Unable("transport became unsafe during transit", true);
 						machine.Abort();
 						return false;
 					}
@@ -351,21 +407,27 @@ namespace OpenRA.Mods.Common.Traits
 		public bool Execute(CPos? target, string kind, bool transportAvailable)
 		{
 			if (target == null || kind == null || Info.SpecialTypes.Count == 0)
+			{
+				Unable("special-operation target, kind, or asset configuration missing", true);
 				return false;
+			}
 
 			var asset = World.Actors
 				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == Player && Info.SpecialTypes.Contains(a.Info.Name))
 				.OrderBy(a => a.ActorID)
 				.FirstOrDefault();
 			if (asset == null)
+			{
+				Unable("no special-operation asset available", true);
 				return false;
+			}
 
 			// If a transport exists, the transport controller handles loading; just reserve the
 			// asset so it is not pulled into a wave while waiting.
 			if (transportAvailable)
 			{
 				Brain.Claim([asset]);
-				Executed = true;
+				MarkExecuted();
 				return true;
 			}
 
@@ -377,7 +439,7 @@ namespace OpenRA.Mods.Common.Traits
 
 			Bot.QueueOrder(new Order("Move", asset, Target.FromCell(World, target.Value), false));
 			Log($"Special asset {asset.Info.Name} inserted on foot toward {target.Value}");
-			Executed = true;
+			MarkExecuted();
 			return true;
 		}
 	}
