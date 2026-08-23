@@ -23,6 +23,36 @@ namespace OpenRA.Test
 	{
 		const string TestMapUid = "9d94535ca08292d64acab2b96f4490e5a7aa29ab";
 
+		// These tests locate their own run inside the telemetry log by byte offset, so a concurrent
+		// writer - a self-play batch, a second test host - corrupts the window and fails assertions
+		// unrelated to the change under test. The fixture writes to its own file for the run.
+		static string isolatedTelemetryPath;
+
+		[OneTimeSetUp]
+		public void RedirectTelemetry()
+		{
+			isolatedTelemetryPath = Path.Combine(Path.GetTempPath(),
+				$"openra-ai-telemetry-{Environment.ProcessId}.log");
+			CoalitionTelemetry.Flush();
+			HeadlessSkirmish.TelemetryPathOverride = isolatedTelemetryPath;
+		}
+
+		[OneTimeTearDown]
+		public void RestoreTelemetry()
+		{
+			CoalitionTelemetry.Flush();
+			HeadlessSkirmish.TelemetryPathOverride = null;
+			try
+			{
+				if (isolatedTelemetryPath != null && File.Exists(isolatedTelemetryPath))
+					File.Delete(isolatedTelemetryPath);
+			}
+			catch (IOException)
+			{
+				// A leftover temp file is not worth failing a run over.
+			}
+		}
+
 		// Platform.OverrideEngineDir may only be called once per process, so the mod data and map
 		// are loaded once and shared by every test in the fixture.
 		static (ModData ModData, Map Map) loaded;
@@ -64,7 +94,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				// The telemetry log is append-only and shared across runs, so each run must be
 				// compared on the events it added (the delta), not on the whole file.
@@ -105,7 +135,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var offset = TelemetryLength(telemetryPath);
 				var result = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1800, 77);
@@ -161,7 +191,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var offset = TelemetryLength(telemetryPath);
 				HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1800, 79);
@@ -188,7 +218,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var offset = TelemetryLength(telemetryPath);
 				var result = HeadlessSkirmish.Run(modData, map, "ai", 4, 2, 2400, 500);
@@ -211,7 +241,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var offset = TelemetryLength(telemetryPath);
 				var result = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1800, 600);
@@ -254,7 +284,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var firstOffset = TelemetryLength(telemetryPath);
 				HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 600, 42);
@@ -290,7 +320,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				// Three back-to-back matches exercise world teardown, listener disposal, and the
 				// held-open telemetry writer. A leaked listener would fail the rebind on match 2+.
@@ -385,7 +415,7 @@ namespace OpenRA.Test
 		static (HeadlessSkirmish.Result Result, List<string> Lines) RunAndCapture(int bots, int teams, int ticks, int seed)
 		{
 			var (modData, map) = LoadModAndMap();
-			var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+			var telemetryPath = HeadlessSkirmish.TelemetryPath;
 			var offset = TelemetryLength(telemetryPath);
 			var result = HeadlessSkirmish.Run(modData, map, "ai", bots, teams, ticks, seed);
 			return (result, TelemetryLines(telemetryPath, offset));
@@ -420,7 +450,7 @@ namespace OpenRA.Test
 				try
 				{
 					var (modData, map) = LoadModAndMap();
-					var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+					var telemetryPath = HeadlessSkirmish.TelemetryPath;
 					var offset = TelemetryLength(telemetryPath);
 					HeadlessSkirmish.Run(modData, map, ["ai", "turtle", "ai", "turtle"], 2, 2400, 700);
 					var lines = TelemetryLines(telemetryPath, offset);
@@ -526,7 +556,7 @@ namespace OpenRA.Test
 			try
 			{
 				var (modData, map) = LoadModAndMap();
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				// Phase 1: run with the external brain enabled. No model server is listening, so this
 				// exercises the request path and its timeout rather than a configured-off shortcut.
@@ -652,7 +682,7 @@ namespace OpenRA.Test
 
 				// DeterministicSameSeed proves one seed reproduces. That alone would also pass if the
 				// seed were ignored entirely, so reproducibility is only meaningful alongside this.
-				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var telemetryPath = HeadlessSkirmish.TelemetryPath;
 
 				var firstOffset = TelemetryLength(telemetryPath);
 				var first = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 3000, 4242);

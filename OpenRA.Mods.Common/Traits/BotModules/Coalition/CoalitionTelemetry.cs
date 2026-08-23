@@ -35,7 +35,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				lock (Sync)
 				{
-					var path = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+					// One source of truth for the path, so writer and readers cannot disagree.
+					var path = HeadlessSkirmish.TelemetryPath;
 					if (writer == null || writerPath != path)
 					{
 						writer?.Dispose();

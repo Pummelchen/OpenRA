@@ -49,6 +49,19 @@ namespace OpenRA
 		public static string CommanderFaction;
 
 		/// <summary>
+		/// Redirects this run's AI telemetry to a specific file instead of the shared
+		/// support-directory log. That log is append-only and written by every process using this
+		/// engine, and callers locate their own run inside it by byte offset - so a concurrent
+		/// writer (a self-play batch, a second test host) silently corrupts the window and produces
+		/// failures unrelated to the change under test. Null uses the shared log.
+		/// </summary>
+		public static string TelemetryPathOverride;
+
+		/// <summary>The telemetry file this run reads and writes.</summary>
+		public static string TelemetryPath =>
+			TelemetryPathOverride ?? Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+
+		/// <summary>
 		/// When true, the external brain is disabled so a simulation is fully deterministic. The async
 		/// model consultation (even when it only times out) introduces thread-timing nondeterminism, so
 		/// self-play evaluation sets this; live LLM play leaves it false.
@@ -239,7 +252,7 @@ namespace OpenRA
 
 			// Capture the telemetry offset now so the summary below counts only this run's events,
 			// not every previous run in the process (the log is append-only and shared across runs).
-			var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+			var telemetryPath = TelemetryPath;
 			var telemetryOffset = File.Exists(telemetryPath) ? new FileInfo(telemetryPath).Length : 0L;
 
 			// Tick cost is measured, not assumed (req 700): without it a performance regression is
@@ -319,7 +332,7 @@ namespace OpenRA
 			var counts = new Dictionary<string, int>();
 			try
 			{
-				var path = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+				var path = TelemetryPath;
 				if (!File.Exists(path))
 					return counts;
 

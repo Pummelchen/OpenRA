@@ -1,0 +1,146 @@
+{
+  "bot_type": "ai",
+  "maps": [
+    "chernobyl",
+    "snow-town",
+    "shattered-mountain",
+    "code-19"
+  ],
+  "opponents": [
+    "rush",
+    "normal",
+    "turtle",
+    "naval"
+  ],
+  "runs": 3,
+  "ticks": 30000,
+  "grid": {
+    "chernobyl|rush": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 2,
+      "exchange": 1.23
+    },
+    "chernobyl|normal": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.78
+    },
+    "chernobyl|turtle": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": 1.03
+    },
+    "chernobyl|naval": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.93
+    },
+    "chernobyl|mirror": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": 1.6
+    },
+    "snow-town|rush": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 2,
+      "exchange": 1.17
+    },
+    "snow-town|normal": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.58
+    },
+    "snow-town|turtle": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": 0.86
+    },
+    "snow-town|naval": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.52
+    },
+    "snow-town|mirror": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": null
+    },
+    "shattered-mountain|rush": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 2,
+      "exchange": 0.98
+    },
+    "shattered-mountain|normal": {
+      "wins": 0,
+      "losses": 3,
+      "draws": 0,
+      "exchange": 0.32
+    },
+    "shattered-mountain|turtle": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": 0.29
+    },
+    "shattered-mountain|naval": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 2,
+      "exchange": 0.89
+    },
+    "shattered-mountain|mirror": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": null
+    },
+    "code-19|rush": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.86
+    },
+    "code-19|normal": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 2,
+      "exchange": 1.08
+    },
+    "code-19|turtle": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 3,
+      "exchange": 1.0
+    },
+    "code-19|naval": {
+      "wins": 0,
+      "losses": 2,
+      "draws": 1,
+      "exchange": 0.52
+    },
+    "code-19|mirror": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 1,
+      "exchange": null
+    }
+  },
+  "totals": {
+    "wins": 0,
+    "losses": 20,
+    "draws": 38
+  },
+  "scripted_win_rate": 0.0,
+  "mirror_decisive_rate": 0.0
+}
