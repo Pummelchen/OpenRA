@@ -798,10 +798,21 @@ namespace OpenRA.Mods.Common.Traits
 				var unitName = pickOrder.FirstOrDefault(u =>
 					!Info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
 				if (unitName == null)
+				{
+					// An idle air or naval queue that can build nothing the plan wants is worth
+					// recording: it distinguishes "the arm was never raised" from "the arm was never
+					// buildable", which are very different diagnoses.
+					if (queue.Info.Type is "Aircraft" or "Ship")
+						CoalitionTelemetry.Log(World,
+							$"Arm production: {queue.Info.Type} idle, nothing in the pick order it can build "
+							+ $"(buildable: {string.Join(",", queue.BuildableItems().Select(i => i.Name))})");
 					continue;
+				}
 
 				usedUnits.Add(unitName);
 				Bot.QueueOrder(Order.StartProduction(queue.Actor, unitName, 1));
+				if (queue.Info.Type is "Aircraft" or "Ship")
+					CoalitionTelemetry.Log(World, $"Arm production: {queue.Info.Type} queued {unitName}");
 			}
 
 			// Order missing prerequisite buildings for the desired units that no queue can build yet.

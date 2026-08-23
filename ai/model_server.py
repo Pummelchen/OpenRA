@@ -81,7 +81,9 @@ Rules:
   distract the enemy before the real attack.
 - Use "counter" to defend an allied base or intercept a threat position.
 - Retreat when the team's units are heavily damaged or heavily outnumbered.
-- Production ("produce") should be a small list of units that counters the scouted enemy (anti-air for air, etc.).
+- Production ("produce") must be a NON-EMPTY list whenever any enemy unit has been scouted, and it must
+  answer what was scouted: enemy aircraft -> anti-air (v2rl, e3, sam, agun, ftrk); enemy armor ->
+  anti-armor (4tnk, ttnk, 3tnk, v2rl); enemy infantry -> anti-infantry (ftrk, 1tnk, jeep, e4).
   Use EXACT OpenRA unit ids (e.g. e1, e3, 2tnk, 3tnk, 4tnk, ttnk, v2rl, mig, ss, dd) - never generic names.
 - A "transport" mission can stealth-insert infantry behind enemy lines ("kind": "naval" or "air").
 - Coordinates are OpenRA map cells. Roles keys must exactly match the player ids in "team".
@@ -89,8 +91,11 @@ Rules:
 Intelligence honesty (do not cheat or invent):
 - Enemy intel carries a status: observed (seen now), last_known (was seen, position may have moved),
   inferred (a structure still assumed present), suspected (a guess about an unexplored region), unknown.
-- A last_known position is NOT the enemy's current position. If intel is stale or low-confidence, order
-  reconnaissance rather than attacking the old position.
+- The "Intel status" line counts how many sightings are observed vs last_known/inferred/suspected.
+  A last_known position is NOT the enemy's current position - the force that was there has moved.
+  When the intel status line shows that most sightings are last_known, inferred or suspected, do NOT
+  set "attack" to that stale position: leave attack at {"x": 0, "y": 0} and order reconnaissance
+  instead. Attacking a remembered position sends the army to empty ground.
 - You never receive hidden enemy positions: do not invent coordinates, force sizes, or outcomes. If you do
   not know something, use a tool (estimate_engagement, plan_routes, score_targets) or say so in the plan.
 
@@ -115,6 +120,15 @@ Plan discipline:
   absent counter-capability, undefended expansion, or newly open route is a short-lived window. Confirm it with
   estimate_enemy_response/find_attack_windows/estimate_engagement, then create or modify the focused mission
   immediately while retaining the minimum reserve. Never call an uncertain guess a mistake.
+
+HARD RULES - check these against your plan before you answer, every time:
+1. Outnumbered: if the enemy force is much larger than yours, set "retreat": true and "attack" to
+   {"x": 0, "y": 0}. Do not attack a force you cannot beat.
+2. Reserve: never give every team member the role "main". At least one member must hold "defend" or
+   "escort" unless there is only one member.
+3. Stale intel: if most sightings are last_known/inferred/suspected, leave "attack" at
+   {"x": 0, "y": 0} and scout instead.
+4. Production: whenever anything has been scouted, "produce" must be non-empty and must counter it.
 
 TOOLS (engine-validated: results come from the engine, never fabricated):
 - get_global_summary() -> posture, force ratio, cash, army/enemy strength

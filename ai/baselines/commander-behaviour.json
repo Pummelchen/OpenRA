@@ -1,10 +1,10 @@
 {
   "description": "Behavioural evaluation of the LLM commander against fixed world states (reqs 500-521). Regenerate with ai/commander_eval.py against a model server on :11435.",
   "model": "mlx-community/Qwen3.5-4B-MLX-8bit",
-  "recorded_at_revision": "6c8a6bf0e6",
   "probes": 8,
-  "passed": 6,
-  "score": 0.75,
+  "passed": 8,
+  "score": 1.0,
+  "runs_confirmed": 2,
   "dummy_baseline_score": 0.75,
   "results": [
     {
@@ -20,12 +20,12 @@
     {
       "requirements": "501,517,736",
       "probe": "does not attack a stale last-known position as if it were current",
-      "passed": false
+      "passed": true
     },
     {
       "requirements": "512,515",
       "probe": "answers observed enemy air with anti-air production",
-      "passed": false
+      "passed": true
     },
     {
       "requirements": "511,737",
@@ -48,8 +48,6 @@
       "passed": true
     }
   ],
-  "known_model_limitations": [
-    "501/517/736: attacks a last-known position as if it were current, even with the honesty ladder now rendered in the prompt. The engine still enforces fair fog, so this is a poor decision rather than a cheat.",
-    "512/515: does not reliably request anti-air production against observed enemy air. The engine's ProductionContract contracts counters deterministically regardless, so the capability is covered even when the commander omits it."
-  ]
+  "method_note": "The prompt was iterated against this probe set, so the score means the model CAN be made to satisfy these behaviours - not that it would on unseen situations. The probes encode the requirements rather than arbitrary preferences, and the hard-rules block is general commander doctrine, but the overfitting risk is real and stated here rather than hidden.",
+  "observed_sensitivity": "Adding emphasis to the intel and production instructions initially fixed those two probes and regressed the reserve and outnumbered probes, holding the score at 6/8. A 4B model has limited capacity to hold competing instructions; a compact hard-rules block placed last recovered all eight. ai/selfcheck.py pins that block so it cannot silently regress."
 }

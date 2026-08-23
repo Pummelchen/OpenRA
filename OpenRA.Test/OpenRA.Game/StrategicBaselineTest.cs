@@ -116,13 +116,20 @@ namespace OpenRA.Test
 				+ "Requirement 804 may be met - re-measure and update the baseline and AUDIT_REPORT.md.");
 		}
 
-		[Test(Description = "The known air/naval production gap is recorded rather than forgotten.")]
+		[Test(Description = "Known gaps are recorded with their explanation rather than forgotten.")]
 		public void KnownGapsAreRecorded()
 		{
 			var baseline = LoadBaseline();
 			Assert.That(baseline.TryGetProperty("known_gaps", out var gaps), Is.True);
-			Assert.That(gaps.GetProperty("air_units_fielded").GetInt32(), Is.Zero);
+
+			// The record must say what the gap is and why, not merely that one exists - the earlier
+			// "no air units" entry turned out to be a misreading of gate telemetry, and only the
+			// explanation made that visible.
 			Assert.That(gaps.GetProperty("note").GetString(), Is.Not.Empty);
+			Assert.That(gaps.GetProperty("offensive_waves_in_symmetric_selfplay").GetInt32(), Is.Zero,
+				"The open gap is that no offensive wave launches in symmetric self-play.");
+			Assert.That(gaps.GetProperty("aircraft_queued_per_20000_ticks").GetInt32(), Is.GreaterThan(0),
+				"Aircraft are produced; recording otherwise would repeat the earlier misreading.");
 		}
 	}
 }

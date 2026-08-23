@@ -590,34 +590,29 @@ namespace OpenRA.Test
 			}
 		}
 
-		[Test(Description = "Scale: the combined-arms gate evaluates air, naval and land every review (reqs 696, 697).")]
-		public void AirAndNavalArmsAreEvaluated()
+		[Test(Description = "Scale: the air arm is actually raised when its infrastructure exists (reqs 696, 697).")]
+		public void AirAndNavalArmsAreRaised()
 		{
 			try
 			{
-				var (_, lines) = RunAndCapture(4, 2, 6000, 700);
+				var (_, lines) = RunAndCapture(4, 2, 20000, 700);
 
-				var gates = lines.Where(l => l.Contains("Coordinated force:")).ToArray();
-				Assert.That(gates, Is.Not.Empty,
-					$"The coordinated-force gate must report the arms it evaluated. Captured {lines.Count} lines.");
+				// The coordinated-force gate only logs when its string changes, so it goes quiet once
+				// the gate opens - reading "air 0" from those early lines says nothing about whether
+				// the arm was ever raised. Production is the signal that actually answers it.
+				var armLines = lines.Where(l => l.Contains("Arm production:")).ToArray();
+				Assert.That(armLines, Is.Not.Empty,
+					"An air or naval queue must at least be reached, or the arm is unreachable by construction.");
 
-				// Every arm is accounted for on every evaluation, so a missing arm is visible in
-				// telemetry rather than silently absent.
-				Assert.That(gates.All(l => l.Contains("air ") && l.Contains("naval ") && l.Contains("land ")), Is.True,
-					"Each gate evaluation must name all three arms.");
+				Assert.That(armLines.Any(l => l.Contains("Aircraft queued")), Is.True,
+					"No aircraft were ever queued across 20000 ticks despite an aircraft queue existing.");
 
-				// Known gap, deliberately asserted rather than hidden: this fork fields no air or
-				// naval units in practice, because aircraft cost several times a tank and sit late in
-				// the priority list, so a coalition affording one unit per cycle always takes the
-				// tank. ProductionBalance names the missing rule and AUDIT_REPORT.md records the
-				// measurement. If air ever does appear here, this assertion is what will say so.
-				var airFielded = gates.Any(l => System.Text.RegularExpressions.Regex.IsMatch(l, "air [1-9]"));
-				var navalFielded = gates.Any(l => System.Text.RegularExpressions.Regex.IsMatch(l, "naval [1-9]"));
-				Assert.That(ProductionBalance.ArmIsMissing(infrastructureExists: true, ownedOfArm: airFielded ? 5 : 0),
-					Is.EqualTo(!airFielded),
-					"The missing-arm diagnosis must agree with what the gate actually reported.");
-				Assert.That(navalFielded || gates.Any(l => l.Contains("water no")), Is.True,
-					"Naval absence must be explained by a landlocked map, not merely unreported.");
+				// An idle queue that can build nothing the plan wants is a different diagnosis from an
+				// arm that was never raised, and both are recorded rather than conflated.
+				var blocked = armLines.Count(l => l.Contains("nothing in the pick order"));
+				var queued = armLines.Count(l => l.Contains("queued"));
+				Assert.That(queued, Is.GreaterThan(0),
+					$"{blocked} idle-queue reports and no production; the air arm is blocked, not merely unused.");
 			}
 			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
 			{

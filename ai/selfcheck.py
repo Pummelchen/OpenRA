@@ -88,6 +88,14 @@ def commander_contract_regression():
         "Exploit a major verified enemy mistake in the current review",
         "short-lived window",
         "Never call an uncertain guess a mistake",
+        # The hard-rules block: compact, explicit constraints placed last so a small model still
+        # holds them. Adding emphasis elsewhere in the prompt crowded these out and measurably
+        # regressed the reserve and outnumbered probes, so they are pinned here.
+        "HARD RULES - check these against your plan before you answer",
+        "set \"retreat\": true",
+        "never give every team member the role \"main\"",
+        "leave \"attack\" at",
+        "must be non-empty and must counter it",
     )
     missing = [rule for rule in required if rule not in SYSTEM_PROMPT]
     assert not missing, "commander prompt contract missing: %s" % ", ".join(missing)

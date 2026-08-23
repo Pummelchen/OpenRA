@@ -2,29 +2,76 @@
   "description": "Recorded fixed-seed opponent matrix for the Supreme coalition and the scripted Normal baseline. Fair Fog (intelligence 0), 0% economic bonus, map shattered-mountain, seeds 805-807, 30000 ticks. Regenerate with ai/selfplay.py --bot-type <ai|normal> --vs rush,normal,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0",
   "recorded_at_revision": "3a1f2be560",
   "map": "shattered-mountain",
-  "seeds": [805, 806, 807],
+  "seeds": [
+    805,
+    806,
+    807
+  ],
   "ticks": 30000,
   "intelligence": 0,
   "results": {
     "ai": {
-      "rush":   { "wins": 0, "losses": 2, "draws": 1, "ground_truth_exchange": 1.19 },
-      "normal": { "wins": 0, "losses": 3, "draws": 0, "ground_truth_exchange": 0.39 },
-      "turtle": { "wins": 0, "losses": 0, "draws": 3, "ground_truth_exchange": 2.46 },
-      "naval":  { "wins": 0, "losses": 0, "draws": 3, "ground_truth_exchange": 3.27 }
+      "rush": {
+        "wins": 0,
+        "losses": 2,
+        "draws": 1,
+        "ground_truth_exchange": 1.19
+      },
+      "normal": {
+        "wins": 0,
+        "losses": 3,
+        "draws": 0,
+        "ground_truth_exchange": 0.39
+      },
+      "turtle": {
+        "wins": 0,
+        "losses": 0,
+        "draws": 3,
+        "ground_truth_exchange": 2.46
+      },
+      "naval": {
+        "wins": 0,
+        "losses": 0,
+        "draws": 3,
+        "ground_truth_exchange": 3.27
+      }
     },
     "normal": {
-      "rush":   { "wins": 0, "losses": 2, "draws": 1, "ground_truth_exchange": 0.59 },
-      "turtle": { "wins": 1, "losses": 0, "draws": 2, "ground_truth_exchange": 1.15 },
-      "naval":  { "wins": 3, "losses": 0, "draws": 0, "ground_truth_exchange": 5.64 }
+      "rush": {
+        "wins": 0,
+        "losses": 2,
+        "draws": 1,
+        "ground_truth_exchange": 0.59
+      },
+      "turtle": {
+        "wins": 1,
+        "losses": 0,
+        "draws": 2,
+        "ground_truth_exchange": 1.15
+      },
+      "naval": {
+        "wins": 3,
+        "losses": 0,
+        "draws": 0,
+        "ground_truth_exchange": 5.64
+      }
     }
   },
   "totals": {
-    "ai":     { "wins": 0, "losses": 5, "draws": 7 },
-    "normal": { "wins": 4, "losses": 2, "draws": 3 }
+    "ai": {
+      "wins": 0,
+      "losses": 5,
+      "draws": 7
+    },
+    "normal": {
+      "wins": 4,
+      "losses": 2,
+      "draws": 3
+    }
   },
   "known_gaps": {
-    "air_units_fielded": 0,
-    "naval_units_fielded": 0,
-    "note": "Measured over a 20000-tick four-bot match. Aircraft cost several times a tank and sit late in the priority list, so the coalition never fields the air or naval arms. See ProductionBalance."
+    "offensive_waves_in_symmetric_selfplay": 0,
+    "aircraft_queued_per_20000_ticks": 5,
+    "note": "Correction to an earlier reading. Aircraft ARE produced (heli queued 5x over a 20000-tick four-bot match). The earlier 'air 0' observation came from Coordinated-force gate lines, which stop logging once the gate opens, so they only ever showed the pre-production build-up. The real gap is that no offensive wave launches at all in symmetric self-play, because the enemy base is never located and AdvanceOnInferredBase is off by default - so the combined-arms wave path is never exercised in that configuration."
   }
 }
