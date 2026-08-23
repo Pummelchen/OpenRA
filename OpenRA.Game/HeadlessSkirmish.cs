@@ -66,6 +66,13 @@ namespace OpenRA
 		/// </summary>
 		public static bool EnableCheats;
 
+		/// <summary>
+		/// Raised once when a simulated match stops, however it stopped - including at the tick
+		/// limit, where no win state is ever set. Subscribers must be tolerant of being called with
+		/// a world they do not belong to, and must unsubscribe when their world goes away.
+		/// </summary>
+		public static event Action<World> Ending;
+
 		/// <summary>The telemetry file this run reads and writes.</summary>
 		public static string TelemetryPath =>
 			TelemetryPathOverride ?? Path.Combine(Platform.SupportDir, "ai-telemetry.log");
@@ -306,6 +313,13 @@ namespace OpenRA
 
 			// Capture the outcome before disposal.
 			result.GameOver = world.IsGameOver;
+
+			// Most simulated matches end at the tick limit with neither side ever reaching a win
+			// state, so nothing that listens for one hears anything. Traits that need to record how
+			// the match went - the commander's training log, above all - would otherwise learn only
+			// from the quarter of games that end decisively, which is precisely the biased quarter.
+			// A draw is not a win, and saying so is the point.
+			Ending?.Invoke(world);
 			foreach (var a in world.Actors)
 				result.ActorCount++;
 			foreach (var c in lobby.Clients)

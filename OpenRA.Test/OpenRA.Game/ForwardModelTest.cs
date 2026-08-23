@@ -370,12 +370,17 @@ namespace OpenRA.Test
 			for (var i = 0; i < 1000; i++)
 				model.Step(state, self, enemy, 15f);
 
-			var timer = Stopwatch.StartNew();
-			for (var i = 0; i < Iterations; i++)
-				model.Step(state, self, enemy, 15f);
-			timer.Stop();
-
-			var microseconds = timer.Elapsed.TotalMilliseconds * 1000.0 / Iterations;
+			// Best of three. This asks whether a step *can* be cheap enough to search, which is a
+			// capability; a single timing on a loaded machine measures the scheduler instead.
+			var microseconds = double.MaxValue;
+			for (var attempt = 0; attempt < 3; attempt++)
+			{
+				var timer = Stopwatch.StartNew();
+				for (var i = 0; i < Iterations; i++)
+					model.Step(state, self, enemy, 15f);
+				timer.Stop();
+				microseconds = Math.Min(microseconds, timer.Elapsed.TotalMilliseconds * 1000.0 / Iterations);
+			}
 
 			// A two-minute lookahead at depth 8 needs thousands of rollouts inside a fifteen-second
 			// review. The budget is 10 us; this asserts an order of magnitude of headroom so the

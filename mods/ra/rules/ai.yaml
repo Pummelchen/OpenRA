@@ -730,6 +730,7 @@ Player:
 		ToolApiPort: 8766
 	CommanderCalibrationBotModule:
 		RequiresCondition: enable-ai
+		TrainingLog: commander-training.csv
 	CoalitionCheatsBotModule:
 		RequiresCondition: enable-ai
 		InstantBuild: true

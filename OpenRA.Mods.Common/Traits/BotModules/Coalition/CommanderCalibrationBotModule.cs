@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using OpenRA.Mods.Common.Commander.Model;
 using OpenRA.Mods.Common.Commander.Terrain;
@@ -41,10 +42,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Locomotor whose passability defines the region graph.")]
 		public readonly string Locomotor = "tracked";
 
+		[Desc("File the feature vectors are appended to when the match ends, for fitting the",
+			"win-probability model. Relative paths resolve against the support directory. Empty",
+			"disables logging.")]
+		public readonly string TrainingLog = "";
+
 		public override object Create(ActorInitializer init) { return new CommanderCalibrationBotModule(this); }
 	}
 
-	public sealed class CommanderCalibrationBotModule : ConditionalTrait<CommanderCalibrationBotModuleInfo>, IBotTick
+	public sealed class CommanderCalibrationBotModule : ConditionalTrait<CommanderCalibrationBotModuleInfo>,
+		IBotTick, INotifyWinStateChanged
 	{
 		readonly CommanderCalibrationBotModuleInfo info;
 		readonly PredictionCalibration calibration = new();
@@ -58,6 +65,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		float measuredIncome;
 		float smoothedSpend;
 		readonly Queue<(int Tick, int Earned)> earnedHistory = new();
+		readonly List<(int Tick, float[] Features)> trainingSamples = [];
+		WinProbabilityModel evaluator;
+		Player owner;
+		bool logged;
+		bool subscribed;
 		float armyGrowth;
 		int previousEarned;
 		int previousSpent;
@@ -98,6 +110,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				parameters = new ForwardModel.Parameters();
 				economy = new EconomyEstimator();
 				model = new ForwardModel(graph, extractor.BuildRoleStats(), parameters);
+				evaluator = WinProbabilityModel.Default();
+				owner = bot.Player;
+
+				// Most simulated matches end at the tick limit, where no win state is ever set and
+				// INotifyWinStateChanged never fires. Learning only from the quarter of games that
+				// end decisively would train the model on precisely the biased quarter.
+				if (!string.IsNullOrEmpty(info.TrainingLog) && !subscribed)
+				{
+					subscribed = true;
+					HeadlessSkirmish.Ending += OnSimulationEnding;
+				}
 
 				CoalitionTelemetry.Log(world,
 					$"Calibration: {graph.Regions.Length} regions, {graph.Chokepoints.Length} chokepoints, " +
@@ -179,6 +202,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			atPrediction = now;
 
+			// Record what this position looked like. It is labelled when the match ends, with the
+			// result of the match - so the opening of a won game counts as a win even though it was
+			// even at the time. That is the point: it is how the model learns which early
+			// advantages actually convert.
+			if (!string.IsNullOrEmpty(info.TrainingLog))
+				trainingSamples.Add((world.WorldTick, StateFeatures.Extract(state, model)));
+
 			// Predict the horizon under the plan both sides are most likely to be following:
 			// keep producing, hold ground. A forward model that is only accurate when told the
 			// future is not a forward model.
@@ -210,6 +240,70 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			return count;
 		}
+
+		void OnSimulationEnding(World endingWorld)
+		{
+			// The event is static, so it reaches every module in the process including any left over
+			// from a previous run. Only respond for our own world.
+			if (owner == null || endingWorld != owner.World)
+				return;
+
+			HeadlessSkirmish.Ending -= OnSimulationEnding;
+			subscribed = false;
+
+			// A draw is not a win, and recording it as one would teach the model that the position
+			// which produced a draw is the position that wins games - which is exactly the mistake
+			// this commander already makes.
+			WriteTrainingLog(owner.WinState == WinState.Won);
+		}
+
+		void INotifyWinStateChanged.OnPlayerWon(Player winner)
+		{
+			if (winner == owner)
+				WriteTrainingLog(won: true);
+		}
+
+		void INotifyWinStateChanged.OnPlayerLost(Player loser)
+		{
+			if (loser == owner)
+				WriteTrainingLog(won: false);
+		}
+
+		void WriteTrainingLog(bool won)
+		{
+			// Once per match. Win and loss notifications can both arrive for allied players, and a
+			// double-labelled game would put contradictory rows into the training set.
+			if (logged || owner == null || trainingSamples.Count == 0 || string.IsNullOrEmpty(info.TrainingLog))
+				return;
+
+			logged = true;
+
+			var path = Path.IsPathRooted(info.TrainingLog)
+				? info.TrainingLog
+				: Path.Combine(Platform.SupportDir, info.TrainingLog);
+
+			if (subscribed)
+			{
+				HeadlessSkirmish.Ending -= OnSimulationEnding;
+				subscribed = false;
+			}
+
+			try
+			{
+				SelfPlayLog.Append(path, trainingSamples, won);
+				CoalitionTelemetry.Log(owner.World,
+					$"Training log: {trainingSamples.Count} samples labelled {(won ? "won" : "lost")} -> {path}");
+			}
+			catch (IOException e)
+			{
+				// A training log that cannot be written must not take the match down with it.
+				CoalitionTelemetry.Log(owner.World, $"Training log failed: {e.Message}");
+			}
+		}
+
+		/// <summary>Current win probability, for telemetry and for the search to come.</summary>
+		public float WinProbability(AbstractState state) =>
+			evaluator == null || model == null ? 0.5f : evaluator.Evaluate(state, model);
 
 		static IEnumerable<Player> Enemies(Player self)
 		{
