@@ -173,7 +173,48 @@ later" — that is how the shelfware happened.
 
 ---
 
-## 6. What carries over unchanged
+## 6. Measured status of each phase
+
+Recorded honestly, because a plan whose status is asserted rather than measured is how the first
+one went wrong. Every number below is from the same 24 mirror matches or the same three
+seeds against Rush on shattered-mountain.
+
+| Phase | Gate | Status |
+|---|---|---|
+| A — Spend | Banked cash below a third of earnings | **Not met.** 74.3% → 67.6%. Real progress, gate missed. |
+| B — Objective accounting | Success rate not 100%; destroyed credits recorded | **Met.** Assaults now require holding the ground; ground-truth structure/cash reporting added to the harness. |
+| C — Find | Enemy base located in most matches | **Partially.** Scouting is belief-directed and now probes the interior instead of map edges; the located-base rate is still not counted directly. |
+| D — Destroy | Enemy economic damage above zero in most matches | **Not met.** The forward model can now represent demolition; the game number has not moved. |
+| E — Choose | Mirror decisiveness beats 9 of 24 | **Not met.** 7 of 24 with the searched planner, 8 of 24 without it. The planner ships disabled. |
+| F — Adapt | Each component wired or deleted | **Not started.** `StrategyPosterior`, `RegretMatching` and `BuildOrderSearch` remain referenced by nothing. |
+
+What did move, on three seeds against Rush: the exchange ratio from 1.29 to 1.72, structures from
+71 to 74, and banked cash from 74.3% to 67.6% — by taking investment out of an economy the
+production queues could never spend and putting it into production.
+
+What did not move, through every change tried: **mirror decisiveness, which has sat between 5 and
+9 of 24 for the whole rebuild.** That is the number the commander is ultimately judged on, and
+nothing built so far has improved it. It is stated here rather than buried because the first plan's
+failure was precisely that its phases could all report success while this number stood still.
+
+### The constraint behind Phase A
+
+Red Alert's `ClassicProductionQueue` is one queue per player per type. Throughput scales with
+`BuildTimeSpeedReduction` as factories are added, not with factory count directly, so a base earning
+roughly 250 credits a second cannot convert it all into force however many factories it builds.
+Three separate attempts to close the gap were measured and rejected:
+
+- Raising production fractions alone made the base *smaller* (71 → 37 structures), because expensive
+  factories crowd out the cheap power and refineries a base needs to grow at all.
+- Letting queues duplicate unit types above a cash threshold produced byte-identical results, because
+  there is rarely more than one idle queue of a given type to duplicate across.
+- Keeping a production backlog so queues never idle between orders cost exchange ratio (1.72 → 1.50)
+  and structures (74 → 55), because cash committed to a backlog is cash not available for buildings.
+
+The honest reading is that the remaining third of the income has nowhere to go under this queue
+model, and that the next real gain is in *what* is built rather than *how much*.
+
+## 7. What carries over unchanged
 
 The mathematics was not the problem, and most of it stands: the region decomposition and its
 chokepoints, the counter-matrix reduction that makes Lanchester legitimate, the measured-and-anchored
