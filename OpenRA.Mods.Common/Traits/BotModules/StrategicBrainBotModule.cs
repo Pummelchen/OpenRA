@@ -1376,17 +1376,41 @@ namespace OpenRA.Mods.Common.Traits
 			var wave = claimedUnits.Skip(priorClaims).ToArray();
 			if (wave.Length >= Info.MinWaveSize)
 			{
-				var waveAir = wave.Count(a => Info.AirUnitTypes.Contains(a.Info.Name));
-				var waveNaval = wave.Count(a => Info.NavalPriority.Contains(a.Info.Name));
-				var waveAA = wave.Count(a => Info.AntiAirUnits.Contains(a.Info.Name));
-				var waveArtillery = wave.Count(a => a.Info.Name is "v2rl" or "arty");
-				var waveLand = wave.Length - waveAir - waveNaval;
+				var composition = ComposeWave(wave);
 				CoalitionTelemetry.Log(World,
 					$"Wave of {wave.Length} units launched (reserve {reserveCount} held back) at ToT {attackTick} " +
-					$"(sync error {World.WorldTick - attackTick}t) " +
-					$"[{waveLand} land ({waveArtillery} artillery, {waveAA} aa), {waveAir} air, {waveNaval} naval]");
+					$"(sync error {World.WorldTick - attackTick}t) {composition}");
+
+				// Name the combined-arms properties the wave actually has, so the doctrine rules are
+				// observable rather than implied by a unit count.
+				CoalitionTelemetry.Log(World,
+					$"Wave doctrine: combined={composition.IsCombinedArms} armor+infantry={composition.ArmorHasInfantrySupport} " +
+					$"artillery-screened={composition.ArtilleryHasScreen} aa-escort={composition.GroundHasAntiAirEscort} " +
+					$"air-support={composition.GroundHasAirSupport} naval-support={composition.GroundHasNavalSupport} " +
+					$"special-support={composition.GroundHasSpecialSupport} mass-air={composition.IsMassAirAttack}");
 			}
 		}
+
+		/// <summary>Classifies a launched wave into its combined-arms composition (reqs 198, 228-233).</summary>
+		WaveComposition ComposeWave(Actor[] wave)
+		{
+			var air = wave.Count(a => Info.AirUnitTypes.Contains(a.Info.Name));
+			var naval = wave.Count(a => Info.NavalPriority.Contains(a.Info.Name));
+			var artillery = wave.Count(a => ArtilleryTypes.Contains(a.Info.Name));
+			var antiAir = wave.Count(a => !Info.AirUnitTypes.Contains(a.Info.Name)
+				&& !Info.NavalPriority.Contains(a.Info.Name)
+				&& !ArtilleryTypes.Contains(a.Info.Name)
+				&& Info.AntiAirUnits.Contains(a.Info.Name));
+			var special = wave.Count(a => Info.SpecialTypes.Contains(a.Info.Name));
+			var infantry = wave.Count(a => Info.InfantryUnitTypes.Contains(a.Info.Name)
+				&& !Info.SpecialTypes.Contains(a.Info.Name)
+				&& !Info.AntiAirUnits.Contains(a.Info.Name));
+			var armor = wave.Length - air - naval - artillery - antiAir - special - infantry;
+
+			return new WaveComposition(armor, infantry, artillery, antiAir, air, naval, special);
+		}
+
+		static readonly System.Collections.Generic.HashSet<string> ArtilleryTypes = ["v2rl", "arty"];
 
 		/// <summary>Returns the configured feint commitment, or zero when the force/config is unsafe.</summary>
 		public static int FeintCommitment(int availableUnits, int fraction)
