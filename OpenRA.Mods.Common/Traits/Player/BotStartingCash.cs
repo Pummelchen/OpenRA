@@ -34,6 +34,15 @@ namespace OpenRA.Mods.Common.Traits
 
 	public class BotStartingCash : INotifyCreated
 	{
+		/// <summary>
+		/// Per-run override, set by the headless harness. Exists so a batch can generate training
+		/// data under a configuration that actually produces decisive games without editing the
+		/// shipped mod default - at 20,000 the commander cannot close a mirror match even in forty
+		/// minutes of game time, so every match is a draw and every label is identical, which
+		/// teaches a model nothing.
+		/// </summary>
+		public static int? AmountOverride;
+
 		readonly BotStartingCashInfo info;
 
 		public BotStartingCash(BotStartingCashInfo info)
@@ -52,7 +61,7 @@ namespace OpenRA.Mods.Common.Traits
 			// and GiveCash also raises Earned. Inflating Earned would misreport every economy
 			// statistic the commander and the telemetry read back - income rate, harvester value,
 			// and the economic-emergency test all treat Earned as money the base actually produced.
-			resources.Cash = CashFor(info.Amount, resources.Cash, owner.IsBot, owner.NonCombatant);
+			resources.Cash = CashFor(AmountOverride ?? info.Amount, resources.Cash, owner.IsBot, owner.NonCombatant);
 		}
 
 		/// <summary>

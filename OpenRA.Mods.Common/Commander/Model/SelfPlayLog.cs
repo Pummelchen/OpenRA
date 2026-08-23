@@ -130,13 +130,31 @@ namespace OpenRA.Mods.Common.Commander.Model
 			ArgumentNullException.ThrowIfNull(rows);
 			holdoutEvery = Math.Max(2, holdoutEvery);
 
+			var all = new List<(Row Row, int GameKey)>(rows);
+
+			// Stratified by outcome, not simply by game index. Won games are rare - nine of the
+			// first four hundred - so a plain every-fourth-game split put almost none of them in the
+			// holdout, and the grade that came back was a grade on predicting "lost" over and over.
+			// Numbering won and lost games separately guarantees the holdout contains both.
+			var order = new Dictionary<int, int>();
+			var wonSeen = 0;
+			var lostSeen = 0;
+
+			foreach (var (row, gameKey) in all)
+			{
+				if (order.ContainsKey(gameKey))
+					continue;
+
+				order[gameKey] = row.Won ? wonSeen++ : lostSeen++;
+			}
+
 			var train = new List<LogisticFit.Sample>();
 			var holdout = new List<LogisticFit.Sample>();
 
-			foreach (var (row, gameKey) in rows)
+			foreach (var (row, gameKey) in all)
 			{
 				var sample = new LogisticFit.Sample(row.Features, row.Won);
-				if (Math.Abs(gameKey) % holdoutEvery == 0)
+				if (order[gameKey] % holdoutEvery == 0)
 					holdout.Add(sample);
 				else
 					train.Add(sample);

@@ -386,10 +386,15 @@ what makes it exploitable.
 **The fix — regret matching over the strategy portfolio.** Build the payoff matrix
 `M[i][j]` = value of my strategy `i` against enemy strategy `j`, estimated from the forward model
 and refined by logged outcomes. Then run **regret matching**: track cumulative regret for each
-strategy, and play proportional to positive regret. In a zero-sum game the average strategy
-converges to Nash. It is roughly twenty lines of code, needs no LP solver, and yields a *mixed*
-strategy — the commander is deliberately unpredictable, and unpredictable in the specific
-proportions that cannot be punished.
+strategy, and play proportional to positive regret. It is roughly twenty lines of code and needs no
+LP solver.
+
+One precision this document originally got wrong, corrected once it was implemented and tested:
+regret matching does **not** yield a mixed strategy against everything. Run against a *fixed*
+opponent it converges onto the pure best response, much as a bandit would — and that is correct,
+since best-responding to a fixed opponent is optimal against it. The Nash guarantee comes
+specifically from the **average strategy learned in self-play**, where both sides adapt. The
+unexploitable mixture and the best response are two different objects, and the commander needs both.
 
 **Exploit only on confidence.** Nash is a floor, not a ceiling — it guarantees you cannot be beaten
 badly, not that you beat weak opponents fast. So: play the Nash mixture by default; deviate to a

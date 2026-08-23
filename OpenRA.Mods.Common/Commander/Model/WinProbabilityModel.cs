@@ -56,15 +56,18 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public static WinProbabilityModel Default()
 		{
 			var weights = new float[StateFeatures.Count];
-			weights[(int)StateFeatures.Feature.ArmyAdvantage] = 2.0f;
-			weights[(int)StateFeatures.Feature.IncomeAdvantage] = 1.2f;
-			weights[(int)StateFeatures.Feature.HarvesterAdvantage] = 0.5f;
-			weights[(int)StateFeatures.Feature.BaseIntegrityAdvantage] = 1.5f;
-			weights[(int)StateFeatures.Feature.CashAdvantage] = 0.1f;
-			weights[(int)StateFeatures.Feature.TechAdvantage] = 0.4f;
+			weights[(int)StateFeatures.Feature.ArmyVsSeenEnemy] = 2.0f;
+			weights[(int)StateFeatures.Feature.ArmyScale] = 1.0f;
+			weights[(int)StateFeatures.Feature.EconomyScale] = 1.2f;
+			weights[(int)StateFeatures.Feature.HarvesterScale] = 0.5f;
+			weights[(int)StateFeatures.Feature.BaseIntact] = 1.5f;
 			weights[(int)StateFeatures.Feature.MapControl] = 0.8f;
 			weights[(int)StateFeatures.Feature.ContestedFraction] = 0f;
-			weights[(int)StateFeatures.Feature.Bias] = 0f;
+			weights[(int)StateFeatures.Feature.ExploredFraction] = 0.3f;
+
+			// Chosen so a wholly average position - half the reference army, half the economy, an
+			// intact base, nothing contested - reads near even rather than near certain.
+			weights[(int)StateFeatures.Feature.Bias] = -2.25f;
 			return new WinProbabilityModel(weights);
 		}
 

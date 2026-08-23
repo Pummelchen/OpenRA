@@ -44,7 +44,7 @@ namespace OpenRA.Test
 		static float[] Features(float value)
 		{
 			var f = new float[StateFeatures.Count];
-			f[(int)StateFeatures.Feature.ArmyAdvantage] = value;
+			f[(int)StateFeatures.Feature.ArmyVsSeenEnemy] = value;
 			f[(int)StateFeatures.Feature.Bias] = 1f;
 			return f;
 		}
@@ -59,8 +59,8 @@ namespace OpenRA.Test
 			Assert.That(rows, Has.Count.EqualTo(2));
 			Assert.That(rows[0].Tick, Is.EqualTo(100));
 			Assert.That(rows[0].Won, Is.True);
-			Assert.That(rows[0].Features[(int)StateFeatures.Feature.ArmyAdvantage], Is.EqualTo(0.25f));
-			Assert.That(rows[1].Features[(int)StateFeatures.Feature.ArmyAdvantage], Is.EqualTo(-0.5f));
+			Assert.That(rows[0].Features[(int)StateFeatures.Feature.ArmyVsSeenEnemy], Is.EqualTo(0.25f));
+			Assert.That(rows[1].Features[(int)StateFeatures.Feature.ArmyVsSeenEnemy], Is.EqualTo(-0.5f));
 		}
 
 		[TestCase(TestName = "Appending accumulates across matches.")]
@@ -118,8 +118,8 @@ namespace OpenRA.Test
 			Assert.That(holdout.Count, Is.EqualTo(20), "Games 0 and 4 are held out, ten samples each.");
 
 			// Every feature value identifies its game, so an overlap would show up as a shared value.
-			var trainValues = train.Select(s => s.Features[(int)StateFeatures.Feature.ArmyAdvantage]).ToHashSet();
-			var holdoutValues = holdout.Select(s => s.Features[(int)StateFeatures.Feature.ArmyAdvantage]).ToHashSet();
+			var trainValues = train.Select(s => s.Features[(int)StateFeatures.Feature.ArmyVsSeenEnemy]).ToHashSet();
+			var holdoutValues = holdout.Select(s => s.Features[(int)StateFeatures.Feature.ArmyVsSeenEnemy]).ToHashSet();
 			Assert.That(trainValues.Overlaps(holdoutValues), Is.False,
 				"No game may appear on both sides of the split.");
 		}

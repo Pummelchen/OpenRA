@@ -136,6 +136,13 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public float BaseIntegrity { get; set; }
 
 		/// <summary>
+		/// The most base this player has ever had. Current integrity means nothing on its own - four
+		/// thousand credits of structures is a strong start and a catastrophic twenty minutes - so
+		/// the signal that matters is the ratio to the peak.
+		/// </summary>
+		public float PeakBaseIntegrity { get; set; }
+
+		/// <summary>
 		/// Forces by region and role, in credits, indexed <c>[region * Roles + role]</c>. A flat
 		/// array rather than a jagged one: one allocation, one copy, and it stays in cache while the
 		/// search walks it.
@@ -194,6 +201,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			other.ArmyGrowthPerSecond = ArmyGrowthPerSecond;
 			other.TechBits = TechBits;
 			other.BaseIntegrity = BaseIntegrity;
+			other.PeakBaseIntegrity = PeakBaseIntegrity;
 			Array.Copy(Forces, other.Forces, Math.Min(Forces.Length, other.Forces.Length));
 		}
 	}

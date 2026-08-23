@@ -18,12 +18,23 @@ namespace OpenRA.Mods.Common.Commander.Model
 	/// Turns a state into the handful of numbers the win-probability model is fitted on.
 	/// </para>
 	/// <para>
-	/// Every feature is a <i>relative advantage</i> in the range -1 to +1, never a raw quantity.
-	/// That is deliberate. An absolute army value means nothing without knowing what the opponent
-	/// has, it grows through the match so its weight would have to change with the clock, and it
-	/// differs between mods and maps. A ratio is scale-free: +0.3 means the same thing at five
-	/// minutes and at twenty, on a small map and a large one, which is what lets weights fitted on
-	/// one set of games generalise to another.
+	/// <b>Every feature here must be computable from what the commander actually knows, and must
+	/// actually vary.</b> That sounds obvious and the first version of this file failed both halves
+	/// of it. Measured across 16,000 logged states, <c>CashAdvantage</c> was constant at exactly
+	/// 1.000 - the enemy's cash is never observable, so comparing to it produced a second bias term
+	/// - and <c>TechAdvantage</c> was constant at 0.000 because nothing ever populated it. Four
+	/// more sat above 0.87 on average for the same underlying reason: an "advantage" that compares a
+	/// fully-known own quantity against a fog-limited enemy one is not an advantage, it is a
+	/// measurement of how much of the enemy you happen to be looking at. Six of nine features were
+	/// noise, and the fitted weights were correspondingly meaningless.
+	/// </para>
+	/// <para>
+	/// So the set is split by what is knowable. Own-side features are absolute quantities squashed
+	/// into 0..1 by <see cref="Saturate"/>, which keeps them scale-free without pretending to a
+	/// comparison that cannot be made. The one genuine comparison - own army against enemy army
+	/// actually seen - is kept and named honestly. Phase 5's belief state is what will make further
+	/// enemy-side comparisons meaningful; until it exists, inventing them would be worse than going
+	/// without.
 	/// </para>
 	/// </summary>
 	public static class StateFeatures
@@ -31,18 +42,37 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// <summary>The feature vector's layout. The last entry is the constant term.</summary>
 		public enum Feature
 		{
-			ArmyAdvantage,
-			IncomeAdvantage,
-			HarvesterAdvantage,
-			BaseIntegrityAdvantage,
-			CashAdvantage,
-			TechAdvantage,
+			/// <summary>Own army against the enemy army currently observed. Honest about being partial.</summary>
+			ArmyVsSeenEnemy,
+
+			/// <summary>How large our army is in absolute terms, saturating.</summary>
+			ArmyScale,
+
+			/// <summary>How strong our economy is, saturating.</summary>
+			EconomyScale,
+
+			/// <summary>How many harvesters we are running, saturating.</summary>
+			HarvesterScale,
+
+			/// <summary>Our base relative to the most of it we have ever had: the losing signal.</summary>
+			BaseIntact,
+
+			/// <summary>Mean control across regions.</summary>
 			MapControl,
+
+			/// <summary>Fraction of regions where both sides are present.</summary>
 			ContestedFraction,
+
+			/// <summary>Fraction of the map seen recently: what reconnaissance actually buys.</summary>
+			ExploredFraction,
+
 			Bias,
 		}
 
 		public const int Count = (int)Feature.Bias + 1;
+
+		/// <summary>Regions unseen for longer than this count as unexplored.</summary>
+		public const int StaleVisibilityTicks = 25 * 60;
 
 		/// <summary>
 		/// Signed advantage in the range -1 to +1: +1 is total dominance, 0 is parity, -1 is
@@ -57,6 +87,19 @@ namespace OpenRA.Mods.Common.Commander.Model
 			return Math.Clamp((mine - theirs) / total, -1f, 1f);
 		}
 
+		/// <summary>
+		/// Squashes an absolute quantity into 0..1 against a reference value, at which it reads 0.5.
+		/// Keeps a raw count usable as a feature without the weight having to change as the match
+		/// grows, and without the false precision of a ratio against something unobservable.
+		/// </summary>
+		public static float Saturate(float value, float reference)
+		{
+			if (value <= 0f || reference <= 0f)
+				return 0f;
+
+			return value / (value + reference);
+		}
+
 		/// <summary>Extracts the feature vector. Allocation-free variant for the search's hot path.</summary>
 		public static void Extract(AbstractState state, ForwardModel model, Span<float> features)
 		{
@@ -68,27 +111,30 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 			var self = state.Self;
 			var enemy = state.Enemy;
+			var ownArmy = self.ArmyValue();
 
-			features[(int)Feature.ArmyAdvantage] = Advantage(self.ArmyValue(), enemy.ArmyValue());
-			features[(int)Feature.IncomeAdvantage] =
-				Advantage(model.IncomePerSecond(self), model.IncomePerSecond(enemy));
-			features[(int)Feature.HarvesterAdvantage] = Advantage(self.Harvesters, enemy.Harvesters);
-			features[(int)Feature.BaseIntegrityAdvantage] = Advantage(self.BaseIntegrity, enemy.BaseIntegrity);
-			features[(int)Feature.CashAdvantage] = Advantage(self.Cash, enemy.Cash);
-			features[(int)Feature.TechAdvantage] =
-				Advantage(System.Numerics.BitOperations.PopCount(self.TechBits),
-					System.Numerics.BitOperations.PopCount(enemy.TechBits));
+			features[(int)Feature.ArmyVsSeenEnemy] = Advantage(ownArmy, enemy.ArmyValue());
+			features[(int)Feature.ArmyScale] = Saturate(ownArmy, 5000f);
+			features[(int)Feature.EconomyScale] = Saturate(model.IncomePerSecond(self), 150f);
+			features[(int)Feature.HarvesterScale] = Saturate(self.Harvesters, 8f);
 
-			// Map control, and how much of the map is being fought over. A commander that holds
-			// everything uncontested is in a different position from one holding the same ground
-			// with an army parked on the other side of it.
+			// The one thing that unambiguously means losing, and it needs no knowledge of the enemy
+			// at all: our own base, measured against the most of it we have ever had.
+			features[(int)Feature.BaseIntact] = self.PeakBaseIntegrity <= 0f
+				? 1f
+				: Math.Clamp(self.BaseIntegrity / self.PeakBaseIntegrity, 0f, 1f);
+
 			var controlSum = 0f;
 			var contested = 0;
+			var explored = 0;
 			for (var region = 0; region < state.RegionCount; region++)
 			{
 				controlSum += state.Control[region];
 				if (self.ArmyValueIn(region) > 0f && enemy.ArmyValueIn(region) > 0f)
 					contested++;
+
+				if (state.VisibilityAge[region] <= StaleVisibilityTicks)
+					explored++;
 			}
 
 			features[(int)Feature.MapControl] = state.RegionCount == 0
@@ -98,6 +144,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 			features[(int)Feature.ContestedFraction] = state.RegionCount == 0
 				? 0f
 				: contested / (float)state.RegionCount;
+
+			// What reconnaissance actually buys, stated as a number the evaluator can weigh against
+			// the cost of the scouts that produced it.
+			features[(int)Feature.ExploredFraction] = state.RegionCount == 0
+				? 0f
+				: explored / (float)state.RegionCount;
 
 			// The constant term, which lets the model express a baseline win rate rather than being
 			// forced through the origin.

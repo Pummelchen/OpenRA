@@ -24,15 +24,108 @@ namespace OpenRA.Test
 	[TestFixture]
 	sealed class WinProbabilityModelTest
 	{
-		static float[] Features(float army, float income = 0f, float integrity = 0f, float control = 0f)
+		static float[] Features(float army, float economy = 0.5f, float intact = 1f, float control = 0f)
 		{
 			var f = new float[StateFeatures.Count];
-			f[(int)StateFeatures.Feature.ArmyAdvantage] = army;
-			f[(int)StateFeatures.Feature.IncomeAdvantage] = income;
-			f[(int)StateFeatures.Feature.BaseIntegrityAdvantage] = integrity;
+			f[(int)StateFeatures.Feature.ArmyVsSeenEnemy] = army;
+			f[(int)StateFeatures.Feature.ArmyScale] = 0.5f;
+			f[(int)StateFeatures.Feature.EconomyScale] = economy;
+			f[(int)StateFeatures.Feature.HarvesterScale] = 0.5f;
+			f[(int)StateFeatures.Feature.BaseIntact] = intact;
 			f[(int)StateFeatures.Feature.MapControl] = control;
 			f[(int)StateFeatures.Feature.Bias] = 1f;
 			return f;
+		}
+
+		[TestCase(TestName = "No feature is a disguised constant.")]
+		public void NoFeatureIsConstant()
+		{
+			// The defect this set was rebuilt to remove. Measured over 16,000 logged states, the
+			// previous CashAdvantage was constant at exactly 1.000 - the enemy's cash is never
+			// observable - and TechAdvantage was constant at 0.000 because nothing populated it.
+			// Both were duplicate bias terms wearing a feature's name, and the fitted weights were
+			// meaningless as a result.
+			// Three rooms in a row, not an open field: an empty square decomposes to exactly one
+			// region, and every per-region fraction is then trivially 1 regardless of what is
+			// happening on it.
+			const int W = 91, H = 41;
+			var graph = OpenRA.Mods.Common.Commander.Terrain.RegionGraph.Build(W, H, (x, y) =>
+			{
+				if (x <= 0 || y <= 0 || x >= W - 1 || y >= H - 1)
+					return false;
+
+				if (x == 30)
+					return y >= 16 && y < 26;
+
+				if (x == 60)
+					return y >= 19 && y < 22;
+
+				return true;
+			});
+
+			Assert.That(graph.Regions.Length, Is.GreaterThan(1));
+
+			var damage = new float[RoleStats.Roles * RoleStats.Roles];
+			Array.Fill(damage, 1f);
+			var hp = new float[RoleStats.Roles];
+			Array.Fill(hp, 1f);
+			var model = new ForwardModel(graph, new RoleStats(damage, hp));
+
+			var observed = new List<float[]>();
+			foreach (var scale in new[] { 0.1f, 1f, 5f })
+			{
+				var state = new AbstractState(graph.Regions.Length);
+				state.Self.SetForce(0, CombatRole.Armor, 1000f * scale);
+				state.Enemy.SetForce(0, CombatRole.Armor, 1500f);
+
+				// Contact in a varying number of places, so ContestedFraction is exercised. In
+				// logged games it ranges from nothing to a sixth of the map.
+				for (var r = 1; r < Math.Min(state.RegionCount, 1 + (int)scale); r++)
+				{
+					state.Self.SetForce(r, CombatRole.Infantry, 200f);
+					state.Enemy.SetForce(r, CombatRole.Infantry, 200f);
+				}
+				state.Self.Harvesters = (int)(4 * scale);
+				state.Self.Refineries = 2;
+				state.Self.ObservedIncomePerSecond = 60f * scale;
+				state.Self.ObservedHarvesters = Math.Max(1, (int)(4 * scale));
+				state.Self.BaseIntegrity = 4000f * scale;
+				state.Self.PeakBaseIntegrity = 20000f;
+				for (var r = 0; r < state.RegionCount; r++)
+				{
+					state.VisibilityAge[r] = scale > 1f ? 0 : int.MaxValue / 2;
+
+					// Control is populated by the extractor and the forward model, not by Extract,
+					// so a synthetic state has to set it or this reads as constant for the wrong
+					// reason. It genuinely varies in logged games, from -0.167 to 0.833.
+					state.Control[r] = Math.Clamp((scale - 1f) / 4f, -1f, 1f);
+				}
+
+				observed.Add(StateFeatures.Extract(state, model));
+			}
+
+			for (var i = 0; i < StateFeatures.Count; i++)
+			{
+				if (i == (int)StateFeatures.Feature.Bias)
+					continue;
+
+				var values = observed.Select(f => f[i]).Distinct().ToArray();
+				Assert.That(values.Length, Is.GreaterThan(1),
+					$"{StateFeatures.NameOf(i)} never varies - it is a bias term wearing a feature's name.");
+			}
+		}
+
+		[TestCase(TestName = "Saturation keeps an absolute quantity scale-free.")]
+		public void SaturationIsScaleFree()
+		{
+			// An absolute count cannot be compared against an unobservable enemy count, so it is
+			// squashed instead. The reference value is where it reads one half.
+			Assert.That(StateFeatures.Saturate(150f, 150f), Is.EqualTo(0.5f).Within(1e-6f));
+			Assert.That(StateFeatures.Saturate(0f, 150f), Is.EqualTo(0f));
+			Assert.That(StateFeatures.Saturate(1e9f, 150f), Is.EqualTo(1f).Within(1e-4f));
+
+			// Monotone, so more is never worth less.
+			Assert.That(StateFeatures.Saturate(300f, 150f), Is.GreaterThan(StateFeatures.Saturate(150f, 150f)));
 		}
 
 		[TestCase(TestName = "Advantage is signed, bounded and scale-free.")]
@@ -54,15 +147,17 @@ namespace OpenRA.Test
 		{
 			var model = WinProbabilityModel.Default();
 
-			Assert.That(model.Evaluate(Features(0f)), Is.EqualTo(0.5f).Within(1e-5f),
-				"A position with no advantage anywhere is a coin flip.");
+			// A thoroughly average position - half the reference army and economy, base intact,
+			// nothing decided - should read near even rather than near certain either way.
+			Assert.That(model.Evaluate(Features(0f)), Is.EqualTo(0.5f).Within(0.15f),
+				"An unremarkable position is close to a coin flip.");
 
 			var winning = model.Evaluate(Features(1f, 1f, 1f, 1f));
-			var losing = model.Evaluate(Features(-1f, -1f, -1f, -1f));
+			var losing = model.Evaluate(Features(-1f, 0.05f, 0.05f, -1f));
 
-			Assert.That(winning, Is.GreaterThan(0.9f));
-			Assert.That(losing, Is.LessThan(0.1f));
-			Assert.That(winning + losing, Is.EqualTo(1f).Within(1e-5f), "The model must be symmetric.");
+			Assert.That(winning, Is.GreaterThan(0.75f));
+			Assert.That(losing, Is.LessThan(0.25f));
+			Assert.That(winning, Is.GreaterThan(losing));
 		}
 
 		[TestCase(TestName = "Extreme margins saturate instead of overflowing.")]
@@ -110,7 +205,7 @@ namespace OpenRA.Test
 			Assert.That(result.Accuracy, Is.GreaterThan(0.95f));
 			Assert.That(result.BrierScore, Is.LessThan(0.25f),
 				"0.25 is what guessing produces; a model that cannot beat it has learned nothing.");
-			Assert.That(result.Model.Weights[(int)StateFeatures.Feature.ArmyAdvantage], Is.GreaterThan(1f),
+			Assert.That(result.Model.Weights[(int)StateFeatures.Feature.ArmyVsSeenEnemy], Is.GreaterThan(1f),
 				"The weight on the feature that decided every game must be positive and large.");
 		}
 
@@ -143,8 +238,8 @@ namespace OpenRA.Test
 			var penalised = LogisticFit.Fit(samples, l2: 1.0f);
 			var unpenalised = LogisticFit.Fit(samples, l2: 0f);
 
-			var penalisedWeight = Math.Abs(penalised.Model.Weights[(int)StateFeatures.Feature.ArmyAdvantage]);
-			var unpenalisedWeight = Math.Abs(unpenalised.Model.Weights[(int)StateFeatures.Feature.ArmyAdvantage]);
+			var penalisedWeight = Math.Abs(penalised.Model.Weights[(int)StateFeatures.Feature.ArmyVsSeenEnemy]);
+			var unpenalisedWeight = Math.Abs(unpenalised.Model.Weights[(int)StateFeatures.Feature.ArmyVsSeenEnemy]);
 
 			Assert.That(penalisedWeight, Is.LessThan(unpenalisedWeight));
 			Assert.That(penalised.Accuracy, Is.EqualTo(1f), "And it still gets the answer right.");
@@ -198,11 +293,14 @@ namespace OpenRA.Test
 			state.Self.BaseIntegrity = 5000f;
 			state.Enemy.BaseIntegrity = 5000f;
 
+			state.Self.PeakBaseIntegrity = 10000f;
+
 			var features = StateFeatures.Extract(state, model);
 
 			Assert.That(features, Has.Length.EqualTo(StateFeatures.Count));
-			Assert.That(features[(int)StateFeatures.Feature.ArmyAdvantage], Is.EqualTo(0.5f).Within(1e-5f));
-			Assert.That(features[(int)StateFeatures.Feature.BaseIntegrityAdvantage], Is.EqualTo(0f));
+			Assert.That(features[(int)StateFeatures.Feature.ArmyVsSeenEnemy], Is.EqualTo(0.5f).Within(1e-5f));
+			Assert.That(features[(int)StateFeatures.Feature.BaseIntact], Is.EqualTo(0.5f).Within(1e-5f),
+				"Half the base it once had is the signal that it is losing one.");
 			Assert.That(features[(int)StateFeatures.Feature.Bias], Is.EqualTo(1f));
 			Assert.That(features[(int)StateFeatures.Feature.ContestedFraction], Is.GreaterThan(0f),
 				"Both sides are present in region 0, so something is contested.");

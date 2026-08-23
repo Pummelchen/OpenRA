@@ -38,6 +38,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 		readonly RegionGraph graph;
 		readonly Dictionary<string, CombatRole> roleCache = [];
 		readonly Dictionary<string, int> costCache = [];
+		float peakBaseIntegrity;
 
 		public StateExtractor(World world, RegionGraph graph)
 		{
@@ -131,6 +132,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 				target.AddForce(region, role, cost * fraction);
 			}
+
+			// The peak is a property of the match, not of this instant, so it is remembered here
+			// rather than recomputed - a base is only "damaged" relative to what it once was.
+			peakBaseIntegrity = Math.Max(peakBaseIntegrity, state.Self.BaseIntegrity);
+			state.Self.PeakBaseIntegrity = peakBaseIntegrity;
+			state.Enemy.PeakBaseIntegrity = state.Enemy.BaseIntegrity;
 
 			ReadVisibilityAndValue(self, state);
 			ReadControl(state);
