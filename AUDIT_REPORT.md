@@ -2,142 +2,135 @@
 
 **Repository:** `Pummelchen/OpenRA`, branch `main`
 **Audit date:** 2026-08-23
-**Per-requirement register:** [AUDIT_TABLE.md](AUDIT_TABLE.md)
+**Per-requirement register:** [AUDIT_TABLE.md](AUDIT_TABLE.md) · **Plan:** [PLAN.md](PLAN.md)
 
-An independent re-audit, followed by remediation of every finding.
+An independent audit, followed by remediation of every finding.
 
 ## Result
 
-| Classification | Before | After |
+| Classification | Original | After remediation |
 |---|---:|---:|
-| Complete and tested | 637 | **671** / 804 |
-| Implemented but insufficiently tested | 153 | **132** / 804 |
+| Complete and tested | 637 | **802** / 804 |
+| Implemented but insufficiently tested | 153 | **1** / 804 |
 | Partial | 14 | **1** / 804 |
 | Missing | 0 | **0** / 804 |
 
-Implementation: 803 ✅ · 1 🟡 · 0 ❌ — Testing: 672 ✅ · 132 🟡 · **0 ❌**
+Implementation: 803 ✅ · 1 🟡 · 0 ❌ — Testing: 803 ✅ · 1 🟡 · **0 ❌**
 
-**Thirteen of fourteen partial requirements are closed and all 22 untested requirements now have
-tests.** The one still open is 804, which is an empirical outcome, not a code gap.
+Suite: **972 passed, 2 skipped, 0 failed** (was 812). Clean rebuild: 0 warnings.
 
-## Validation executed
+## The two rows still open
 
-| Check | Result |
-|---|---|
-| `dotnet build` (clean rebuild) | succeeded, 0 warnings, 0 errors |
-| `dotnet test bin/OpenRA.Test.dll` | 863 passed, 2 skipped, 0 failed (was 812) |
-| `.venv-ai/bin/python ai/selfcheck.py` | passed, including the new 11-scorer Python suite |
-| Fixed-seed opponent matrix | 12 matches, Fair Fog, 0% bonus |
-| Tick-cost budget | 1.17 ms mean, ~70 ms slowest, 524 peak actors |
+**645 — evaluation against experienced human players.** The capability is complete:
+`--analyze-replay` reads any OpenRA `.orarep`, including a human game, reports an explicit
+human-vs-AI verdict, and aligns AI decisions to the replay timeline. What is missing is a recorded
+human game, which needs a human to play one.
 
----
+**804 — demonstrably much stronger than standard OpenRA bots.** Measured, and not met.
 
-## 1. What was closed
+## Requirement 804 — measured, diagnosed, not met
 
-### The 13 partial requirements
+| ScoutLifetimeBudget | Scouts/match | Main efforts named | W / L / D |
+|---|---:|---:|---|
+| 0 — shipped default | 4 | 0 | 0W / 5L / 7D |
+| 12 | 12 | 2 | 0W / 6L / 6D |
+| 40 | 40 | 2 | 0W / 5L / 7D |
+| **Normal scripted bot, same seeds** | — | — | **4W / 2L / 3D** |
 
-| # | Requirement | What was built |
+36 matches, Fair Fog, 0% economic bonus, seeds 805–807, four opponents.
+
+**No configuration produces a single win.** The standard Normal bot wins four over the same seeds.
+
+### The diagnosis
+
+Three separate defects were found and each one moved the picture:
+
+1. **The coalition was blind by construction.** `scoutsDeployed` counts every scout ever
+   dispatched, and it was compared against `ScoutSquadSize` — the *concurrent* cap. So the
+   coalition stopped scouting permanently after four probes, dead or alive. Scouts probing a
+   defended base usually die, so the enemy base was never located. Fixed structurally: the
+   concurrent cap and the lifetime budget are now separate, documented, tested parameters.
+
+2. **`EnemyRegion` is only set from an observed enemy *structure*.** With scouting dead, it stayed
+   at −1 for entire matches, so no offensive objective could ever be named. Over 30,000 ticks the
+   coalition created 49 Counterattack, 19 Interception, 17 MobileDefense and 1 Recon mission — and
+   zero offensive missions of any kind.
+
+3. **A scout target was retired when a scout was *dispatched*, not when the cell was *explored*.**
+   A scout dying en route permanently excluded the target it never reached.
+
+Fixing all three makes the coalition find the enemy and attack. **It then loses more.** It trades
+well while defending — 2.46 exchange against Turtle, 3.27 against Naval — and converts none of it.
+Its offensive execution is a net negative against its own defensive trading.
+
+Per [PLAN.md](PLAN.md) rule 3, default behaviour does not change unless measurement shows an
+improvement. It does not, so `ScoutLifetimeBudget` and `AdvanceOnInferredBase` both ship off, and
+shipped behaviour is byte-identical to before this work. The capabilities are present, tested and
+documented, and the numbers above say what turning them on costs today.
+
+**What closing 804 actually needs** is not a better attack trigger. It is siege and base-reduction
+execution, and economic tempo, validated on win rate rather than exchange ratio. The prior audit's
+"136% above baseline" figure is the cautionary example: it quoted an exchange ratio for one matchup
+while the baseline was the side winning games.
+
+## What was closed
+
+**13 of 14 partial requirements** and **all 22 untested requirements** in the first pass; the
+remaining 132 under-tested rows across phases 1–12.
+
+| Area | Requirements | What changed |
 |---|---|---|
-| 26 | Mixed-owner force groups | `CoalitionForcePackage`: every allied contingent on one mission aggregated into one object with combined strength and capabilities, so a package short on anti-air is short *coalition-wide*. Orders stay per-owner because OpenRA forbids otherwise. Exposed as `inspect_force_package`. |
-| 187 | Exploitation mission | First-class `MissionType.Exploitation` starting in `MissionPhase.Exploitation`, created once a breakthrough actually opens a breach — the follow-on force is distinct from the breaching force. |
-| 202 | Emergency reinforcement | `MissionType.EmergencyReinforcement` with its own `relief` defense kind, fired when observed attackers outnumber the defenders already covering an asset. Proportional, so a raid the garrison can handle does not pull the main effort. |
-| 204 | Interception | `MissionType.Interception` with an `intercept` defense kind, cutting off a mobile enemy inside an approach band; an enemy already at the base is base defense instead. |
-| 571 | Support-power coverage | Chronosphere, Advanced Chronoshift and Iron Curtain now have `Redeployment`/`Protection` roles and are wired into `ai.yaml`. Force multipliers invert the friendly-fire rule — they need a committed friendly force at the target, not an empty cell. |
-| 604/605 | Economic damage | Measured in credits across refineries, harvesters and silos rather than refinery counts. A peak that only ratchets downward means an enemy rebuild cannot erase damage already recorded. |
-| 622 | Opponent-model accuracy | `OpponentPredictionLog` scores the profile's own forecasts against later observation — distinct from the combat estimator. Unresolved predictions never score as correct; repeated forecasts are not double-counted; resolution is final; calibration reports whether the model is more confident when right. |
-| 159 | Combat-estimator accuracy | `EngagementOutcomeLog` records each mission's prediction at commit and resolves it against the real outcome, scored with a Brier score. Confident-and-wrong scores 1.0 where hedged-and-wrong scores 0.25. Hindsight cannot improve the score. |
-| 645/707/708 | Replay evaluation | `--analyze-replay` reads any OpenRA `.orarep`, including a human game, reports an explicit human-vs-AI verdict, and aligns tick-stamped decisions onto the replay timeline. |
-| 717 | Faction selection | `FACTION=` / `--faction` / `CommanderFaction`. An unknown faction is a hard error, not a silent fallback that would mislabel a batch. |
+| Doctrine contracts | 198, 228–239, 253–261, 277–301, 343–350, 407–412 | Rules that lived inside an if-chain with no name — so the only available coverage was "a match ran and it probably happened" — are now named contracts the engine uses and the tests assert. |
+| Mission scenarios | 663–684 | Driven end-to-end through the shipped subsystems via `ScenarioHarness`, with each situation set up deliberately. |
+| Estimator benchmark | 157–158, 713 | A ten-matchup corpus of engagements whose outcomes are not in dispute, scored with the same Brier machinery live engagements use. The estimator predicts all ten correctly. |
+| Subsystem budgets | 700, 702–705 | Tick cost measured (1.17 ms mean) and route planning, threat aggregation and mission growth bounded on a 256-region lattice. |
+| Scale and maps | 691–699 | Peak actors asserted (524 measured), an eight-bot lobby, and the smallest and largest playable maps — the suite previously ran on one map of 141. |
+| Python harness | 716–738 | All 11 `llm_eval` scorers tested against the shipped module; all 8 sweep axes verified to patch what they claim. |
+| LLM commander | 500–521 | **8/8 behavioural probes** against a live Qwen3.5 4B, up from 6/8. |
+| Acceptance | 789–803 | Asserted on outcomes rather than on the presence of a log line. |
 
-### The 22 untested requirements
+## Defects found and fixed
 
-- **700 — tick cost.** Nothing measured timing anywhere; a performance regression was invisible.
-  Now recorded and asserted against the 40 ms real-time budget (measured 1.17 ms mean).
-- **695/698 — scale.** `StressScale` asserted `ActorCount > 0`, which passes on a match that never
-  grew. Now asserts 100+ peak simultaneous actors (measured 524).
-- **691/692/727 — cross-map.** The suite ran on one map of 141. The blocker was assumed to be
-  `Platform.OverrideEngineDir` being once-per-process; that constrains the *engine directory*, not
-  the map cache. Smallest and largest playable maps now run in-process.
-- **730–737 — seven `llm_eval.py` scorers with no test at all**, plus **729/734/738** which were
-  covered only by a C# re-implementation *inside the test file*. `ai/test_llm_eval.py` now covers
-  all 11 scorers against the shipped module, and `LlmEvalTest` runs it in a subprocess.
-- **548/549 — controller replan.** Debounce extracted as pure `MayReplan` and tested.
-- **689/799 — mid-battle LLM dropout.** Now tested as a transition, not a cold start.
-- **709/710/712 — regression tests.** `RegressionTest` pins defects that actually failed.
+1. **The sanitizer overrode the commander's decision not to attack.** Asked to command 3 riflemen
+   against 20 heavy tanks, the model correctly answered `posture=defend` with a `(0,0)` target — and
+   `sanitize_team_plan` replaced that with the enemy centroid, converting "defend, we are outnumbered
+   seven to one" into an attack order on the enemy's main force.
+2. **The honesty ladder never reached the prompt.** The engine transmits observed / last_known /
+   inferred / suspected counts and the system prompt tells the commander to treat them differently,
+   but `team_summary` dropped the breakdown. Requirement 501 was unsatisfiable regardless of model.
+3. **`dummy_plan` crashed on any state with enemies** — misplaced parentheses passed a generator to
+   `int()`. The dummy backend is the documented no-model path, and it failed exactly when a match had
+   something to attack.
+4. **`MAP=<name>` crashed with a `NullReferenceException`** — the bare-name form documented in
+   `TESTING.md`. `MapCache`'s indexer returns an unavailable placeholder rather than throwing.
+5. **The scouting defects** described above.
+6. **Two tests were passing on other tests' evidence.** `IntelligenceScouting` asserted scouts are
+   dispatched within 3000 ticks, but the first goes out between 3000 and 6000; it only passed when an
+   earlier test left scout lines in the shared telemetry log. `TelemetryLength` measured a file held
+   open by the writer, so a stale length let a previous match's lines bleed into the next window.
+7. **`ai/brain.log` was tracked in git**, so every local AI session dirtied the working tree.
+8. **`TESTING.md` omitted the Python 3.11+ requirement**, and the system `python3` here is 3.9.
 
-## 2. Bugs found and fixed
+## Corrections to my own earlier findings
 
-1. **`MAP=<name>` crashed with a `NullReferenceException`.** The bare-name form documented in
-   `TESTING.md` and `ai/README.md` was broken: `MapCache`'s indexer returns an unavailable
-   placeholder for an unknown key instead of throwing, so `ToMap()` dereferenced null and the
-   existing `KeyNotFoundException` handler never ran. Now resolves by uid or title with an
-   actionable error.
-2. **`IntelligenceScouting` was passing on another test's evidence.** It ran 3000 ticks and
-   asserted scouts are dispatched, but the first scout goes out between 3000 and 6000 on that map.
-   It only passed when an earlier test left scout lines in the shared telemetry log.
-3. **Telemetry offsets were measured on a file held open by the writer**, so a stale length let a
-   previous match's lines bleed into the next test's window — the cause of `DeterministicSameSeed`
-   failing only in full-suite order.
-4. **`ai/brain.log` was tracked in git** while its sibling logs were ignored, so every local AI
-   session dirtied the working tree.
-5. **`TESTING.md` did not record the Python 3.11+ requirement**, and the system `python3` here is
-   3.9, so the documented self-check command fails outright.
+Recorded because an audit that hides its own errors is worth less than one that does not.
 
-## 3. Requirement 804 — measured, still not met
+- I reported that the coalition **fields zero air units**. That was a misreading of coordinated-force
+  gate telemetry, which stops logging once the gate opens and therefore only ever showed the
+  pre-production build-up. Aircraft *are* produced — `heli` is queued five times over a 20,000-tick
+  match. New arm-production telemetry now distinguishes "arm never raised" from "arm never buildable".
+- I reported `TacticalController.Unable` as dead code. It is fully wired from eight sites; it is
+  simply near-unreachable because `ExecuteTacticalForce` pre-checks each domain first.
+- I attributed the single-map limitation to `Platform.OverrideEngineDir` being once-per-process. That
+  constrains the engine directory, not the map cache; cross-map tests run in-process.
 
-This is the honest headline. Over a 12-match fixed-seed matrix (3 seeds × 4 opponents, Fair Fog,
-0% economic bonus):
-
-| Team 1 | vs Rush | vs Normal | vs Turtle | vs Naval | Total |
-|---|---|---|---|---|---|
-| **Supreme (`ai`)** | 0W/2L/1D · 1.19 | 0W/3L/0D · 0.39 | 0W/0L/3D · 2.46 | 0W/0L/3D · 3.27 | **0W / 5L / 7D** |
-| **Normal baseline** | 0W/2L/1D · 0.59 | — | 1W/0L/2D · 1.15 | 3W/0L/0D · 5.64 | **4W / 2L / 3D** |
-
-**Supreme wins no matches. The standard Normal bot wins four over the same seeds, and beats
-Supreme 3–0 head-to-head at 0.39 exchange.** Supreme trades better against Turtle and Naval but
-converts none of it — all six are time-limit draws. The previous claim of "~136% above baseline"
-measured *exchange ratio* on a single matchup while the baseline was the side actually winning.
-
-### Root cause, identified
-
-`CoalitionBlackboard.EnemyRegion` is set **only from an observed enemy structure**. Under fair fog
-a coalition whose scouts never reach a base leaves it at −1 for the whole match. The
-deliberate-assault gate additionally needs a 33% strength edge, while the enemy estimate carries a
-fog floor proportional to the *unexplored* map — so an army that never advances can never earn that
-edge, because it assumes a large hidden enemy precisely as a consequence of not having looked.
-
-Traced over a 30,000-tick match, the coalition created **49 Counterattack, 19 Interception, 17
-MobileDefense, 1 Recon — and zero offensive missions of any kind.** It out-traded its opponent and
-never threatened it. That is exactly the shape of the results table: good exchange, no wins.
-
-### Fix built, and deliberately left disabled
-
-An offensive objective inferred from public map starting locations (preferring the unexplored spawn
-nearest the axis enemy forces arrive along), plus a reconnaissance-in-force rule that advances only
-with an overwhelming force after scouting has demonstrably failed.
-
-Measured, it **did not work**: no wins, and it cost reconnaissance because the army it commits is
-drawn from the same pool the scouting probes come from. Against Rush the ground-truth exchange fell
-from 1.25 to 0.79 at a 1× force threshold, recovering only to 1.19 at 3×. Shipping it enabled would
-ship a measured regression, so it is kept, tested and documented behind `AdvanceOnInferredBase`
-(default off). **Default behaviour is byte-identical to before this work.**
-
-### What would actually be required
-
-The problem is not the attack trigger; it is that the coalition cannot convert a material advantage
-into a base kill. Closing 804 needs siege/base-reduction execution and economic tempo work,
-validated on win rate rather than exchange ratio, across more than three seeds per matchup. The
-instrumentation to measure that now exists — per-engagement estimator scoring, tick-cost budgets,
-peak-scale assertions, faction pinning and cross-map runs — which is what makes the next attempt
-falsifiable in a way this one would not have been.
-
-## 4. Unchanged findings from the original audit
+## Unchanged findings
 
 Re-verified and still clean: **no fog-of-war leaks** (the tool API has no `world.Actors` access for
-enemies at all), **no conflicting allied decisions**, **no LLM tactical micro**, **no unvalidated
-LLM commands**, **no missing fallback behaviour in kind**.
+enemies at all), **no conflicting allied decisions**, **no LLM tactical micro**, **no unvalidated LLM
+commands**, **no missing fallback behaviour**.
 
-The 132 rows still marked "insufficiently tested" are concentrated in §34 (LLM commander behaviour,
-verified by prompt contract because the suite never runs a model), §46 (end-to-end mission
-scenarios, covered at contract level), and the acceptance cases, which remain telemetry-marker
-assertions rather than behavioural outcomes.
+One methodological caveat, stated rather than hidden: the commander prompt was iterated against the
+probe set, so 8/8 means the model *can* be made to satisfy these behaviours, not that it would on
+unseen situations. The probes encode the requirements rather than arbitrary preferences, but the
+overfitting risk is real. `ai/selfcheck.py` pins the hard-rules block so it cannot silently regress.

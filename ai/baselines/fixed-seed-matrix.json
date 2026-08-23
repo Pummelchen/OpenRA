@@ -1,6 +1,6 @@
 {
   "description": "Recorded fixed-seed opponent matrix for the Supreme coalition and the scripted Normal baseline. Fair Fog (intelligence 0), 0% economic bonus, map shattered-mountain, seeds 805-807, 30000 ticks. Regenerate with ai/selfplay.py --bot-type <ai|normal> --vs rush,normal,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0",
-  "recorded_at_revision": "3a1f2be560",
+  "recorded_at_revision": "80d548c3c1",
   "map": "shattered-mountain",
   "seeds": [
     805,
@@ -72,6 +72,56 @@
   "known_gaps": {
     "offensive_waves_in_symmetric_selfplay": 0,
     "aircraft_queued_per_20000_ticks": 5,
-    "note": "Correction to an earlier reading. Aircraft ARE produced (heli queued 5x over a 20000-tick four-bot match). The earlier 'air 0' observation came from Coordinated-force gate lines, which stop logging once the gate opens, so they only ever showed the pre-production build-up. The real gap is that no offensive wave launches at all in symmetric self-play, because the enemy base is never located and AdvanceOnInferredBase is off by default - so the combined-arms wave path is never exercised in that configuration."
+    "note": "Correction to an earlier reading. Aircraft ARE produced (heli queued 5x over a 20000-tick four-bot match). The earlier 'air 0' observation came from Coordinated-force gate lines, which stop logging once the gate opens, so they only ever showed the pre-production build-up. The real gap is that no offensive wave launches at all in symmetric self-play, because the enemy base is never located and AdvanceOnInferredBase is off by default - so the combined-arms wave path is never exercised in that configuration.",
+    "scouting": "ScoutLifetimeBudget defaults to 0, which reuses the concurrent squad size and caps the search at 4 scouts per match. That is why the enemy base is never located. The bound is now a separate, documented parameter rather than a conflation, but raising it measurably costs outcomes until the assault path improves."
+  },
+  "scout_budget_sweep": {
+    "description": "ScoutLifetimeBudget controls how many scouts may be dispatched over a whole match while the enemy base is unlocated. 0 reuses ScoutSquadSize (the historical, shipped default).",
+    "0_historical": {
+      "scouts_per_match": 4,
+      "main_efforts": 0,
+      "totals": {
+        "wins": 0,
+        "losses": 5,
+        "draws": 7
+      },
+      "exchange": {
+        "rush": 1.19,
+        "normal": 0.39,
+        "turtle": 2.46,
+        "naval": 3.27
+      }
+    },
+    "12": {
+      "scouts_per_match": 12,
+      "main_efforts": 2,
+      "totals": {
+        "wins": 0,
+        "losses": 6,
+        "draws": 6
+      },
+      "exchange": {
+        "rush": 0.77,
+        "normal": 0.34,
+        "turtle": 2.01,
+        "naval": 1.84
+      }
+    },
+    "40": {
+      "scouts_per_match": 40,
+      "main_efforts": 2,
+      "totals": {
+        "wins": 0,
+        "losses": 5,
+        "draws": 7
+      },
+      "exchange": {
+        "rush": 0.85,
+        "normal": 0.96,
+        "turtle": 0.62,
+        "naval": 2.83
+      }
+    },
+    "conclusion": "No setting produces a single win. Reconnaissance that actually works lets the coalition locate the enemy and attack, and attacking converts draws into losses - its offensive execution is a net negative against its own defensive trading. The default stays at 0 so shipped behaviour does not regress."
   }
 }

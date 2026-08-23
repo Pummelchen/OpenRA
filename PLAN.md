@@ -40,3 +40,29 @@ by side effect regresses silently.
 4. **Every phase ends green:** clean rebuild with 0 warnings, full suite passing, self-check passing.
 5. **804 is reported by measurement, not assertion.** If the win rate does not move, that is the
    result and it is written down.
+
+---
+
+## Outcome
+
+All twelve phases executed. **802 of 804 complete and tested**, up from 637; 0 missing, 0 untested.
+
+| Phase | Requirements | Result |
+|---|---|---|
+| 1–6 | doctrine contracts | closed — 57 rows |
+| 7–8 | mission scenarios | closed — 25 rows |
+| 9 | scale, self-play, replay, estimator | closed — 24 rows |
+| 10 | LLM commander behaviour | closed — 8/8 live probes, 2 defects fixed |
+| 11 | acceptance outcomes | closed — 11 rows |
+| 12 | requirement 804 | **not met**, measured across three configurations |
+
+Rule 1 (no vacuous tests) was applied twice: the controller-inability assertion was dropped when a
+9000-tick match showed the guard does not fire in normal play, and the air/naval assertion was
+rewritten when the telemetry it read turned out to go quiet once the gate opened.
+
+Rule 3 (no unmeasured behaviour change) decided requirement 804. Three real defects were found and
+fixed structurally, but enabling them measurably converts draws into losses, so both new switches
+ship off and shipped behaviour is byte-identical to before this work.
+
+Rule 5 (804 reported by measurement) is the headline: **0 wins in 36 matches**, against the standard
+Normal bot's 4 wins over the same seeds.

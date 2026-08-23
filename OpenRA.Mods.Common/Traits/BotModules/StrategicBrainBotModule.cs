@@ -101,6 +101,18 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Interval (in ticks) between scout deployments.")]
 		public readonly int ScoutInterval = 100;
 
+		[Desc("Total scouts that may be dispatched over a whole match while the enemy base is still",
+			"unlocated. Separate from ScoutSquadSize, which caps how many are out at once: scouts",
+			"probing a defended base usually die, so a lifetime budget equal to the concurrent cap",
+			"stops the search after a handful of losses and leaves the coalition blind for the match.",
+			"0 keeps the historical behaviour of reusing ScoutSquadSize as the budget. Raising this",
+			"makes the coalition actually locate the enemy base - measured on Shattered Mountain, 12",
+			"gives 12 scouts and a named main effort where 0 gives 4 scouts and none - but with the",
+			"current offensive execution that converts draws into losses (0W/6L/6D at 12 against",
+			"0W/5L/7D at 0), so it stays off by default until the assault path is stronger.",
+			"See AUDIT_REPORT.md.")]
+		public readonly int ScoutLifetimeBudget = 0;
+
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
 
@@ -251,6 +263,9 @@ namespace OpenRA.Mods.Common.Traits
 		readonly HashSet<Actor> completedUnserviceableRetreats = [];
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
+
+		/// <summary>Which cell each dispatched scout was sent to, so a failed probe can be retried.</summary>
+		readonly Dictionary<Actor, CPos> scoutAssignments = [];
 		readonly HashSet<Actor> missionScouts = [];
 		readonly HashSet<CPos> attemptedScoutTargets = [];
 		int scoutsDeployed;
@@ -1532,9 +1547,29 @@ namespace OpenRA.Mods.Common.Traits
 			if (Info.ScoutUnitTypes.Length == 0)
 				return;
 
+			// A scout target was previously retired the moment a scout was *dispatched* toward it. If
+			// that scout died on the way - the normal outcome when probing a defended base - the cell
+			// stayed unexplored and permanently excluded, so the coalition stopped scouting after a
+			// handful of probes and never located the enemy base for the rest of the match. A target
+			// is only genuinely finished when it has actually been explored; a lost scout means the
+			// information was never obtained, so the target goes back into the pool.
+			foreach (var lost in scouts.Where(a => !a.IsInWorld || a.IsDead).ToArray())
+			{
+				if (scoutAssignments.TryGetValue(lost, out var target))
+				{
+					if (!Player.Shroud.IsExplored(target))
+						attemptedScoutTargets.Remove(target);
+
+					scoutAssignments.Remove(lost);
+				}
+			}
+
+			foreach (var finished in scouts.Where(a => a.IsInWorld && !a.IsDead && a.IsIdle).ToArray())
+				scoutAssignments.Remove(finished);
+
 			scouts.RemoveWhere(a => !a.IsInWorld || a.IsDead || a.IsIdle);
 			var active = scouts.Count;
-			if (!ShouldScout(enemyBaseEverLocated, active, Info.ScoutSquadSize, scoutsDeployed))
+			if (!ShouldScout(enemyBaseEverLocated, active, Info.ScoutSquadSize, scoutsDeployed, Info.ScoutLifetimeBudget))
 				return;
 
 			var baseCenter = BaseCenter();
@@ -1559,6 +1594,7 @@ namespace OpenRA.Mods.Common.Traits
 
 				scouts.Add(scout);
 				attemptedScoutTargets.Add(targets[i]);
+				scoutAssignments[scout] = targets[i];
 				scoutsDeployed++;
 				Bot.QueueOrder(new Order("Move", scout, Target.FromCell(World, targets[i]), false));
 				CoalitionTelemetry.Log(World, $"Scout sent to {targets[i]} (shadow far from base)");
@@ -1650,11 +1686,27 @@ namespace OpenRA.Mods.Common.Traits
 				spawn.Y + Math.Sign(home.Y - spawn.Y) * distance);
 		}
 
-		/// <summary>Recon is bounded and stops once the coalition has located an enemy base.</summary>
-		public static bool ShouldScout(bool enemyBaseLocated, int activeScouts, int maximumScouts, int scoutsDeployed = 0)
+		/// <summary>
+		/// <para>Recon is bounded and stops once the coalition has located an enemy base.</para>
+		/// <para>
+		/// The concurrent cap and the lifetime budget are separate numbers, and conflating them was a
+		/// serious bug: <c>scoutsDeployed</c> counts every scout ever dispatched, so comparing it to
+		/// the squad size meant the coalition stopped scouting permanently after four probes - dead
+		/// or alive, successful or not. Scouts probing a defended base usually die, so the enemy base
+		/// was never located, no offensive objective could be named, and the coalition spent the rest
+		/// of the match reacting. The concurrent cap still stops reconnaissance eating the field army;
+		/// the lifetime budget is what decides whether the search can continue at all.
+		/// </para>
+		/// </summary>
+		public static bool ShouldScout(bool enemyBaseLocated, int activeScouts, int maximumScouts,
+			int scoutsDeployed = 0, int lifetimeBudget = 0)
 		{
-			return !enemyBaseLocated && maximumScouts > 0 && activeScouts < maximumScouts
-				&& scoutsDeployed < maximumScouts;
+			if (enemyBaseLocated || maximumScouts <= 0 || activeScouts >= maximumScouts)
+				return false;
+
+			// A zero or unset budget keeps the historical behaviour for callers that do not set one.
+			var budget = lifetimeBudget > 0 ? lifetimeBudget : maximumScouts;
+			return scoutsDeployed < budget;
 		}
 
 		/// <summary>Observed force advantage is trusted for an all-in only after broad reconnaissance.</summary>
