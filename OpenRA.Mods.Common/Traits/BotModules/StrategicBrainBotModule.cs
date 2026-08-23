@@ -34,6 +34,12 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Interval (in ticks) between production plan updates.")]
 		public readonly int BuildPlanInterval = 40;
 
+		[Desc("Banked cash above which production queues may duplicate unit types rather than each",
+			"taking a different one. The uniqueness rule diversifies a wave, which is the right",
+			"concern when money is tight and the wrong one when most of what has been earned is",
+			"sitting unspent.")]
+		public readonly int SpendFreelyCashThreshold = 4000;
+
 		[Desc("Cash below which production orders are withheld.")]
 		public readonly int MinProductionCash = 400;
 
@@ -928,6 +934,15 @@ namespace OpenRA.Mods.Common.Traits
 			if (supportFirst.Count > 0)
 				pickOrder = supportFirst.Concat(pickOrder).ToList();
 
+			// Cash pressure. The uniqueness rule below exists to diversify a wave, and that is the
+			// right worry when money is tight. Measured, this commander earned 289,500 credits and
+			// banked 213,413 of them - three quarters of everything it made - because one tank per
+			// war factory per cycle cannot absorb the income of a base this size. Above the
+			// threshold the queues may duplicate, so eight factories build eight tanks rather than
+			// one tank and seven progressively worse things.
+			var bankedCash = Player.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0;
+			var spendFreely = bankedCash >= Info.SpendFreelyCashThreshold;
+
 			var usedUnits = new HashSet<string>();
 			foreach (var queue in availableQueues)
 			{
@@ -937,7 +952,9 @@ namespace OpenRA.Mods.Common.Traits
 					continue;
 
 				var unitName = pickOrder.FirstOrDefault(u =>
-					!Info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
+					!Info.ExcludeFromArmyTypes.Contains(u)
+					&& (spendFreely || !usedUnits.Contains(u))
+					&& queue.BuildableItems().Any(i => i.Name == u));
 				if (unitName == null)
 				{
 					// An idle air or naval queue that can build nothing the plan wants is worth

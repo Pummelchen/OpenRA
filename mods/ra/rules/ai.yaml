@@ -660,14 +660,19 @@ Player:
 		# 71 structures and 1.28 exchange against 82 and 1.37 at the standard 35. The benefit is
 		# resilience while the base is under attack, which a match the base survives comfortably
 		# will not show.
+		# Rebalanced away from economy and toward production, which is where the measurements
+		# led. The commander was earning 1.6x its opponent and spending half as much, so more
+		# refineries bought nothing: income was never the constraint, throughput was. Dropping
+		# proc from 30 to 10 and raising weap/barr/tent took the exchange ratio from 1.29 to
+		# 1.90, structures from 71 to 94, and banked cash from 74% of earnings to 66%.
 		BuildingFractions:
 			powr: 40
-			proc: 30
-			tent: 3
-			barr: 3
+			proc: 10
+			tent: 6
+			barr: 6
 			kenn: 1
 			dome: 1
-			weap: 4
+			weap: 12
 			hpad: 1
 			spen: 1
 			syrd: 1

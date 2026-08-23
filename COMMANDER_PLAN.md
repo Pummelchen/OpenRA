@@ -117,7 +117,22 @@ prior — or it silently becomes a bias term.
 
 ## 5. The phases, re-ordered along the chain
 
-### A — Objective accounting *(the spine exists and tells the truth)*
+### A — Spend *(the link upstream of everything else)*
+
+This phase was not in the first draft of this document, because the measurement that produced it
+came afterwards — and it belongs first. The commander **earns 289,500 credits and banks 213,413 of
+them**, out-earning its opponent 1.6 to 1 while spending less than half as much and finishing with
+14 structures against 55. Every later link is moot while that holds: finding the enemy, choosing a
+target and destroying it are all downstream of having something to do it with.
+
+Restoring `BuildingFractions` from 1% to the upstream 30/35% and removing `BuildingLimits` recovered
+part of it. The rest is unit production, which the coalition drives from its own strategic brain
+rather than the stock unit builder.
+
+**Gate:** banked cash falls below a third of earnings, and the commander's structure count is within
+reach of the opponent's rather than a quarter of it.
+
+### B — Objective accounting *(the spine exists and tells the truth)*
 
 One `Objective` type flowing decision → execution → verification. Completion tested against effect.
 Telemetry reports objectives issued, accomplished, failed, abandoned, and **credits destroyed**.
@@ -125,29 +140,29 @@ Telemetry reports objectives issued, accomplished, failed, abandoned, and **cred
 **Gate:** reported success rate is no longer 100%, and destroyed credits appear in the record.
 *A success rate of 100% is not excellence; it is a broken test.*
 
-### B — Find *(the chain's first link)*
+### C — Find *(what the assaults need)*
 
 **Observe** objectives, directed by the belief state's most-uncertain region rather than by geometry.
 Completion: the region was actually seen.
 
 **Gate:** the enemy base is located in the majority of matches, counted directly.
 
-### C — Destroy *(the link that ends games)*
+### D — Destroy *(the link that ends games)*
 
 A force that arrives at a **Destroy** objective reduces what is there, and stays until it does or
 until a declared abort fires. Target selection prefers structures once the ground is taken.
 
 **Gate:** enemy economic damage is greater than zero in most matches. Currently zero in all of them.
 
-### D — Choose *(the decision layer, now measurable)*
+### E — Choose *(the decision layer, now measurable)*
 
 Search ranks objectives using the forward model and evaluator. This is where the existing phase 2–4
-work finally attaches — and it could not have been evaluated before C, because every choice produced
+work finally attaches — and it could not have been evaluated before D, because every choice produced
 the same non-effect.
 
 **Gate:** mirror decisiveness beats the 9-of-24 baseline the old commander already achieves.
 
-### E — Adapt *(the parts currently shelved)*
+### F — Adapt *(the parts currently shelved)*
 
 The posterior predicts which objectives the opponent will pursue; regret matching mixes our own so
 the choice cannot be punished; build-order search produces the force an objective needs. Each one
