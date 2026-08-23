@@ -399,6 +399,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>True for mission types that push into enemy territory and complete when the target clears.</summary>
+		/// <summary>
+		/// Friendly control a region needs before an assault on it counts as accomplished. Low
+		/// enough that arriving in strength qualifies, high enough that driving past does not.
+		/// </summary>
+		public const float OffensiveHoldThreshold = 0.15f;
+
 		public static bool IsOffensive(MissionType type)
 		{
 			return type is MissionType.Attack or MissionType.Raid or MissionType.Counterattack
@@ -478,14 +484,33 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 						if (IsOffensive(mission.Type))
 						{
-							// Completed when nothing of the target remains known in the target region.
+							// An assault succeeds when the ground is TAKEN: the coalition is standing
+							// on it and nothing of the enemy's is left there.
+							//
+							// This previously succeeded on `enemiesThere == 0` alone - that is, as
+							// soon as the commander could no longer SEE an enemy in the target
+							// region. Under fog that is true most of the time, including before the
+							// force has set off, so an assault was declared won on departure.
+							// Measured over a 30,000-tick match: 65 of 65 missions "succeeded" while
+							// destroying zero enemy structures and zero refineries. It is also why
+							// rebuilding the decision layer changed nothing - no amount of better
+							// planning survives an executor that reports victory without arriving.
+							//
+							// Requiring presence makes the test about the world rather than about
+							// what happens to be visible.
 							var targetRegion = mission.Target != null ? blackboard.RegionOf(mission.Target.Value) : null;
 							var enemiesThere = blackboard.EnemyIntel.Count(i =>
 								targetRegion != null && targetRegion.Bounds.Contains(i.LastSeenCell.X, i.LastSeenCell.Y));
-							if (enemiesThere == 0)
+
+							var holdingIt = targetRegion != null
+								&& targetRegion.Index >= 0
+								&& targetRegion.Index < blackboard.Regions.Length
+								&& blackboard.Regions[targetRegion.Index].FriendlyControl > OffensiveHoldThreshold;
+
+							if (holdingIt && enemiesThere == 0)
 							{
 								mission.Status = MissionStatus.Succeeded;
-								mission.OutcomeReason = "target cleared";
+								mission.OutcomeReason = "target taken";
 								CoalitionTelemetry.Log(blackboard.World, $"Mission {mission.Id} ({mission.Type}) succeeded: {mission.OutcomeReason}");
 								continue;
 							}

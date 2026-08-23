@@ -117,10 +117,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 				var role = RoleOf(actor.Info);
 
-				// Structures that do not shoot are not force; they are what losing looks like.
+				// Structures that do not shoot are not force; they are what losing looks like - and
+				// they are recorded per region, so an assault on a place can destroy what is there.
 				if (role == CombatRole.Defense && !IsArmed(actor.Info))
 				{
 					target.BaseIntegrity += cost;
+					target.AddStructures(region, cost);
 					continue;
 				}
 

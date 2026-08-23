@@ -33,6 +33,11 @@ namespace OpenRA.Test
 			f[(int)StateFeatures.Feature.HarvesterScale] = 0.5f;
 			f[(int)StateFeatures.Feature.BaseIntact] = intact;
 			f[(int)StateFeatures.Feature.MapControl] = control;
+
+			// An enemy base still standing is the ordinary case, and the neutral position has to
+			// include it - a model calibrated against an opponent with no base left would read every
+			// even game as nearly won.
+			f[(int)StateFeatures.Feature.EnemyBaseRemaining] = 0.5f;
 			f[(int)StateFeatures.Feature.Bias] = 1f;
 			return f;
 		}
@@ -91,6 +96,7 @@ namespace OpenRA.Test
 				state.Self.ObservedHarvesters = Math.Max(1, (int)(4 * scale));
 				state.Self.BaseIntegrity = 4000f * scale;
 				state.Self.PeakBaseIntegrity = 20000f;
+				state.Enemy.BaseIntegrity = 8000f / scale;
 				for (var r = 0; r < state.RegionCount; r++)
 				{
 					state.VisibilityAge[r] = scale > 1f ? 0 : int.MaxValue / 2;
@@ -152,7 +158,9 @@ namespace OpenRA.Test
 			Assert.That(model.Evaluate(Features(0f)), Is.EqualTo(0.5f).Within(0.15f),
 				"An unremarkable position is close to a coin flip.");
 
-			var winning = model.Evaluate(Features(1f, 1f, 1f, 1f));
+			var razed = Features(1f, 1f, 1f, 1f);
+			razed[(int)StateFeatures.Feature.EnemyBaseRemaining] = 0f;
+			var winning = model.Evaluate(razed);
 			var losing = model.Evaluate(Features(-1f, 0.05f, 0.05f, -1f));
 
 			Assert.That(winning, Is.GreaterThan(0.75f));

@@ -66,6 +66,13 @@ namespace OpenRA.Mods.Common.Commander.Model
 			/// <summary>Fraction of the map seen recently: what reconnaissance actually buys.</summary>
 			ExploredFraction,
 
+			/// <summary>
+			/// Enemy structures believed to remain, saturating. Carries a negative weight, so
+			/// destroying them raises the value of the position - which is what makes an assault
+			/// worth planning rather than merely survivable.
+			/// </summary>
+			EnemyBaseRemaining,
+
 			Bias,
 		}
 
@@ -150,6 +157,11 @@ namespace OpenRA.Mods.Common.Commander.Model
 			features[(int)Feature.ExploredFraction] = state.RegionCount == 0
 				? 0f
 				: explored / (float)state.RegionCount;
+
+			// What is left of the enemy. Without this the evaluator cannot see the difference
+			// between an assault that levelled a base and one that stood next to it, so no plan
+			// involving an attack could ever score better than staying home.
+			features[(int)Feature.EnemyBaseRemaining] = Saturate(enemy.BaseIntegrity, 6000f);
 
 			// The constant term, which lets the model express a baseline win rate rather than being
 			// forced through the origin.

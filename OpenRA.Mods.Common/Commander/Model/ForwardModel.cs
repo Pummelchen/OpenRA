@@ -127,6 +127,14 @@ namespace OpenRA.Mods.Common.Commander.Model
 			/// <summary>Static defences a defending side effectively adds, as a fraction of its army value.</summary>
 			public float DefenceBonus { get; init; } = 0.25f;
 
+			/// <summary>
+			/// Credits of structure destroyed per second, per credit of unopposed attacking force.
+			/// This is how the model represents winning at all, and its absence is why an earlier
+			/// version of the commander refused to attack: with nothing to gain, the search was
+			/// right to expand instead.
+			/// </summary>
+			public float DemolitionRate { get; init; } = 0.004f;
+
 			public static readonly Parameters Default = new();
 		}
 
@@ -178,6 +186,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			StepMovement(next.Enemy, enemyAction, seconds);
 
 			StepCombat(next, selfAction, enemyAction, seconds);
+			StepDemolition(next, seconds);
 			StepControl(next, seconds);
 
 			for (var r = 0; r < next.RegionCount; r++)
@@ -416,6 +425,46 @@ namespace OpenRA.Mods.Common.Commander.Model
 				Scale(state.Self, region, outcome.AttackerRemaining);
 				Scale(state.Enemy, region, outcome.DefenderRemaining);
 			}
+		}
+
+		/// <summary>
+		/// <para>
+		/// An army standing on the enemy's structures with nothing left to stop it destroys them.
+		/// </para>
+		/// <para>
+		/// Without this the model has no representation of the game's objective: an assault could
+		/// only ever cost units, so every plan that involved one scored worse than staying home, and
+		/// the search obligingly stayed home. Demolition is gated on the defender having no mobile
+		/// force left in the region - taking ground first and levelling it second, which is also the
+		/// order it happens in.
+		/// </para>
+		/// </summary>
+		void StepDemolition(AbstractState state, float seconds)
+		{
+			for (var region = 0; region < state.RegionCount; region++)
+			{
+				Demolish(state.Self, state.Enemy, region, seconds);
+				Demolish(state.Enemy, state.Self, region, seconds);
+			}
+		}
+
+		void Demolish(PlayerState attacker, PlayerState defender, int region, float seconds)
+		{
+			var structures = defender.StructuresIn(region);
+			if (structures <= 0f)
+				return;
+
+			// Anything still shooting has to be dealt with first.
+			if (defender.ArmyValueIn(region) > 0f)
+				return;
+
+			var force = attacker.ArmyValueIn(region);
+			if (force <= 0f)
+				return;
+
+			var destroyed = Math.Min(structures, force * parameters.DemolitionRate * seconds);
+			defender.AddStructures(region, -destroyed);
+			defender.BaseIntegrity = Math.Max(0f, defender.BaseIntegrity - destroyed);
 		}
 
 		static void Scale(PlayerState player, int region, float fraction)

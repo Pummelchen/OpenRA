@@ -486,6 +486,68 @@ namespace OpenRA.Test
 			Assert.That(dampedArmy, Is.LessThan(fullArmy), "...but neither is it taken at face value.");
 		}
 
+		[TestCase(TestName = "An army left standing on a base destroys it.")]
+		public void HeldGroundIsDemolished()
+		{
+			// The model's representation of winning, and its absence was why an earlier commander
+			// refused to attack at all: with base integrity untouchable, an assault could only cost
+			// units and could never accomplish anything, so the search correctly preferred to expand
+			// indefinitely. A forward model that cannot express the win condition cannot plan
+			// toward it.
+			var model = Model(out var graph);
+			var target = graph.RegionAt(80, 20);
+
+			var state = new AbstractState(graph.Regions.Length);
+			state.Self.SetForce(target, CombatRole.Armor, 4000f);
+			state.Enemy.AddStructures(target, 6000f);
+			state.Enemy.BaseIntegrity = 6000f;
+
+			var next = model.Step(state, new MacroAction(MacroVerb.Attack, target),
+				new MacroAction(MacroVerb.Defend, target), 60f);
+
+			Assert.That(next.Enemy.StructuresIn(target), Is.LessThan(6000f));
+			Assert.That(next.Enemy.BaseIntegrity, Is.LessThan(6000f),
+				"Base integrity must fall with the structures, or the evaluator cannot see the win.");
+		}
+
+		[TestCase(TestName = "Ground has to be taken before it can be levelled.")]
+		public void DemolitionRequiresClearingTheDefenders()
+		{
+			var model = Model(out var graph);
+			var target = graph.RegionAt(80, 20);
+
+			var state = new AbstractState(graph.Regions.Length);
+			state.Self.SetForce(target, CombatRole.Armor, 4000f);
+			state.Enemy.SetForce(target, CombatRole.Armor, 4000f);
+			state.Enemy.AddStructures(target, 6000f);
+			state.Enemy.BaseIntegrity = 6000f;
+
+			// Anything still shooting has to be dealt with first, which is also the order it happens
+			// in - and modelling it otherwise would make assaults look far cheaper than they are.
+			var next = model.Step(state, new MacroAction(MacroVerb.Attack, target),
+				new MacroAction(MacroVerb.Defend, target), 5f);
+
+			Assert.That(next.Enemy.StructuresIn(target), Is.EqualTo(6000f).Within(0.01f));
+		}
+
+		[TestCase(TestName = "Destroying a base cannot take it below nothing.")]
+		public void DemolitionIsBounded()
+		{
+			var model = Model(out var graph);
+			var target = graph.RegionAt(80, 20);
+
+			var state = new AbstractState(graph.Regions.Length);
+			state.Self.SetForce(target, CombatRole.Armor, 50000f);
+			state.Enemy.AddStructures(target, 500f);
+			state.Enemy.BaseIntegrity = 500f;
+
+			var next = model.Step(state, new MacroAction(MacroVerb.Attack, target),
+				new MacroAction(MacroVerb.Defend, 0), 600f);
+
+			Assert.That(next.Enemy.StructuresIn(target), Is.EqualTo(0f));
+			Assert.That(next.Enemy.BaseIntegrity, Is.EqualTo(0f));
+		}
+
 		[TestCase(TestName = "Unreachable regions report no travel time.")]
 		public void UnreachableRegions()
 		{

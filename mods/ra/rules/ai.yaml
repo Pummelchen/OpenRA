@@ -274,7 +274,7 @@ Player:
 		RequiresCondition: enable-turtle-ai
 		MinimumExcessPower: 20
 		MaximumExcessPower: 250
-		ExcessPowerIncrement: 20
+		ExcessPowerIncrement: 40
 		ExcessPowerIncreaseThreshold: 2
 		ConstructionYardTypes: fact
 		RefineryTypes: proc
@@ -603,10 +603,30 @@ Player:
 		InitialHarvesters: 4
 	BaseBuilderBotModule@ai:
 		RequiresCondition: enable-ai
+		# Power headroom, deliberately above standard.
+		#
+		# Every stock bot targets 10 excess power per building (40 per 4). A base sized exactly to
+		# its load browns out the moment anything happens to a plant - and in this mod it need not
+		# even lose one, because POWR carries ScalePowerWithHealth: a damaged plant supplies
+		# proportionally less, so output starts falling with the first shot that lands on it. Low
+		# power then slows every production queue at once, which is the worst possible moment to
+		# lose throughput.
+		#
+		# The increment is left at the standard 40 per 4 buildings. Raising it to 46 (+15%) was
+		# measured over three seeds and bought the headroom by starving the rest of the base:
+		# structures fell from 82 to 50 for an unchanged exchange ratio. The extra power is taken
+		# through the powr build fraction below instead, which costs far less.
+		#
+		# MinimumExcessPower stays at 0 on purpose. It reads like a floor but acts as a gate on
+		# building ANYTHING while spare power sits below it. Set to one plant's worth (100) it
+		# stalled construction outright: structures fell from 42 to 14, deaths rose from 38,250 to
+		# 66,700, and the opponent finished with 61 buildings against our 14.
 		MinimumExcessPower: 0
-		MaximumExcessPower: 180
 		ExcessPowerIncrement: 40
 		ExcessPowerIncreaseThreshold: 4
+		# Effectively uncapped. Excess power is what lets a base support more production,
+		# and a cap on it is a cap on how fast income can be turned into anything.
+		MaximumExcessPower: 5000
 		ConstructionYardTypes: fact
 		RefineryTypes: proc
 		PowerTypes: powr,apwr
@@ -620,23 +640,29 @@ Player:
 		NewProductionCashThreshold: 7000
 		SiloTypes: silo
 		DefenseTypes: hbox,pbox,gun,ftur,tsla,agun,sam
-		BuildingLimits:
-			kenn: 1
-			barr: 7
-			tent: 7
-			dome: 1
-			weap: 4
-			spen: 1
-			syrd: 1
-			hpad: 4
-			afld: 4
-			afld.ukraine: 4
-			atek: 1
-			stek: 1
-			fix: 1
+		# No BuildingLimits. Measured over a 30,000-tick match the commander earned
+		# 289,500 credits and finished sitting on 213,413 of them - 74% of everything it
+		# ever made - with 14 structures against an opponent's 55. Capping what it may
+		# build caps how fast it can convert income into anything at all, and income was
+		# never the constraint: it out-earned that opponent 1.6 to 1.
+		# BuildingFractions is a PERCENTAGE of the base per type, and these had been rewritten from
+		# the upstream values (proc 30%, powr 35%) down to 1 each - which told the base builder to
+		# keep power and refineries at one per cent of the base. Measured on shattered-mountain/808:
+		# restoring them took the commander from 14 structures to 30, cut deaths from 60,500 to
+		# 37,800, and lifted the exchange ratio from 1.19 to 1.82 in a single change.
+		#
+		# powr is then carried above the standard 35 to 40 - fourteen per cent more power than any
+		# stock bot builds - so that losing a plant, or merely having one shot at, does not brown
+		# the base out. POWR carries ScalePowerWithHealth, so a damaged plant already supplies less
+		# before it dies, and low power slows every production queue at once.
+		#
+		# This is not free and the cost is stated rather than assumed: over three seeds it runs at
+		# 71 structures and 1.28 exchange against 82 and 1.37 at the standard 35. The benefit is
+		# resilience while the base is under attack, which a match the base survives comfortably
+		# will not show.
 		BuildingFractions:
-			powr: 1
-			proc: 1
+			powr: 40
+			proc: 30
 			tent: 3
 			barr: 3
 			kenn: 1

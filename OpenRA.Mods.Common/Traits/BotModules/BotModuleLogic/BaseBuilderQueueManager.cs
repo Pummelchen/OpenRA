@@ -294,7 +294,12 @@ namespace OpenRA.Mods.Common.Traits
 				if (!actors.Contains(actor.Name))
 					return false;
 
-				if (!baseBuilder.Info.BuildingLimits.TryGetValue(actor.Name, out var limit))
+				// BuildingLimits is documented as optional and defaults to null, exactly as UnitLimits
+				// and BuildingDelays do - but unlike them it was dereferenced unguarded, so a bot
+				// with no limits configured crashed on its first build decision rather than building
+				// without limits.
+				if (baseBuilder.Info.BuildingLimits == null
+					|| !baseBuilder.Info.BuildingLimits.TryGetValue(actor.Name, out var limit))
 					return true;
 
 				return playerBuildings.Count(a => a.Info.Name == actor.Name) < limit;
@@ -400,6 +405,10 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			// Build everything else
+			// Same optional-field contract, same missing guard.
+			if (baseBuilder.Info.BuildingFractions == null)
+				return null;
+
 			foreach (var frac in baseBuilder.Info.BuildingFractions.Shuffle(world.LocalRandom))
 			{
 				var name = frac.Key;
@@ -427,7 +436,8 @@ namespace OpenRA.Mods.Common.Traits
 				if (count * 100 > frac.Value * playerBuildings.Length)
 					continue;
 
-				if (baseBuilder.Info.BuildingLimits.TryGetValue(name, out var limit) && limit <= count)
+				if (baseBuilder.Info.BuildingLimits != null
+					&& baseBuilder.Info.BuildingLimits.TryGetValue(name, out var limit) && limit <= count)
 					continue;
 
 				// If we're considering to build a naval structure, check whether there is enough water inside the base perimeter

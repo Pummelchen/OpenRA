@@ -149,11 +149,26 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// </summary>
 		public float[] Forces { get; }
 
+		/// <summary>
+		/// <para>
+		/// Credit value of non-combat structures in each region: refineries, production, tech.
+		/// </para>
+		/// <para>
+		/// This exists so the model can represent <b>winning</b>. Base integrity was previously a
+		/// single number that nothing ever changed, which meant an attack could only lose units and
+		/// could never destroy anything - so within the model attacking was pure cost with no
+		/// possible benefit, and the search correctly refused to do it. Knowing where the structures
+		/// are is what lets an assault on a region mean something.
+		/// </para>
+		/// </summary>
+		public float[] Structures { get; }
+
 		public PlayerState(int regionCount)
 		{
 			ArgumentOutOfRangeException.ThrowIfNegative(regionCount);
 			RegionCount = regionCount;
 			Forces = new float[regionCount * RoleStats.Roles];
+			Structures = new float[regionCount];
 		}
 
 		/// <summary>The force in one region, as a span the combat model can read without copying.</summary>
@@ -177,6 +192,19 @@ namespace OpenRA.Mods.Common.Commander.Model
 				total += Forces[start + r];
 
 			return total;
+		}
+
+		/// <summary>Structure value in one region.</summary>
+		public float StructuresIn(int region) =>
+			region >= 0 && region < Structures.Length ? Structures[region] : 0f;
+
+		/// <summary>Adds or removes structure value in a region, never below zero.</summary>
+		public void AddStructures(int region, float credits)
+		{
+			if (region < 0 || region >= Structures.Length)
+				return;
+
+			Structures[region] = Math.Max(0f, Structures[region] + credits);
 		}
 
 		/// <summary>Total credit value of the whole army.</summary>
@@ -203,6 +231,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			other.BaseIntegrity = BaseIntegrity;
 			other.PeakBaseIntegrity = PeakBaseIntegrity;
 			Array.Copy(Forces, other.Forces, Math.Min(Forces.Length, other.Forces.Length));
+			Array.Copy(Structures, other.Structures, Math.Min(Structures.Length, other.Structures.Length));
 		}
 	}
 }

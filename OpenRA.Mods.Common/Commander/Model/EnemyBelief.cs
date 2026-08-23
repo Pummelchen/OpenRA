@@ -43,6 +43,13 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// <summary>Credit value believed present, indexed [region * Roles + role].</summary>
 		readonly float[] belief;
 
+		/// <summary>
+		/// Enemy structures believed to stand in each region. Tracked separately from forces because
+		/// buildings do not move, and because an assault's whole purpose is to remove them - a
+		/// commander that cannot estimate where the enemy's base is cannot plan to take it.
+		/// </summary>
+		readonly float[] structures;
+
 		/// <summary>Ticks since each region was last observed. Feeds how far belief is allowed to spread.</summary>
 		readonly int[] lastSeen;
 
@@ -64,6 +71,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			this.regions = regions;
 			this.neighbours = neighbours;
 			belief = new float[regions * RoleStats.Roles];
+			structures = new float[regions];
 			lastSeen = new int[regions];
 			Array.Fill(lastSeen, int.MinValue / 2);
 		}
@@ -103,6 +111,55 @@ namespace OpenRA.Mods.Common.Commander.Model
 			return total;
 		}
 
+		/// <summary>Enemy structure value believed to stand in a region.</summary>
+		public float ExpectedStructures(int region) =>
+			region >= 0 && region < regions ? structures[region] : 0f;
+
+		/// <summary>Total enemy structure value believed to remain anywhere.</summary>
+		public float ExpectedStructuresTotal()
+		{
+			var total = 0f;
+			foreach (var value in structures)
+				total += value;
+
+			return total;
+		}
+
+		/// <summary>
+		/// <para>
+		/// Assumes the enemy has a base, even before one has been found, placed where nobody has
+		/// looked.
+		/// </para>
+		/// <para>
+		/// Exactly the same pathology as the army prior, and it bit twice. With enemy structures
+		/// unobserved the evaluator sees nothing left to destroy, so an assault appears to
+		/// accomplish nothing and the search expands instead - measured, the commander rated every
+		/// position at 0.92 and never once planned an attack. An opponent has a base; the only
+		/// question is where.
+		/// </para>
+		/// </summary>
+		public void AssumeUnseenStructures(float assumedTotal, int now, int staleAfterTicks)
+		{
+			if (assumedTotal <= 0f || regions == 0)
+				return;
+
+			var shortfall = assumedTotal - ExpectedStructuresTotal();
+			if (shortfall <= 0f)
+				return;
+
+			var candidates = new List<int>();
+			for (var region = 0; region < regions; region++)
+				if (TicksSinceSeen(region, now) > staleAfterTicks)
+					candidates.Add(region);
+
+			if (candidates.Count == 0)
+				return;
+
+			var share = shortfall / candidates.Count;
+			foreach (var region in candidates)
+				structures[region] += share;
+		}
+
 		/// <summary>Ticks since a region was last observed.</summary>
 		public int TicksSinceSeen(int region, int now) =>
 			region < 0 || region >= regions ? int.MaxValue / 2 : now - lastSeen[region];
@@ -111,7 +168,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// Replaces the belief for one observed region with what is actually there. Applies to
 		/// regions the player can currently see, and it is the only place positive evidence enters.
 		/// </summary>
-		public void Observe(int region, ReadOnlySpan<float> observedByRole, int tick)
+		public void Observe(int region, ReadOnlySpan<float> observedByRole, int tick, float observedStructures = -1f)
 		{
 			if (region < 0 || region >= regions)
 				return;
@@ -119,6 +176,11 @@ namespace OpenRA.Mods.Common.Commander.Model
 			var start = region * RoleStats.Roles;
 			for (var r = 0; r < RoleStats.Roles; r++)
 				belief[start + r] = r < observedByRole.Length ? Math.Max(0f, observedByRole[r]) : 0f;
+
+			// A negative value means the caller is not reporting structures; zero means it looked and
+			// there are none, which is information and must overwrite the assumption.
+			if (observedStructures >= 0f)
+				structures[region] = observedStructures;
 
 			lastSeen[region] = tick;
 		}
@@ -145,6 +207,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			for (var r = 0; r < RoleStats.Roles; r++)
 				belief[start + r] = 0f;
 
+			structures[region] = 0f;
 			lastSeen[region] = tick;
 		}
 
@@ -207,9 +270,18 @@ namespace OpenRA.Mods.Common.Commander.Model
 		{
 			ArgumentNullException.ThrowIfNull(enemy);
 
+			enemy.BaseIntegrity = 0f;
+
 			for (var region = 0; region < regions && region < enemy.RegionCount; region++)
+			{
 				for (var role = 0; role < RoleStats.Roles; role++)
 					enemy.SetForce(region, (CombatRole)role, Expected(region, (CombatRole)role));
+
+				enemy.Structures[region] = structures[region];
+				enemy.BaseIntegrity += structures[region];
+			}
+
+			enemy.PeakBaseIntegrity = Math.Max(enemy.PeakBaseIntegrity, enemy.BaseIntegrity);
 		}
 
 		/// <summary>

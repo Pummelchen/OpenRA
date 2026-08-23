@@ -442,6 +442,7 @@ progress is reported by measurement, never by assertion.
 | 2 | `AbstractState` + forward model | Predicted vs actual state at +30 s within 15% on logged games |
 | 3 | Self-play feature logging + logistic evaluator | Brier score beats a fixed 0.5 baseline by a wide margin |
 | 4 | Puppet MCTS + **plan commitment** | **Mirror decisiveness > 75%** — the direct §1 fix |
+| 4b | *(added)* Executor's definition of done, belief-directed scouting | Assaults must destroy something; the enemy base must be found |
 | 5 | Particle filter + Bayesian posterior | Strategy identified before the first attack in >80% of games |
 | 6 | Regret matching replaces UCB1 | No strategy exceeds 40% frequency; no losing streak vs any single bot |
 | 7 | Build-order search | Time-to-first-attack cut measurably vs phase 4 |
@@ -460,8 +461,31 @@ layer, telemetry, and the self-play harness.
 Replace: `RunCommand()`'s rule cascade, `PostureSelection`'s instantaneous ratio test,
 `StrategyPortfolio`'s UCB1, and the last-known-position intel model.
 
-The execution layer is not the problem and should not be rewritten. A 2.43 exchange ratio is
-evidence that when this commander is told what to do, it does it well.
+> **Correction, from measurement.** This section originally read: *"The execution layer is not the
+> problem and should not be rewritten. A 2.43 exchange ratio is evidence that when this commander is
+> told what to do, it does it well."* That inference was wrong, and the rebuild proved it wrong.
+> Trading well is not evidence of being able to take a base.
+>
+> With the whole decision layer replaced and the commander committing to twelve assaults a match,
+> mirror decisiveness did not move (5 of 24, against 9 of 24 before), kills were unchanged
+> (220k against 223k), and **economic damage to the enemy was zero credits and zero refineries
+> across a 30,000-tick match** — while the mission system reported 65 of 65 missions successful.
+>
+> Two defects in the execution layer explain that, and neither is a tuning question:
+>
+> 1. **An assault succeeded when the commander could no longer *see* an enemy in the target
+>    region** — not when it destroyed anything. Under fog that is true most of the time, including
+>    before the force has set off, so assaults were declared won on departure. Taking ground now
+>    requires actually holding it.
+> 2. **Reconnaissance never found the enemy base.** Forty scouts a match, sent to map edges and the
+>    top row by a geometric sweep, located it exactly zero times — so every assault after that took
+>    empty ground. Scouting is now directed by the belief state, which already knows which regions
+>    are both stale and likely to be hiding something.
+>
+> The lesson generalises past this codebase: a plan is only as good as the executor's definition of
+> done, and a success criterion that can be satisfied by *not looking* will be satisfied constantly.
+
+Beyond those two defects the execution layer is sound, and the rest of it should not be rewritten.
 
 ---
 

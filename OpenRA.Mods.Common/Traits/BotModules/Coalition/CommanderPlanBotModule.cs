@@ -80,6 +80,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		bool leader;
 		float peakOwnArmy;
 		float peakSeenEnemyArmy;
+		float peakOwnBase;
+		int lastReviewTick;
 		int plansCommitted;
 		int plansCompleted;
 		float lastSearchValue;
@@ -99,6 +101,34 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return null;
 
 				var region = Current.Objective.Region;
+				if (region < 0 || region >= graph.Regions.Length)
+					return null;
+
+				var r = graph.Regions[region];
+				return MapRegions.ToCell(map, r.CentreX, r.CentreY);
+			}
+		}
+
+		/// <summary>
+		/// <para>
+		/// Where a scout is worth sending: the region carrying the most believed-but-unseen enemy.
+		/// </para>
+		/// <para>
+		/// Measured, the old radial sweep sent forty scouts to map edges and the top row - 22,2 /
+		/// 23,2 / 97,2 / 98,2 on a 127x127 map - and located the enemy base exactly zero times in a
+		/// whole match. Every assault that followed therefore took empty ground. The belief state
+		/// already knows which places are both stale and likely to be hiding something, which is
+		/// precisely the question "where should I look" asks.
+		/// </para>
+		/// </summary>
+		public CPos? ScoutTarget
+		{
+			get
+			{
+				if (IsTraitDisabled || belief == null || graph == null || map == null || !leader)
+					return null;
+
+				var region = belief.MostUncertainRegion(lastReviewTick);
 				if (region < 0 || region >= graph.Regions.Length)
 					return null;
 
@@ -141,6 +171,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var enemies = Enemies(bot.Player).ToArray();
 			var state = extractor.Extract(bot.Player, enemies);
 
+			lastReviewTick = world.WorldTick;
 			UpdateBelief(bot.Player, state, world.WorldTick);
 			belief.ApplyTo(state.Enemy);
 
@@ -201,7 +232,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 				// The extracted state already respects fog, so what it holds for a visible region is
 				// what is actually there - zero included.
-				belief.Observe(region, state.Enemy.ForcesIn(region), tick);
+				belief.Observe(region, state.Enemy.ForcesIn(region), tick, state.Enemy.StructuresIn(region));
 			}
 
 			// An opponent exists whether or not it has been seen, and it has to be somewhere nobody
@@ -218,6 +249,12 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var assumed = Math.Max(peakSeenEnemyArmy, peakOwnArmy * info.UnseenEnemyFraction);
 			belief.AssumeUnseen(assumed, tick, info.StaleVisibilityTicks);
+
+			// And they have a base. Without assuming one the evaluator sees nothing left to destroy,
+			// so an assault appears to accomplish nothing - which is how a commander ends up rating
+			// every position at 0.92 while never planning an attack.
+			peakOwnBase = Math.Max(peakOwnBase, state.Self.BaseIntegrity);
+			belief.AssumeUnseenStructures(peakOwnBase * info.UnseenEnemyFraction, tick, info.StaleVisibilityTicks);
 		}
 
 		void ReviewAndPlan(World world, AbstractState state)

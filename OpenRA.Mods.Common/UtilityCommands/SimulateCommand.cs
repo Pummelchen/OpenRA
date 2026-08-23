@@ -91,6 +91,26 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				return stats == null ? (0, 0) : (stats.KillsCost, stats.DeathsCost);
 			};
 
+			// Ground truth, counted outside the fog. The bot's own economic-damage metric only sees
+			// enemy economy it has observed, so it reads zero both when nothing was destroyed and
+			// when nothing was ever seen - two very different things that a gate must not conflate.
+			HeadlessSkirmish.CaptureStructures = p =>
+			{
+				var count = 0;
+				var value = 0;
+				foreach (var actor in p.World.ActorsHavingTrait<Building>())
+				{
+					if (actor.Owner != p || actor.IsDead || !actor.IsInWorld)
+						continue;
+
+					count++;
+					value += actor.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
+				}
+
+				var resources = p.PlayerActor.TraitOrDefault<PlayerResources>();
+				return (count, value, resources?.GetCashAndResources() ?? 0, resources?.Earned ?? 0);
+			};
+
 			// Self-play evaluation must be replay-deterministic; the async model consultation (even a
 			// timeout) introduces thread-timing nondeterminism, so the external brain is disabled by
 			// default. Set ENABLE_LLM=1 to run with the real LLM brain (radar images + model server)
@@ -120,7 +140,9 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				$"{result.SlowestTickMilliseconds:0.000} ms slowest, peak {result.PeakActorCount} actors");
 			foreach (var client in result.Clients.OrderBy(c => c.Index))
 				Console.WriteLine($"  {client.Index,2}  {(client.IsBot ? (client.BotEnabled ? "AI enabled" : "AI disabled") : "observer")}  " +
-					$"team {client.Team}  faction {client.Faction}  {client.Name}  kills_cost={client.KillsCost} deaths_cost={client.DeathsCost}");
+					$"team {client.Team}  faction {client.Faction}  {client.Name}  kills_cost={client.KillsCost} deaths_cost={client.DeathsCost} " +
+						$"structures={client.StructureCount} structure_value={client.StructureValue} " +
+						$"cash={client.Cash} earned={client.Earned}");
 			if (result.Winners.Count > 0)
 				Console.WriteLine($"Winners: {string.Join(", ", result.Winners)}");
 

@@ -65,9 +65,14 @@ namespace OpenRA.Mods.Common.Commander.Model
 			weights[(int)StateFeatures.Feature.ContestedFraction] = 0f;
 			weights[(int)StateFeatures.Feature.ExploredFraction] = 0.3f;
 
+			// Negative: enemy structures still standing is the work not yet done. This is the term
+			// that makes an assault worth planning, and its absence is why the search preferred to
+			// expand indefinitely.
+			weights[(int)StateFeatures.Feature.EnemyBaseRemaining] = -2.0f;
+
 			// Chosen so a wholly average position - half the reference army, half the economy, an
 			// intact base, nothing contested - reads near even rather than near certain.
-			weights[(int)StateFeatures.Feature.Bias] = -2.25f;
+			weights[(int)StateFeatures.Feature.Bias] = -1.25f;
 			return new WinProbabilityModel(weights);
 		}
 

@@ -1771,6 +1771,15 @@ namespace OpenRA.Mods.Common.Traits
 			if (mobile == null)
 				return [];
 
+			// Where the belief state says to look, first. It knows which regions are both stale and
+			// likely to be hiding an army, which is exactly the question this method asks - whereas
+			// the geometric fallback below spends probes on map edges. Measured on a 127x127 map,
+			// the fallback alone sent forty scouts and located the enemy base zero times, so every
+			// assault that followed took empty ground.
+			var believed = BeliefScoutTarget(scout, mobile);
+			if (believed.HasValue)
+				return [believed.Value];
+
 			var minDistanceSq = (long)WDist.FromCells(Info.ScoutMinDistance).Length;
 			minDistanceSq *= minDistanceSq;
 			var stride = Math.Max(4, World.Map.MapSize.Width / 16);
@@ -1854,6 +1863,28 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		/// <summary>Returns a deterministic home-facing approach cell outside a normally occupied spawn center.</summary>
+		/// <summary>
+		/// The cell the commander's belief state most wants looked at, if it is reachable and has
+		/// not already been probed.
+		/// </summary>
+		CPos? BeliefScoutTarget(Actor scout, Mobile mobile)
+		{
+			planner ??= Player.PlayerActor.TraitsImplementing<BotModules.Coalition.CommanderPlanBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+
+			var target = planner?.ScoutTarget;
+			if (target == null)
+				return null;
+
+			var cell = target.Value;
+			if (attemptedScoutTargets.Contains(cell) || !mobile.CanEnterCell(cell, scout, BlockedByActor.Immovable))
+				return null;
+
+			return cell;
+		}
+
+		BotModules.Coalition.CommanderPlanBotModule planner;
+
 		public static CPos SpawnApproachCell(CPos spawn, CPos home, int offset)
 		{
 			var distance = Math.Max(0, offset);

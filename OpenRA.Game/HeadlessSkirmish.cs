@@ -91,6 +91,21 @@ namespace OpenRA
 		/// </summary>
 		public static Func<Player, (int KillsCost, int DeathsCost)> CaptureKillCosts;
 
+		/// <summary>
+		/// <para>
+		/// Optional hook to capture a player's surviving structure value as ground truth, before the
+		/// world is disposed.
+		/// </para>
+		/// <para>
+		/// This exists because the bot's own economic-damage metric is fog-limited: it counts enemy
+		/// economy dropping below the peak it has *observed*, and if enemy structures are never
+		/// observed the peak stays zero and the damage reads zero forever. That is indistinguishable
+		/// from destroying nothing, and a gate built on it would measure reconnaissance while
+		/// claiming to measure destruction. The harness sits outside the fog and can simply count.
+		/// </para>
+		/// </summary>
+		public static Func<Player, (int StructureCount, int StructureValue, int Cash, int Earned)> CaptureStructures;
+
 		/// <summary>One lobby client entry as reported by a finished simulation.</summary>
 		public sealed class ClientSummary
 		{
@@ -103,6 +118,16 @@ namespace OpenRA
 			public string Slot;
 			public int KillsCost;
 			public int DeathsCost;
+
+			/// <summary>Structures still standing at the end, counted outside the fog.</summary>
+			public int StructureCount;
+
+			/// <summary>Credit value of those structures.</summary>
+			public int StructureValue;
+
+			/// <summary>Cash still banked at the end, and total ever earned.</summary>
+			public int Cash;
+			public int Earned;
 		}
 
 		/// <summary>Outcome summary of a headless simulation.</summary>
@@ -326,6 +351,7 @@ namespace OpenRA
 			{
 				var player = world.Players.FirstOrDefault(p => p.ClientIndex == c.Index);
 				var (killsCost, deathsCost) = player != null && CaptureKillCosts != null ? CaptureKillCosts(player) : default;
+				var (structureCount, structureValue, cash, earned) = player != null && CaptureStructures != null ? CaptureStructures(player) : default;
 				result.Clients.Add(new ClientSummary
 				{
 					Index = c.Index,
@@ -336,6 +362,10 @@ namespace OpenRA
 					Slot = c.Slot,
 					BotEnabled = c.IsBot && player != null && (IsBotEnabled?.Invoke(player) ?? true),
 					KillsCost = killsCost,
+					StructureCount = structureCount,
+					StructureValue = structureValue,
+					Cash = cash,
+					Earned = earned,
 					DeathsCost = deathsCost
 				});
 			}
