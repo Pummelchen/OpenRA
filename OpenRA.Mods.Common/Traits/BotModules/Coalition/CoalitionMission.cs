@@ -556,20 +556,34 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 					default:
 						// Terminal missions are dropped after they are reported; count the outcome for telemetry.
-						if (mission.Status == MissionStatus.Succeeded)
-						{
-							MissionSuccesses++;
-							if (mission.Type == MissionType.SpecialOps || mission.Type == MissionType.Transport)
-								SpecialOpsSuccesses++;
-							else if (IsRecon(mission.Type))
-								ReconSuccesses++;
-						}
-						else if (mission.Status == MissionStatus.Aborted || mission.Status == MissionStatus.Failed)
-							MissionAborts++;
+						RecordOutcome(mission);
 						missions.Remove(mission);
 						break;
 				}
 			}
+		}
+
+		/// <summary>
+		/// Accounts one mission's terminal outcome. Extracted from the update loop because it depends
+		/// only on the mission's own status: keeping it inline meant outcome accounting could not be
+		/// exercised without a live blackboard, so no scenario could assert that a bait withdrawing as
+		/// planned counts as success rather than as a force being driven off.
+		/// </summary>
+		public void RecordOutcome(CoalitionMission mission)
+		{
+			if (mission == null)
+				return;
+
+			if (mission.Status == MissionStatus.Succeeded)
+			{
+				MissionSuccesses++;
+				if (mission.Type == MissionType.SpecialOps || mission.Type == MissionType.Transport)
+					SpecialOpsSuccesses++;
+				else if (IsRecon(mission.Type))
+					ReconSuccesses++;
+			}
+			else if (mission.Status is MissionStatus.Aborted or MissionStatus.Failed)
+				MissionAborts++;
 		}
 
 		/// <summary>Moves a failed operation into an explicit withdrawal phase before force release.</summary>
