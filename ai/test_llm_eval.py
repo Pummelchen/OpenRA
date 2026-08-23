@@ -258,6 +258,53 @@ def test_replay_same_state():
         FAILURES.append("replay/unique: distinct plans must be counted")
 
 
+# --- model_server regressions -----------------------------------------------
+
+def test_dummy_plan_handles_enemy_sightings():
+    """Regression: dummy_plan crashed whenever enemies were present.
+
+    `int(statistics.mean(e["y"]) for e in enemies)` has its parentheses misplaced,
+    so mean() got a single value and int() got a generator. The dummy backend is
+    the documented no-model path and the fallback the fallback relies on, so it
+    crashed exactly when a match had something to attack.
+    """
+    import model_server
+
+    state = {
+        "tick": 6000,
+        "team": [{"player": "Multi0", "cash": 5000,
+                  "units": {"total": 20, "byType": {"2tnk": 12, "e1": 8}},
+                  "structures": {"total": 4, "byType": {"fact": 1, "weap": 2, "proc": 1}}}],
+        "enemies": {"total": 6, "x": 80, "y": 60, "byType": {"3tnk": 6}},
+    }
+
+    plan = model_server.dummy_plan(state)
+    attack = plan.get("attack") or {}
+    check("dummy/attack-x", attack.get("x"), 80)
+    check("dummy/attack-y", attack.get("y"), 60)
+
+    sanitized = model_server.sanitize_team_plan(plan, state)
+    if not isinstance(sanitized, dict):
+        FAILURES.append("dummy/sanitize: expected a plan dict")
+
+
+def test_dummy_plan_without_enemies():
+    """No sightings means no attack target, not a fabricated one at (0,0)."""
+    import model_server
+
+    state = {
+        "tick": 100,
+        "team": [{"player": "Multi0", "cash": 1000,
+                  "units": {"total": 2, "byType": {"e1": 2}},
+                  "structures": {"total": 1, "byType": {"fact": 1}}}],
+        "enemies": {"total": 0, "x": 0, "y": 0, "byType": {}},
+    }
+
+    plan = model_server.dummy_plan(state)
+    if plan.get("attack"):
+        FAILURES.append("dummy/no-enemy: attacked without any sighting")
+
+
 # --- aggregate --------------------------------------------------------------
 
 def test_evaluate_aggregates_every_scorer():

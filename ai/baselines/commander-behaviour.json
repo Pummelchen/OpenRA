@@ -1,0 +1,55 @@
+{
+  "description": "Behavioural evaluation of the LLM commander against fixed world states (reqs 500-521). Regenerate with ai/commander_eval.py against a model server on :11435.",
+  "model": "mlx-community/Qwen3.5-4B-MLX-8bit",
+  "recorded_at_revision": "6c8a6bf0e6",
+  "probes": 8,
+  "passed": 6,
+  "score": 0.75,
+  "dummy_baseline_score": 0.75,
+  "results": [
+    {
+      "requirements": "500,505",
+      "probe": "states a posture and a strategy",
+      "passed": true
+    },
+    {
+      "requirements": "506,507",
+      "probe": "names a concrete main effort when the enemy is located",
+      "passed": true
+    },
+    {
+      "requirements": "501,517,736",
+      "probe": "does not attack a stale last-known position as if it were current",
+      "passed": false
+    },
+    {
+      "requirements": "512,515",
+      "probe": "answers observed enemy air with anti-air production",
+      "passed": false
+    },
+    {
+      "requirements": "511,737",
+      "probe": "does not put every corps on the main attack",
+      "passed": true
+    },
+    {
+      "requirements": "519,520",
+      "probe": "declines or retreats from a fight it is heavily outnumbered in",
+      "passed": true
+    },
+    {
+      "requirements": "502,746",
+      "probe": "produces only real OpenRA unit ids",
+      "passed": true
+    },
+    {
+      "requirements": "518",
+      "probe": "returns a usable plan rather than an empty object",
+      "passed": true
+    }
+  ],
+  "known_model_limitations": [
+    "501/517/736: attacks a last-known position as if it were current, even with the honesty ladder now rendered in the prompt. The engine still enforces fair fog, so this is a poor decision rather than a cheat.",
+    "512/515: does not reliably request anti-air production against observed enemy air. The engine's ProductionContract contracts counters deterministically regardless, so the capability is covered even when the commander omits it."
+  ]
+}

@@ -272,7 +272,10 @@ def dummy_plan(state: dict) -> dict:
 
     attack = None
     if enemies and not retreat and len(army) >= max(4, len(enemies)):
-        attack = {"x": int(statistics.mean(e["x"] for e in enemies)), "y": int(statistics.mean(e["y"]) for e in enemies)}
+        attack = {
+            "x": int(statistics.mean(e["x"] for e in enemies)),
+            "y": int(statistics.mean(e["y"] for e in enemies)),
+        }
 
     team_ids = [m.get("player") for m in team]
     roles = {team_ids[0]: "main"} if team_ids else {}
@@ -503,8 +506,20 @@ def team_summary(state: dict) -> str:
     if estimate:
         estimate_part = (f" Engagement estimate: friendly power {estimate.get('friendly', 0):.1f} vs "
                          f"enemy {estimate.get('enemy', 0):.1f} (win ratio {estimate.get('winRatio', 0):.2f}).")
+    # The engine transmits the honesty ladder (observed / last_known / inferred / suspected), and the
+    # system prompt tells the commander to treat those differently - but the summary used to drop the
+    # breakdown entirely, so the model was asked to distinguish information it was never shown. A
+    # last-known position rendered identically to an observed one reads as current truth.
+    intel_part = ""
+    enemy_block = state.get("enemies") or {}
+    by_status = enemy_block.get("byStatus") or enemy_block.get("ByStatus") if isinstance(enemy_block, dict) else None
+    if by_status:
+        known = ", ".join(f"{count} {status}" for status, count in sorted(by_status.items()) if count)
+        if known:
+            intel_part = f" Intel status: {known}."
+
     return (f"Team: {' | '.join(parts)}. Enemy sightings ({len(enemies)}): {summarize(enemies)}."
-            f"{force_part}{estimate_part}")
+            f"{intel_part}{force_part}{estimate_part}")
 
 
 def sanitize_team_plan(plan: dict, state: dict) -> dict:
@@ -517,10 +532,16 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
     enemies = enemy_list(state)
     strategy = plan.get("strategy") if plan.get("strategy") in ("attack", "defend", "build", "turtle") else "build"
 
-    def target(value):
+    # A commander that decides not to attack expresses it as a (0,0) target. Substituting the enemy
+    # centroid there does not repair a degenerate plan - it overrides a deliberate decision, turning
+    # "defend, we are outnumbered five to one" into an attack order on the enemy's main force. The
+    # substitution is therefore only applied to plans that actually intend to attack.
+    offensive = strategy == "attack" and not plan.get("retreat")
+
+    def target(value, force_substitute=False):
         if isinstance(value, dict) and not (value.get("x", 0) <= 0 and value.get("y", 0) <= 0):
             return {"x": int(value["x"]), "y": int(value["y"])}
-        if enemies:
+        if enemies and (offensive or force_substitute):
             return {
                 "x": int(statistics.mean(e["x"] for e in enemies)),
                 "y": int(statistics.mean(e["y"] for e in enemies)),
@@ -538,7 +559,10 @@ def sanitize_team_plan(plan: dict, state: dict) -> dict:
     for m in plan.get("missions", []) or []:
         if not isinstance(m, dict) or m.get("type") not in mission_types:
             continue
-        t = target(m.get("target") or m)
+        # A defend/counterattack mission still needs a place to happen, so those substitute even in
+        # a defensive plan; an attack mission in a defensive plan does not get one invented for it.
+        defensive_mission = m["type"] in ("defend", "counterattack")
+        t = target(m.get("target") or m, force_substitute=defensive_mission)
         if t is None:
             continue
         missions.append({
