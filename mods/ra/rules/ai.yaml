@@ -692,7 +692,7 @@ Player:
 		CommitReserveRatio: 0.6
 		CoordinatedAttackMinimum: 24
 		ScoutUnitTypes: jeep, e1
-		ScoutSquadSize: 4
+		ScoutSquadSize: 6
 		ScoutMinDistance: 40
 		ScoutInterval: 100
 		ScoutSendPerInterval: 1

@@ -268,6 +268,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>Drops the cached packaging after force assignments change.</summary>
 		public void InvalidateForcePackages() { forcePackages = null; }
+
+		/// <summary>
+		/// Spatial control model (handbook §15.1). Rebuilt with the blackboard so the commander can
+		/// answer *where* rather than only *what* - a region index cannot express that the enemy is
+		/// thin on one flank and massed on the other.
+		/// </summary>
+		public InfluenceMap Influence { get; private set; }
 		public readonly List<SpecialAsset> SpecialAssets = [];
 		public readonly List<SpecialAsset> Transports = [];
 		public readonly List<ProductionFacility> Facilities = [];
@@ -407,6 +414,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			ExtractEconomy();
 			ComputeThreats();
 			ComputeStrengths();
+			BuildInfluenceMap();
 
 			// The shipyard/coordinated-strike gates only make sense when the coalition can actually see
 			// a usable body of water. The shroud is shared across the team, so every bot computes the
@@ -923,6 +931,61 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					: 0f;
 				EnemyArmyStrength = Math.Max(EnemyArmyStrength, CoalitionArmyStrength * (1f - exploredFraction));
 			}
+		}
+
+		/// <summary>
+		/// Deposits every own unit and every observed enemy sighting into the influence grid.
+		/// Reach scales with combat value: a tank projects control further than a rifleman, not
+		/// because it sees further but because it can contest more ground.
+		/// </summary>
+		void BuildInfluenceMap()
+		{
+			var map = new InfluenceMap(World.Map.MapSize.Width, World.Map.MapSize.Height);
+			var teamIds = Team.Select(p => p.InternalName).ToHashSet();
+
+			foreach (var actor in World.Actors)
+			{
+				if (actor.IsDead || !actor.IsInWorld || actor.OccupiesSpace == null)
+					continue;
+
+				if (!teamIds.Contains(actor.Owner.InternalName))
+					continue;
+
+				var unitClass = classify(actor);
+				var strength = CombatEstimator.ClassWeight(unitClass);
+				if (strength <= 0f)
+					continue;
+
+				map.Add(new InfluenceSource(actor.Location.X, actor.Location.Y, strength,
+					ReachFor(unitClass), IsOwn: true));
+			}
+
+			// Fair fog: only what the coalition has actually seen contributes, and a stale sighting
+			// contributes less because confidence has decayed.
+			foreach (var intel in EnemyIntel)
+			{
+				var strength = CombatEstimator.IntelPower(intel);
+				if (strength <= 0f)
+					continue;
+
+				map.Add(new InfluenceSource(intel.LastSeenCell.X, intel.LastSeenCell.Y, strength,
+					ReachFor(intel.Class), IsOwn: false));
+			}
+
+			Influence = map;
+		}
+
+		/// <summary>How far a unit class projects control, in cells.</summary>
+		static int ReachFor(UnitClass unitClass)
+		{
+			return unitClass switch
+			{
+				UnitClass.Air => 12,
+				UnitClass.Naval => 10,
+				UnitClass.Armor => 8,
+				UnitClass.Structure => 6,
+				_ => 5
+			};
 		}
 
 		void ComputeHomeAndEnemyRegions()

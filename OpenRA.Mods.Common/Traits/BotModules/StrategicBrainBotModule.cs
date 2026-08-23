@@ -105,19 +105,23 @@ namespace OpenRA.Mods.Common.Traits
 			"unlocated. Separate from ScoutSquadSize, which caps how many are out at once: scouts",
 			"probing a defended base usually die, so a lifetime budget equal to the concurrent cap",
 			"stops the search after a handful of losses and leaves the coalition blind for the match.",
-			"0 keeps the historical behaviour of reusing ScoutSquadSize as the budget. Raising this",
-			"makes the coalition actually locate the enemy base - measured on Shattered Mountain, 12",
-			"gives 12 scouts and a named main effort where 0 gives 4 scouts and none - but with the",
-			"current offensive execution that converts draws into losses (0W/6L/6D at 12 against",
-			"0W/5L/7D at 0), so it stays off by default until the assault path is stronger.",
-			"See AUDIT_REPORT.md.")]
-		public readonly int ScoutLifetimeBudget = 0;
+			"0 reuses ScoutSquadSize as the budget, which caps the search at four probes and leaves",
+			"the coalition blind for the match. Reconnaissance is the precondition for naming an",
+			"offensive objective at all (COMMANDER_HANDBOOK.md section 6), so it is enabled here and",
+			"the offensive doctrine that consumes it is measured with it.")]
+		public readonly int ScoutLifetimeBudget = 40;
 
 		[Desc("Radius (in cells) around the objective in which the assault looks for structures to",
 			"attack. An assault that attack-moves to a cell engages the first thing it meets, which",
 			"on a defended base is the perimeter defence; naming a structure target instead is what",
 			"turns a raid into a siege. See COMMANDER_HANDBOOK.md section 7.")]
 		public readonly int SiegeScanRadius = 14;
+
+		[Desc("Promote artillery and anti-air to the front of the build order when the army has less",
+			"than the doctrine ratio. Artillery out-ranges base defence, which is the cheap way",
+			"through a defended perimeter - but promoting it costs armour, so whether it pays is a",
+			"measurement rather than an assumption. See COMMANDER_HANDBOOK.md section 7.3.")]
+		public readonly bool PromoteSupportUnits = true;
 
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
@@ -813,9 +817,54 @@ namespace OpenRA.Mods.Common.Traits
 			// Produce on every remaining idle queue in parallel: each queue takes the highest-priority unit it can
 			// build, so the air, naval, and land arms all get produced instead of the first pick
 			// monopolizing production.
+			// Composition gate (handbook §7.3). Each queue independently picking its best buildable
+			// unit floods infantry: the default base has more barracks than war factories, and
+			// infantry are a seventh the price and far quicker. Measured waves were 43 infantry to
+			// 6 tanks with armour falling over the match, which loses to any tank army. Infantry are
+			// a screen, so once the screen is full the barracks idle and the credits go to armour.
+			var ownUnits = OwnCombatUnits().ToArray();
+			var ownInfantry = ownUnits.Count(a => Info.InfantryUnitTypes.Contains(a.Info.Name));
+			var ownArmor = ownUnits.Count(a => Info.ArmorUnitTypes.Contains(a.Info.Name));
+			var screenFull = !ArmyComposition.ShouldProduceInfantry(ownInfantry, ownArmor);
+
+			if (ArmyComposition.IsInfantryHeavy(ownInfantry, ownArmor) && World.WorldTick % 500 == 0)
+				CoalitionTelemetry.Log(World,
+					$"Composition: {ownInfantry} infantry to {ownArmor} armor - screen is oversized, holding barracks");
+
+			// Support promotion. Artillery and anti-air sit late in the priority list, so the vehicle
+			// queue takes a tank every cycle and the coalition fields neither - measured waves had
+			// zero of both. Artillery out-ranges base defence, which is the only cheap way through a
+			// defended perimeter, and a column with no anti-air is free kills. When either is below
+			// the ratio the doctrine wants, it goes to the front of the order.
+			var ownArtillery = ownUnits.Count(a => ArtilleryTypes.Contains(a.Info.Name));
+
+			// Count anything the config calls anti-air, including v2rl - which is both artillery and
+			// AA in this mod. Excluding it left the counter permanently unsatisfied, so the vehicle
+			// queue promoted V2s ahead of tanks every cycle and the army became fragile Light-armour
+			// launchers instead of tanks. Measured: a decisive loss at 14650/37000.
+			var ownAntiAir = ownUnits.Count(a => Info.AntiAirUnits.Contains(a.Info.Name));
+
+			var supportFirst = new List<string>();
+			if (Info.PromoteSupportUnits && ArmyComposition.ShouldProduceArtillery(ownArtillery, ownArmor))
+				supportFirst.AddRange(Info.ArmyPriority.Where(ArtilleryTypes.Contains));
+
+			// Anti-air is promoted only once enemy air actually exists. Before that the escort
+			// requirement is speculative, and promoting it costs armour the coalition does need.
+			if (Info.PromoteSupportUnits && enemyAirSpotted
+				&& ArmyComposition.ShouldProduceAntiAir(ownAntiAir, ownArmor, true))
+				supportFirst.AddRange(Info.AntiAirUnits.Where(u => !Info.InfantryUnitTypes.Contains(u)));
+
+			if (supportFirst.Count > 0)
+				pickOrder = supportFirst.Concat(pickOrder).ToList();
+
 			var usedUnits = new HashSet<string>();
 			foreach (var queue in availableQueues)
 			{
+				// An infantry queue with a full screen produces nothing rather than spending credits
+				// that armour would convert into fighting power.
+				if (screenFull && queue.Info.Type == "Infantry")
+					continue;
+
 				var unitName = pickOrder.FirstOrDefault(u =>
 					!Info.ExcludeFromArmyTypes.Contains(u) && !usedUnits.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
 				if (unitName == null)
@@ -1316,7 +1365,17 @@ namespace OpenRA.Mods.Common.Traits
 			// force. Land is the essential arm; air and naval are layered on when available. Requiring
 			// air in particular blocked attacks on maps where air production is not prioritized, which
 			// left the coalition sitting on defense to be worn down.
-			var coordinatedMinimum = (int)Info.ScaleDifficulty(Info.CoordinatedAttackMinimum);
+			// How much force this attack actually needs, rather than a fixed number that is
+			// meaningless against an unknown defender (handbook §15.2). Under the square law the
+			// requirement scales with the defender, and asking for enough to win with half the force
+			// surviving is what separates taking ground from trading evenly on it.
+			var configuredMinimum = (int)Info.ScaleDifficulty(Info.CoordinatedAttackMinimum);
+			var observedDefence = ObservedDefenceStrength();
+			var coordinatedMinimum = observedDefence > 0f
+				? Math.Max(configuredMinimum, (int)Math.Ceiling(
+					LanchesterModel.RequiredStrength(observedDefence, desiredSurvivingFraction: 0.5f)))
+				: configuredMinimum;
+
 			var coordinated = coalitionArmy >= coordinatedMinimum
 				&& (!Info.CoordinatedAttackMixedArms || (coalitionLand > 0
 					&& (!coalitionHasWater || coalitionNaval > 0)));
@@ -1443,6 +1502,25 @@ namespace OpenRA.Mods.Common.Traits
 		}
 
 		static readonly System.Collections.Generic.HashSet<string> ArtilleryTypes = ["v2rl", "arty"];
+
+		/// <summary>
+		/// Aggregate strength of the enemy the coalition can currently see, in the same units as its
+		/// own army count. Fair fog: only observed intel contributes, so an unscouted enemy reads as
+		/// weak - which is why reconnaissance gates the whole offensive doctrine.
+		/// </summary>
+		float ObservedDefenceStrength()
+		{
+			var commander = Player?.PlayerActor.TraitsImplementing<CoalitionCommandCenterBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+
+			var blackboard = commander?.Blackboard;
+			if (blackboard == null)
+				return 0f;
+
+			return blackboard.EnemyIntel
+				.Where(i => i.Class != UnitClass.Structure)
+				.Sum(CombatEstimator.IntelPower);
+		}
 
 		/// <summary>Returns the configured feint commitment, or zero when the force/config is unsafe.</summary>
 		public static int FeintCommitment(int availableUnits, int fraction)
@@ -1636,7 +1714,19 @@ namespace OpenRA.Mods.Common.Traits
 				.OrderByDescending(cpos => (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared)
 				.ThenBy(cpos => cpos.Y)
 				.ThenBy(cpos => cpos.X);
-			foreach (var cpos in spawnCandidates)
+
+			// Spawn approaches first - they are where a base most likely is - then a radial sweep to
+			// the map edge for everything else. A scout aimed at a nearby point stops there; one
+			// aimed at the far edge walks the whole way and reveals the entire line, so the same
+			// 100-credit rifleman buys several times the map knowledge. Bearings are interleaved so
+			// early losses still leave the sweep spread around the compass.
+			var radial = RadialScoutPattern.UnexploredSweep(
+				World.Map.CellContaining(baseCenter),
+				World.Map.MapSize.Width, World.Map.MapSize.Height,
+				isExplored: c => Player.Shroud.IsExplored(c) || attemptedScoutTargets.Contains(c),
+				isReachable: c => mobile.CanEnterCell(c, scout, BlockedByActor.Immovable));
+
+			foreach (var cpos in spawnCandidates.Concat(radial))
 			{
 				if (!mobile.PathFinder.PathExistsForLocomotor(mobile.Locomotor, scout.Location, cpos))
 					continue;

@@ -137,13 +137,21 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Posture hints resolve into intent flags with build collapsing to economy.")]
 		public void IntentFlags()
 		{
-			// No hint: deterministic thresholds decide attack vs defend.
+			// At parity the commander seeks an objective. This previously required a 33% global
+			// strength advantage, which in an even match is never true - so it never named a target,
+			// never created an attack mission, and drew. Whether a given attack is survivable is
+			// decided downstream by Lanchester sizing and local superiority, not by a global ratio.
 			var (attack, defend, build) = CommandValidator.ResolveCommanderIntent(null, 1.0f);
-			Assert.That(attack, Is.False);
+			Assert.That(attack, Is.True, "Parity is not a reason to sit still.");
 			Assert.That(defend, Is.False);
 			Assert.That(build, Is.False);
+
 			(attack, _, _) = CommandValidator.ResolveCommanderIntent(null, 0.75f);
-			Assert.That(attack, Is.True);
+			Assert.That(attack, Is.True, "Being stronger is certainly not a reason to sit still.");
+
+			// Materially outnumbered is where seeking an objective stops.
+			(attack, _, _) = CommandValidator.ResolveCommanderIntent(null, 1.5f);
+			Assert.That(attack, Is.False);
 
 			// Overwhelming enemy forces a defensive posture even without a hint.
 			(_, defend, _) = CommandValidator.ResolveCommanderIntent(null, 3.0f);

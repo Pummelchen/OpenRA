@@ -464,6 +464,57 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 		}
 
+		/// <summary>
+		/// The cell the influence map recommends assaulting: enemy value weighted by how weakly the
+		/// ground is held. Null when nothing observed is worth attacking.
+		/// </summary>
+		CPos? InfluenceAssaultTarget()
+		{
+			var influence = Blackboard?.Influence;
+			if (influence == null || Blackboard.EnemyIntel.Count == 0)
+				return null;
+
+			// Objective value per tile, from observed structures only.
+			//
+			// Mobile units are deliberately excluded. Counting them made the enemy ARMY the
+			// objective, because a tile holding twenty tanks outscored a tile holding a refinery -
+			// so the coalition chased the field army all match and never touched the base. Measured
+			// over a full mirror: exchange 5.14 and zero enemy structures destroyed, which is
+			// exactly how 38 of 58 matches ended in a time-limit draw.
+			//
+			// Killing units does not take ground; they are replaced. Only structures are objectives.
+			var valueByTile = new Dictionary<(int, int), float>();
+			foreach (var intel in Blackboard.EnemyIntel)
+			{
+				if (intel.Class != UnitClass.Structure)
+					continue;
+
+				var tile = (intel.LastSeenCell.X / InfluenceMap.TileSize, intel.LastSeenCell.Y / InfluenceMap.TileSize);
+				var value = 1f + TargetEvaluator.EconomicValue(intel.Type) * 3f
+					+ TargetEvaluator.ProductionValue(intel.Type) * 2f
+					+ TargetEvaluator.TechnologyValue(intel.Type) * 1.5f;
+
+				valueByTile[tile] = valueByTile.GetValueOrDefault(tile) + value * intel.Confidence;
+			}
+
+			if (valueByTile.Count == 0)
+				return null;
+
+			var best = influence.BestAssaultTile((x, y) => valueByTile.GetValueOrDefault((x, y)));
+			return best == null ? null : influence.CellOf(best.Value.X, best.Value.Y);
+		}
+
+		/// <summary>
+		/// The feint objective the influence map recommends: where the enemy is most invested and
+		/// the coalition least, so the response is large and what is risked is small.
+		/// </summary>
+		CPos? InfluenceFeintTarget()
+		{
+			var influence = Blackboard?.Influence;
+			var best = influence?.BestFeintTile();
+			return best == null ? null : influence.CellOf(best.Value.X, best.Value.Y);
+		}
+
 		/// <summary>Cells the coalition must not lose: the main base plus every production facility.</summary>
 		IEnumerable<CPos> ProtectedAssetCells()
 		{
@@ -796,7 +847,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					CoalitionTelemetry.Log(world, scored != null ? $"Main effort set to {scored.Value}" : "Main effort cleared: no scored target");
 				}
 
-				var target = scored ?? RegionCenter(offensiveRegion);
+				// Where, not just what (handbook §15.1). The scored target says which objective is
+				// worth taking; the influence map says where the enemy is thin enough that taking it
+				// is possible. Aiming at the region centre sends the army at the strongest point of
+				// the base, which is how an assault becomes a grind against the perimeter.
+				var target = InfluenceAssaultTarget() ?? scored ?? RegionCenter(offensiveRegion);
 
 				// A decisive edge turns the main effort into a breakthrough; a fair fight stays a
 				// conventional attack. A heavily fortified enemy is besieged instead.
@@ -911,7 +966,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				&& !missions.Missions.Any(m => m.Type == MissionType.Feint)
 				&& !DeceptionSaturated())
 			{
-				var feintTarget = FeintRegionTarget();
+				// A feint into ground we already hold draws nothing; the influence map picks where
+				// the enemy is invested and we are not (handbook §15.1).
+				var feintTarget = InfluenceFeintTarget() ?? FeintRegionTarget();
 				if (feintTarget != null)
 					EnsureMission(MissionType.Feint, FeintPriority(), feintTarget, "Divert enemy attention");
 			}
