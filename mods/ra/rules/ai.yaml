@@ -87,6 +87,51 @@ Player:
 					Attractiveness: -10
 					TargetMetric: Value
 					CheckRadius: 7c0
+			ironcurtain:
+				OrderName: GrantExternalConditionPowerInfoOrder
+				MinimumAttractiveness: 200
+				Consideration@1:
+					Against: Ally
+					Types: Ground
+					Attractiveness: 3
+					TargetMetric: Value
+					CheckRadius: 3c0
+				Consideration@2:
+					Against: Enemy
+					Types: Ground, Structure
+					Attractiveness: 1
+					TargetMetric: Value
+					CheckRadius: 5c0
+			chronoshift:
+				OrderName: Chronoshift
+				MinimumAttractiveness: 400
+				Consideration@1:
+					Against: Enemy
+					Types: Structure
+					Attractiveness: 1
+					TargetMetric: Value
+					CheckRadius: 5c0
+				Consideration@2:
+					Against: Ally
+					Types: Ground
+					Attractiveness: -5
+					TargetMetric: Value
+					CheckRadius: 3c0
+			advancedchronoshift:
+				OrderName: AdvancedChronoshift
+				MinimumAttractiveness: 400
+				Consideration@1:
+					Against: Enemy
+					Types: Structure
+					Attractiveness: 1
+					TargetMetric: Value
+					CheckRadius: 5c0
+				Consideration@2:
+					Against: Ally
+					Types: Ground
+					Attractiveness: -5
+					TargetMetric: Value
+					CheckRadius: 3c0
 	HarvesterBotModule@rush-naval:
 		RequiresCondition: enable-rush-ai || enable-naval-ai
 		HarvesterTypes: harv

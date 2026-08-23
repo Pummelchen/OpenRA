@@ -28,14 +28,17 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AI_YAML = os.path.join(REPO, "mods", "ra", "rules", "ai.yaml")
 
 
-def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_types=None, intelligence=None) -> dict:
+def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_types=None, intelligence=None,
+            faction=None) -> dict:
     map_arg = os.path.abspath(map_arg)
     bot_spec = f'BOT_TYPES={",".join(bot_types)}' if bot_types else f'BOTS={bots}'
     intel_spec = f'INTELLIGENCE={intelligence}' if intelligence is not None else ''
+    faction_spec = f'FACTION={faction}' if faction else ''
     cmd = [
         "bash", "-lc",
         f'cd "{REPO}/mods/ra" && PATH="$HOME/.dotnet:$PATH" '
-        f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed} {intel_spec}'.rstrip(),
+        f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed} '
+        f'{intel_spec} {faction_spec}'.rstrip(),
     ]
     completed = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
     out = completed.stdout + completed.stderr
@@ -205,12 +208,12 @@ def run_sweep(label: str, setter, values: list, args) -> None:
             if args.vs:
                 # Tune against a scripted opponent so the games resolve; otherwise symmetric
                 # self-play just stalemates and yields no win-rate signal.
-                results = [run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
+                results = [run_sim(args.map, 2, 2, args.ticks, args.seed_base + i, faction=args.faction,
                                    bot_types=["ai", args.vs, "ai", args.vs], intelligence=args.intelligence)
                            for i in range(args.runs)]
                 summarize_head_to_head(f"{label} {value}", results)
             else:
-                results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
+                results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i, faction=args.faction)
                            for i in range(args.runs)]
                 summarize(f"{label} {value}", results)
     finally:
@@ -230,7 +233,7 @@ def run_cross_map(maps: list, args) -> None:
     """
     per_map = {}
     for map_path in maps:
-        results = [run_sim(map_path, args.bots, args.teams, args.ticks, args.seed_base + i)
+        results = [run_sim(map_path, args.bots, args.teams, args.ticks, args.seed_base + i, faction=args.faction)
                    for i in range(args.runs)]
         per_map[map_path] = results
         summarize(f"map {os.path.basename(map_path)}", results)
@@ -255,7 +258,7 @@ def run_combat_accuracy(args) -> None:
     mean predicted ratio for won vs lost games as a coarse accuracy signal (a real accuracy
     benchmark needs recorded per-engagement outcomes, which the replay harness can add later).
     """
-    results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
+    results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i, faction=args.faction)
                for i in range(args.runs)]
 
     def mean_ratio(rs):
@@ -293,7 +296,7 @@ def run_head_to_head(opponents: list, args) -> None:
         ground_truths = []
         details = []
         for i in range(args.runs):
-            result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
+            result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i, faction=args.faction,
                              bot_types=[args.bot_type, opponent], intelligence=args.intelligence)
             winner_teams = result.get("winner_teams", [])
             if 1 in winner_teams:
@@ -347,6 +350,8 @@ def main() -> None:
     parser.add_argument("--vs", help="comma-separated scripted bot types to fight head-to-head, e.g. rush,turtle,naval")
     parser.add_argument("--bot-type", default="ai",
                         help="bot type placed on team 1 for head-to-head comparisons (default: ai)")
+    parser.add_argument("--faction", default=None,
+                        help="pin every bot to one playable faction (e.g. soviet, allies) so a batch varies only strategy (req 717)")
     parser.add_argument("--intelligence", type=int, default=None,
                         help="override the coalition commander's fog advantage (0 = fair fog, 3 = omniscient)")
     parser.add_argument("--details", action="store_true",
@@ -393,7 +398,7 @@ def main() -> None:
         run_head_to_head([o.strip() for o in args.vs.split(",") if o.strip()], args)
         return
 
-    results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i)
+    results = [run_sim(args.map, args.bots, args.teams, args.ticks, args.seed_base + i, faction=args.faction)
                for i in range(args.runs)]
     summarize("self-play", results)
 

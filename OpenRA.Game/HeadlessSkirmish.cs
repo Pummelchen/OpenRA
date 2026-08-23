@@ -42,6 +42,13 @@ namespace OpenRA
 		public static int? CommanderIntelligence;
 
 		/// <summary>
+		/// Per-run faction override for evaluation (req 717). When set, every bot is assigned this
+		/// faction instead of the round-robin default, so a batch can hold the faction constant and
+		/// compare strategies rather than matchups. Null restores the round-robin assignment.
+		/// </summary>
+		public static string CommanderFaction;
+
+		/// <summary>
 		/// When true, the external brain is disabled so a simulation is fully deterministic. The async
 		/// model consultation (even when it only times out) introduces thread-timing nondeterminism, so
 		/// self-play evaluation sets this; live LLM play leaves it false.
@@ -158,6 +165,21 @@ namespace OpenRA
 			if (factions.Length == 0)
 				throw new InvalidOperationException("No factions are defined for the world actor.");
 
+			// A faction override pins every bot to one playable faction so a batch varies only the
+			// strategy under test. An unknown name is a hard error: silently falling back would make
+			// the whole batch report results for a faction the caller did not ask for.
+			var forcedFaction = CommanderFaction;
+			if (!string.IsNullOrEmpty(forcedFaction))
+			{
+				var match = factions.FirstOrDefault(f =>
+					string.Equals(f.InternalName, forcedFaction, StringComparison.OrdinalIgnoreCase));
+				if (match == null)
+					throw new ArgumentException(
+						$"Unknown faction \"{forcedFaction}\". Playable factions: {string.Join(", ", factions.Select(f => f.InternalName))}.");
+
+				forcedFaction = match.InternalName;
+			}
+
 			lobby.Clients.Add(new Session.Client
 			{
 				Index = 1,
@@ -184,7 +206,7 @@ namespace OpenRA
 					Slot = slotKeys[i],
 					Bot = botTypes[i],
 					BotControllerClientIndex = 1,
-					Faction = factions[i % factions.Length].InternalName,
+					Faction = forcedFaction ?? factions[i % factions.Length].InternalName,
 					Team = 1 + i % teams,
 					PreferredColor = pr.Color,
 					Color = pr.Color,

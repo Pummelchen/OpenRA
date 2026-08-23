@@ -27,10 +27,11 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			return args.Length >= 2;
 		}
 
-		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n] [ENABLE_LLM=1]",
+		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n] [FACTION=name] [ENABLE_LLM=1]",
 			  "Run a headless skirmish simulation and report the outcome. BOT_TYPES lists one bot type " +
 			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all. " +
 			  "INTELLIGENCE overrides the coalition commander's fog advantage (0 = fair fog, 3 = omniscient). " +
+			  "FACTION pins every bot to one playable faction (e.g. soviet, allies) so a batch varies only the strategy. " +
 			  "ENABLE_LLM=1 enables the real LLM brain (requires model server on port 8765); default is deterministic-only.")]
 		void IUtilityCommand.Run(Utility utility, string[] args)
 		{
@@ -53,6 +54,10 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			var intelligenceArg = ParseArg(args, "INTELLIGENCE", null);
 			if (intelligenceArg != null && int.TryParse(intelligenceArg, out var intel))
 				HeadlessSkirmish.CommanderIntelligence = intel;
+
+			var factionArg = ParseArg(args, "FACTION", null);
+			if (!string.IsNullOrEmpty(factionArg))
+				HeadlessSkirmish.CommanderFaction = factionArg;
 
 			Map map;
 			try

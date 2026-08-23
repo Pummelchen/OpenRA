@@ -46,8 +46,51 @@ namespace OpenRA.Test
 			Assert.That(SupportPowerPolicy.Classify("SovietParatroopers"), Is.EqualTo(SupportPowerRole.Reinforcement));
 			Assert.That(SupportPowerPolicy.Classify("UkraineParabombs"), Is.EqualTo(SupportPowerRole.Strike));
 			Assert.That(SupportPowerPolicy.Classify("NukePowerInfoOrder"), Is.EqualTo(SupportPowerRole.Strike));
-			Assert.That(SupportPowerPolicy.Classify("Chronoshift"), Is.EqualTo(SupportPowerRole.Unsupported));
-			Assert.That(SupportPowerPolicy.Classify("AdvancedChronoshift"), Is.EqualTo(SupportPowerRole.Unsupported));
+			Assert.That(SupportPowerPolicy.Classify("Chronoshift"), Is.EqualTo(SupportPowerRole.Redeployment));
+			Assert.That(SupportPowerPolicy.Classify("AdvancedChronoshift"), Is.EqualTo(SupportPowerRole.Redeployment));
+			Assert.That(SupportPowerPolicy.Classify("GrantExternalConditionPowerInfoOrder"),
+				Is.EqualTo(SupportPowerRole.Protection));
+			Assert.That(SupportPowerPolicy.Classify("SomeModdedPower"), Is.EqualTo(SupportPowerRole.Unsupported));
+		}
+
+		[TestCase(TestName = "Every RA support power the mod defines is classified, none left unsupported.")]
+		public void EveryRaPowerIsSupported()
+		{
+			// The complete set of support-power order names in mods/ra. If a power is added to the
+			// mod without a policy entry this fails instead of the bot silently never firing it.
+			var raPowers = new[]
+			{
+				"SovietSpyPlane", "SovietParatroopers", "UkraineParabombs", "NukePowerInfoOrder",
+				"Chronoshift", "AdvancedChronoshift", "GrantExternalConditionPowerInfoOrder"
+			};
+
+			foreach (var power in raPowers)
+				Assert.That(SupportPowerPolicy.Classify(power), Is.Not.EqualTo(SupportPowerRole.Unsupported),
+					$"RA support power \"{power}\" has no tactical role and would never be fired.");
+		}
+
+		[TestCase(TestName = "Force multipliers require a committed friendly force at the target.")]
+		public void ForceMultiplierRequiresEscort()
+		{
+			// Iron Curtain and Chronosphere invert the friendly-fire rule: friendlies at the target
+			// are the point, and firing on an empty cell wastes the charge.
+			Assert.That(SupportPowerPolicy.IsForceMultiplier(SupportPowerRole.Protection), Is.True);
+			Assert.That(SupportPowerPolicy.IsForceMultiplier(SupportPowerRole.Redeployment), Is.True);
+			Assert.That(SupportPowerPolicy.IsForceMultiplier(SupportPowerRole.Strike), Is.False);
+
+			const int Enough = SupportPowerPolicy.MinimumEscortedForce;
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Protection, 5f, Enough, true), Is.True);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Protection, 5f, Enough - 1, true), Is.False,
+				"An Iron Curtain on too small a force is wasted.");
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Protection, 1f, Enough, true), Is.False,
+				"A low-value objective does not justify the power.");
+
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Redeployment, 5f, Enough, true), Is.True);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Redeployment, 5f, 0, true), Is.False,
+				"A chronoshift with nothing to move is wasted.");
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Redeployment, 2f, Enough, true), Is.False);
+			Assert.That(SupportPowerPolicy.ShouldFire(SupportPowerRole.Protection, 5f, Enough, false), Is.False,
+				"No shaping window means no fire, for every role.");
 		}
 
 		[TestCase(TestName = "Support powers require a shaping window, target value, and strike safety.")]

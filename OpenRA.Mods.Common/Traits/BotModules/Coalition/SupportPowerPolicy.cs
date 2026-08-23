@@ -16,12 +16,25 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Unsupported,
 		Recon,
 		Reinforcement,
-		Strike
+		Strike,
+
+		/// <summary>Teleports a friendly force onto an objective (Chronosphere).</summary>
+		Redeployment,
+
+		/// <summary>Makes a committed friendly force temporarily invulnerable (Iron Curtain).</summary>
+		Protection
 	}
 
 	/// <summary>RA support-power classification and conservative fire policy.</summary>
 	public static class SupportPowerPolicy
 	{
+		/// <summary>
+		/// Minimum friendly units that must already be committed at the target before a force-multiplier
+		/// power (Chronosphere, Iron Curtain) is worth spending. Below this the power is wasted on a
+		/// force too small to convert the advantage.
+		/// </summary>
+		public const int MinimumEscortedForce = 3;
+
 		public static SupportPowerRole Classify(string orderName)
 		{
 			return orderName switch
@@ -29,6 +42,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				"SovietSpyPlane" => SupportPowerRole.Recon,
 				"SovietParatroopers" => SupportPowerRole.Reinforcement,
 				"UkraineParabombs" or "NukePowerInfoOrder" => SupportPowerRole.Strike,
+				"Chronoshift" or "AdvancedChronoshift" => SupportPowerRole.Redeployment,
+				"GrantExternalConditionPowerInfoOrder" => SupportPowerRole.Protection,
 				_ => SupportPowerRole.Unsupported
 			};
 		}
@@ -45,8 +60,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				SupportPowerRole.Reinforcement => targetValue >= 1f,
 				SupportPowerRole.Strike => targetValue >= 3f
 					&& !StrategicBrainBotModule.ShouldWithholdSupportPower(friendlyUnitsNearTarget),
+
+				// Force multipliers invert the friendly-fire rule: they are only worth firing when a
+				// real friendly force is already committed at a target worth the investment.
+				SupportPowerRole.Redeployment => targetValue >= 3f
+					&& friendlyUnitsNearTarget >= MinimumEscortedForce,
+				SupportPowerRole.Protection => targetValue >= 2f
+					&& friendlyUnitsNearTarget >= MinimumEscortedForce,
 				_ => false
 			};
+		}
+
+		/// <summary>True for powers that buff or move friendly forces rather than damaging the enemy.</summary>
+		public static bool IsForceMultiplier(SupportPowerRole role)
+		{
+			return role is SupportPowerRole.Redeployment or SupportPowerRole.Protection;
 		}
 	}
 }

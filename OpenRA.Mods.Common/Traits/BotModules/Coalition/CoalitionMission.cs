@@ -57,7 +57,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		DecoyTransport,
 		Pincer,
 		NavalBlockade,
-		FakeBuildup
+		FakeBuildup,
+
+		/// <summary>Follow-on force that pushes through a breach opened by a breakthrough (req 187).</summary>
+		Exploitation,
+
+		/// <summary>Highest-priority relief of an allied force or base under immediate threat (req 202).</summary>
+		EmergencyReinforcement,
+
+		/// <summary>Cut off a moving enemy force (raid, transport, or flight) before it reaches its target (req 204).</summary>
+		Interception
 	}
 
 	public enum MissionStatus
@@ -192,6 +201,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return type switch
 			{
 				MissionType.Attack or MissionType.Counterattack or MissionType.Breakthrough => ["destroy_enemy_forces", "seize_objective"],
+				MissionType.Exploitation => ["exploit_breach", "reach_enemy_rear", "prevent_reconsolidation"],
+				MissionType.EmergencyReinforcement => ["relieve_threatened_force", "restore_local_parity"],
+				MissionType.Interception => ["cut_off_enemy_force", "prevent_enemy_arrival"],
 				MissionType.Siege => ["reduce_static_defense", "open_breach"],
 				MissionType.Raid or MissionType.Harassment => ["damage_economy", "disrupt_production"],
 				MissionType.EconomyRaid => ["damage_economy", "starve_enemy"],
@@ -235,6 +247,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					or MissionType.Siege or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
 					or MissionType.ExpansionDenial or MissionType.ChokepointSeizure or MissionType.Flank
 					or MissionType.Pincer => ["force >= MinForce", "route exists"],
+				MissionType.Exploitation => ["breach_opened", "follow_on_force_available", "route exists"],
+				MissionType.EmergencyReinforcement => ["threatened_asset_identified", "relief_force_available"],
+				MissionType.Interception => ["moving_enemy_observed", "intercept_point_reachable"],
 				MissionType.NavalBlockade => ["naval_available", "enemy_coast_identified"],
 				MissionType.AirStrike or MissionType.NavalStrike => ["air_or_naval_available", "target_identified"],
 				MissionType.SupportPowerStrike => ["power_ready", "high_value_target"],
@@ -250,6 +265,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.Attack or MissionType.Breakthrough => ["convert to feint", "withdraw"],
 				MissionType.Raid or MissionType.Harassment or MissionType.EconomyRaid or MissionType.ProductionRaid
 					or MissionType.ExpansionDenial or MissionType.Flank or MissionType.Pincer => ["withdraw"],
+				MissionType.Exploitation => ["consolidate at breach", "withdraw"],
+				MissionType.EmergencyReinforcement => ["evacuate the asset", "delay instead of relieve"],
+				MissionType.Interception => ["shadow instead of engage", "fall back to screen"],
 				MissionType.NavalBlockade => ["withdraw_to_port"],
 				MissionType.AirStrike or MissionType.NavalStrike => ["return to base"],
 				MissionType.SupportPowerStrike => ["withhold power"],
@@ -279,6 +297,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionPhase.Shaping; // no ground staging for strike missions
 				case MissionType.SupportPowerStrike:
 					return MissionPhase.Breach;  // fire immediately when ready
+				case MissionType.Exploitation:
+					return MissionPhase.Exploitation; // the breach already exists; push through it
+				case MissionType.EmergencyReinforcement:
+				case MissionType.Interception:
+					return MissionPhase.Breach;  // time-critical: no recon or staging delay
 				default:
 					return MissionPhase.Recon;
 			}
@@ -383,7 +406,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				or MissionType.EconomyRaid or MissionType.ProductionRaid or MissionType.ExpansionDenial
 				or MissionType.ChokepointSeizure or MissionType.Flank or MissionType.Pincer
 				or MissionType.AirStrike or MissionType.NavalStrike or MissionType.NavalBlockade
-				or MissionType.SupportPowerStrike;
+				or MissionType.SupportPowerStrike or MissionType.Exploitation;
 		}
 
 		/// <summary>
@@ -420,7 +443,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			return type is MissionType.Defend or MissionType.MobileDefense or MissionType.AntiAirUmbrella
 				or MissionType.NavalScreen or MissionType.DelayingAction or MissionType.Evacuation
-				or MissionType.Escort;
+				or MissionType.Escort or MissionType.EmergencyReinforcement or MissionType.Interception;
 		}
 
 		/// <summary>
@@ -773,6 +796,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				MissionType.DelayingAction => "delay",
 				MissionType.Evacuation => "evacuate",
 				MissionType.Escort => "escort",
+				MissionType.EmergencyReinforcement => "relief",
+				MissionType.Interception => "intercept",
 				_ => "defend"
 			};
 		}

@@ -135,6 +135,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int FriendlyRefineryLosses { get; private set; }
 		public int EnemyRefineryLosses { get; private set; }
 
+		/// <summary>Credits of coalition economic infrastructure destroyed by the enemy (req 605).</summary>
+		public int FriendlyEconomicDamage { get; private set; }
+
+		/// <summary>Credits of enemy economic infrastructure the coalition destroyed (req 604).</summary>
+		public int EnemyEconomicDamage { get; private set; }
+
+		int friendlyEconomicPeak;
+		int enemyEconomicPeak;
+
 		/// <summary>Expansion (MCV deployment) ticks, in order (req 608).</summary>
 		public IReadOnlyList<int> ExpansionTimings => expansionTimings;
 
@@ -197,9 +206,32 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			reserveAvailabilitySum += Math.Clamp(reserveAvailability, 0f, 1f);
 		}
 
-		/// <summary>Records one sample of economic infrastructure (refinery counts) for damage tracking.</summary>
-		public void SampleEconomy(int friendlyRefineries, int enemyRefineries)
+		/// <summary>
+		/// Records one sample of economic infrastructure for damage tracking: both the refinery count
+		/// and the credit value of the standing economy. Value is the meaningful measure - losing a
+		/// refinery and losing a silo are not the same economic blow - so both are reported
+		/// (reqs 604, 605). Peaks only ratchet downward into damage, so rebuilding does not erase the
+		/// record of what was already destroyed.
+		/// </summary>
+		public void SampleEconomy(int friendlyRefineries, int enemyRefineries,
+			int friendlyEconomicValue = 0, int enemyEconomicValue = 0)
 		{
+			if (friendlyEconomicValue > friendlyEconomicPeak)
+				friendlyEconomicPeak = friendlyEconomicValue;
+			else if (friendlyEconomicPeak > 0 && friendlyEconomicValue < friendlyEconomicPeak)
+			{
+				FriendlyEconomicDamage += friendlyEconomicPeak - friendlyEconomicValue;
+				friendlyEconomicPeak = friendlyEconomicValue;
+			}
+
+			if (enemyEconomicValue > enemyEconomicPeak)
+				enemyEconomicPeak = enemyEconomicValue;
+			else if (enemyEconomicPeak > 0 && enemyEconomicValue < enemyEconomicPeak)
+			{
+				EnemyEconomicDamage += enemyEconomicPeak - enemyEconomicValue;
+				enemyEconomicPeak = enemyEconomicValue;
+			}
+
 			if (friendlyRefineries > friendlyRefineryPeak)
 				friendlyRefineryPeak = friendlyRefineries;
 			else if (friendlyRefineryPeak > 0 && friendlyRefineries < friendlyRefineryPeak)
@@ -309,7 +341,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return Samples == 0
 				? "Match metrics: no samples"
 				: $"Match metrics: exchange {ExchangeRatio:0.00} (enemy {EnemyValueDestroyed:0} / friendly {FriendlyValueLost:0} lost), " +
-					$"econ dmg (enemy refineries lost {EnemyRefineryLosses}, friendly {FriendlyRefineryLosses}), " +
+					$"econ dmg (enemy {EnemyEconomicDamage} credits / {EnemyRefineryLosses} refineries, " +
+					$"friendly {FriendlyEconomicDamage} credits / {FriendlyRefineryLosses} refineries), " +
 					$"avg army idle {AverageIdleFraction * 100:0}%, production idle {AverageProductionIdleFraction * 100:0}%, " +
 					$"cohesion {AverageCohesion:0.00}, avg cash {AverageCash:0}, reserve {AverageReserveAvailability * 100:0}%, " +
 					$"predicted win ratio {LastWinRatioEstimate:0.00}, result {result}, " +

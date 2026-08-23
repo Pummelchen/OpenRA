@@ -357,6 +357,121 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return contact + (home - contact) / 2;
 		}
 
+		/// <summary>
+		/// True for actors that make up a player's economy: refineries, harvesters and silos. These
+		/// are what "economic damage" is measured over (reqs 604, 605).
+		/// </summary>
+		static bool IsEconomicAsset(ActorInfo actorInfo)
+		{
+			return actorInfo.HasTraitInfo<RefineryInfo>()
+				|| actorInfo.HasTraitInfo<HarvesterInfo>()
+				|| actorInfo.HasTraitInfo<StoresResourcesInfo>();
+		}
+
+		/// <summary>Build cost of an actor, or 0 when it carries no value.</summary>
+		static int CostOf(ActorInfo actorInfo)
+		{
+			return actorInfo.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
+		}
+
+		/// <summary>Build cost of an actor type name, resolved against the live ruleset.</summary>
+		int CostOfType(string type)
+		{
+			return world.Map.Rules.Actors.TryGetValue(type, out var actorInfo) ? CostOf(actorInfo) : 0;
+		}
+
+		/// <summary>Cells the coalition must not lose: the main base plus every production facility.</summary>
+		IEnumerable<CPos> ProtectedAssetCells()
+		{
+			yield return Blackboard.HomeCell;
+			foreach (var facility in Blackboard.Facilities)
+				yield return facility.Cell;
+		}
+
+		/// <summary>
+		/// Decides whether an asset needs a dedicated relief mission (req 202). Pure so it can be
+		/// tested without a World: an asset is in distress when the observed attackers near it
+		/// outnumber the defenders already covering it.
+		/// </summary>
+		public static bool NeedsEmergencyRelief(int attackersNearAsset, int defendersNearAsset)
+		{
+			return attackersNearAsset > 0 && attackersNearAsset > defendersNearAsset;
+		}
+
+		/// <summary>
+		/// The nearest coalition asset that is under attack and cannot hold with the forces already
+		/// covering it, or null. Fair fog: only currently observed enemies count.
+		/// </summary>
+		CPos? AssetUnderImmediateThreat()
+		{
+			const int ThreatRadius = 12;
+			var attackers = Blackboard.EnemyIntel
+				.Where(i => i.Status == IntelStatus.Observed && i.Class != UnitClass.Structure)
+				.ToArray();
+			if (attackers.Length == 0)
+				return null;
+
+			CPos? worst = null;
+			var worstDeficit = 0;
+			foreach (var asset in ProtectedAssetCells())
+			{
+				var near = attackers.Count(i => (i.LastSeenCell - asset).LengthSquared <= ThreatRadius * ThreatRadius);
+				if (near == 0)
+					continue;
+
+				var defenders = Blackboard.Forces.Sum(f =>
+					(f.Center - asset).LengthSquared <= ThreatRadius * ThreatRadius ? f.TotalUnits : 0);
+				if (!NeedsEmergencyRelief(near, defenders))
+					continue;
+
+				var deficit = near - defenders;
+				if (deficit > worstDeficit)
+				{
+					worstDeficit = deficit;
+					worst = asset;
+				}
+			}
+
+			return worst;
+		}
+
+		/// <summary>
+		/// An interception point for an observed mobile enemy force that is closing on a coalition
+		/// asset but has not reached it yet (req 204), or null. Fair fog: observed contacts only.
+		/// </summary>
+		CPos? InboundEnemyForce()
+		{
+			const int ApproachRadius = 26;
+			const int ArrivedRadius = 10;
+			var movers = Blackboard.EnemyIntel
+				.Where(i => i.Status == IntelStatus.Observed && i.Class != UnitClass.Structure)
+				.ToArray();
+			if (movers.Length == 0)
+				return null;
+
+			CPos? best = null;
+			var bestDistance = long.MaxValue;
+			foreach (var asset in ProtectedAssetCells())
+			{
+				foreach (var mover in movers)
+				{
+					var distance = (mover.LastSeenCell - asset).LengthSquared;
+
+					// Already on top of the asset: that is base defense, not interception.
+					if (distance <= ArrivedRadius * ArrivedRadius || distance > ApproachRadius * ApproachRadius)
+						continue;
+
+					if (distance < bestDistance)
+					{
+						bestDistance = distance;
+						best = InterceptionCell(mover.LastSeenCell, asset);
+					}
+				}
+			}
+
+			return best;
+		}
+
 		public CoalitionCommandCenterBotModule(CoalitionCommandCenterBotModuleInfo info, ActorInitializer init)
 			: base(info)
 		{
@@ -579,6 +694,38 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				var intercept = InterceptionCell(contact, Blackboard.HomeCell);
 				EnsureMission(MissionType.Counterattack, 85, intercept, "Intercept observed enemy field army");
 			}
+
+			// Exploitation (req 187): once a breakthrough has actually opened the breach, a separate
+			// follow-on mission pushes through it. Keeping this distinct from the breach force is the
+			// point of the doctrine - the breaching force consolidates, the exploitation force runs.
+			var breached = missions.Missions.FirstOrDefault(m =>
+				m.Type == MissionType.Breakthrough && m.Status == MissionStatus.Executing
+				&& m.Phase is MissionPhase.Exploitation or MissionPhase.Consolidation);
+			if (breached?.Target != null && !missions.Missions.Any(m => m.Type == MissionType.Exploitation
+				&& m.Status is MissionStatus.Ready or MissionStatus.Executing))
+				EnsureMission(MissionType.Exploitation, 88, breached.Target,
+					"Exploit the breach before the enemy reconsolidates");
+			else if (breached == null)
+				CancelActiveMissions(MissionType.Exploitation, "breach closed or breakthrough concluded");
+
+			// Emergency reinforcement (req 202): an allied asset under immediate attack that the local
+			// garrison cannot hold gets a dedicated, highest-priority relief mission rather than
+			// competing for the generic Defend directive.
+			var distressCell = AssetUnderImmediateThreat();
+			if (distressCell != null)
+				EnsureMission(MissionType.EmergencyReinforcement, 95, distressCell,
+					"Relieve the threatened asset");
+			else
+				CancelActiveMissions(MissionType.EmergencyReinforcement, "threat to the asset cleared");
+
+			// Interception (req 204): a mobile enemy force observed closing on a coalition asset is cut
+			// off en route instead of being met at the objective.
+			var inbound = InboundEnemyForce();
+			if (inbound != null)
+				EnsureMission(MissionType.Interception, 86, inbound,
+					"Cut off the inbound enemy force before it arrives");
+			else
+				CancelActiveMissions(MissionType.Interception, "no inbound enemy force observed");
 
 			var urgentCounterattack = missions.Missions.Any(m => m.Type == MissionType.Counterattack
 				&& m.Status is MissionStatus.Ready or MissionStatus.Executing);
@@ -899,10 +1046,21 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				?? PostureSelection.PolicyFor(strategicPosture).ReserveFraction;
 			matchMetrics.SampleOperations(productionIdle, reserveFraction <= 0 ? 0f : 1f / reserveFraction);
 
-			// Economic damage tracking: sample refinery counts for both sides.
-			var friendlyRefineries = world.Actors.Count(a => !a.IsDead && a.IsInWorld && teamIds.Contains(a.Owner.InternalName) && a.Info.HasTraitInfo<RefineryInfo>());
-			var enemyRefineries = Blackboard.EnemyIntel.Count(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0);
-			matchMetrics.SampleEconomy(friendlyRefineries, enemyRefineries);
+			// Economic damage tracking: sample both the refinery count and the credit value of the
+			// standing economy for each side, so damage is reported in credits and not only in
+			// buildings destroyed (reqs 604, 605).
+			var friendlyEconomy = world.Actors.Where(a => !a.IsDead && a.IsInWorld
+				&& teamIds.Contains(a.Owner.InternalName) && IsEconomicAsset(a.Info)).ToArray();
+			var friendlyRefineries = friendlyEconomy.Count(a => a.Info.HasTraitInfo<RefineryInfo>());
+			var friendlyEconomicValue = friendlyEconomy.Sum(a => CostOf(a.Info));
+
+			// Fair fog: the enemy economy is only what the coalition can currently account for.
+			var enemyEconomy = Blackboard.EnemyIntel
+				.Where(i => i.Class == UnitClass.Structure && TargetEvaluator.EconomicValue(i.Type) > 0).ToArray();
+			var enemyRefineries = enemyEconomy.Length;
+			var enemyEconomicValue = enemyEconomy.Sum(i => CostOfType(i.Type) * Math.Max(1, i.ExpectedCount));
+
+			matchMetrics.SampleEconomy(friendlyRefineries, enemyRefineries, friendlyEconomicValue, enemyEconomicValue);
 
 			// Expansion detection (req 608): record the tick when a new construction yard appears.
 			// Construction yards are identified by the BuildingInfo trait and being a "fact" type
@@ -1328,6 +1486,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					return MissionType.DecoyTransport;
 				case "pincer":
 					return MissionType.Pincer;
+				case "exploitation":
+				case "exploit":
+					return MissionType.Exploitation;
+				case "emergencyreinforcement":
+				case "emergency_reinforcement":
+				case "reinforce":
+					return MissionType.EmergencyReinforcement;
+				case "interception":
+				case "intercept":
+					return MissionType.Interception;
 				case "navalblockade":
 				case "naval_blockade":
 					return MissionType.NavalBlockade;
