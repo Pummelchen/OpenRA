@@ -1,4 +1,9 @@
 Player:
+	# Every bot - the coalition commander and the scripted opponents alike - opens with this much
+	# capital. Bot-versus-bot benchmarks therefore stay a like-for-like comparison; against a human
+	# it is an advantage and is reported as one.
+	BotStartingCash:
+		Amount: 20000
 	ModularBot@RushAI:
 		Name: bot-rush-ai.name
 		Type: rush
@@ -723,6 +728,14 @@ Player:
 	ToolApiBotModule:
 		RequiresCondition: enable-ai
 		ToolApiPort: 8766
+	CoalitionCheatsBotModule:
+		RequiresCondition: enable-ai
+		InstantBuild: true
+		BuildAnywhere: true
+		UnlimitedPower: true
+		AllTech: true
+		CashPerInterval: 2000
+		CashInterval: 250
 	CoalitionCommandCenterBotModule:
 		RequiresCondition: enable-ai
 		BlackboardInterval: 40

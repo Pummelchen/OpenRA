@@ -27,7 +27,7 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			return args.Length >= 2;
 		}
 
-		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n] [FACTION=name] [ENABLE_LLM=1]",
+		[Desc("MAP=<map uid or path> [BOTS=n] [TEAMS=n] [TICKS=n] [SEED=n] [BOT=type] [BOT_TYPES=a,b,...] [INTELLIGENCE=n] [FACTION=name] [CHEATS=1] [ENABLE_LLM=1]",
 			  "Run a headless skirmish simulation and report the outcome. BOT_TYPES lists one bot type " +
 			  "per bot (comma-separated, in team order) for mixed self-play; otherwise BOT applies to all. " +
 			  "INTELLIGENCE overrides the coalition commander's fog advantage (0 = fair fog, 3 = omniscient). " +
@@ -58,6 +58,9 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			var factionArg = ParseArg(args, "FACTION", null);
 			if (!string.IsNullOrEmpty(factionArg))
 				HeadlessSkirmish.CommanderFaction = factionArg;
+
+			// CHEATS=1 grants the coalition bot developer-mode advantages. Results are not fair play.
+			HeadlessSkirmish.EnableCheats = ParseArg(args, "CHEATS", "0") == "1";
 
 			Map map;
 			try

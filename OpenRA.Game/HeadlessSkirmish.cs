@@ -57,6 +57,15 @@ namespace OpenRA
 		/// </summary>
 		public static string TelemetryPathOverride;
 
+		/// <summary>
+		/// Enables the lobby developer-mode option for this run. That option is only a master
+		/// switch: the individual advantages (instant build, build anywhere, unlimited power, full
+		/// tech) stay off for every player until that player toggles them, and only the coalition's
+		/// CoalitionCheatsBotModule does. The scripted opponents never issue those orders, so they
+		/// continue to play fair. Any result produced with this on is not a fair-play result.
+		/// </summary>
+		public static bool EnableCheats;
+
 		/// <summary>The telemetry file this run reads and writes.</summary>
 		public static string TelemetryPath =>
 			TelemetryPathOverride ?? Path.Combine(Platform.SupportDir, "ai-telemetry.log");
@@ -165,6 +174,8 @@ namespace OpenRA
 			lobby.GlobalSettings.RandomSeed = seed;
 			lobby.GlobalSettings.ServerName = "Headless Skirmish";
 			lobby.GlobalSettings.EnableSingleplayer = true;
+			if (EnableCheats)
+				lobby.GlobalSettings.LobbyOptions["cheats"] = new Session.LobbyOptionState { Value = "True" };
 			lobby.GlobalSettings.EnableSyncReports = true;
 
 			// One lobby slot per playable map player, matching the keys of the map's player definitions.

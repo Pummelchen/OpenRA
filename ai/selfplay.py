@@ -43,11 +43,14 @@ def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_type
     bot_spec = f'BOT_TYPES={",".join(bot_types)}' if bot_types else f'BOTS={bots}'
     intel_spec = f'INTELLIGENCE={intelligence}' if intelligence is not None else ''
     faction_spec = f'FACTION={faction}' if faction else ''
+    # CHEATS=1 in the environment grants the coalition bot developer-mode advantages for the
+    # whole batch. Every result produced under it is explicitly not fair play.
+    cheat_spec = 'CHEATS=1' if os.environ.get('CHEATS') == '1' else ''
     cmd = [
         "bash", "-lc",
         f'cd "{REPO}/mods/ra" && PATH="$HOME/.dotnet:$PATH" '
         f'../../utility.sh ra --simulate MAP="{map_arg}" {bot_spec} TEAMS={teams} TICKS={ticks} SEED={seed} '
-        f'{intel_spec} {faction_spec}'.rstrip(),
+        f'{intel_spec} {faction_spec} {cheat_spec}'.rstrip(),
     ]
     completed = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
     out = completed.stdout + completed.stderr
