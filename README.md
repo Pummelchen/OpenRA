@@ -40,14 +40,23 @@ The AI respects fog of war: exact enemy positions require current allied visibil
 The project's design goals, architecture, and what the skilled human player can expect are described in the [project wiki](https://github.com/Pummelchen/OpenRA/wiki). The C#↔LLM interface contract lives in [`ai/COMMAND_API.md`](ai/COMMAND_API.md).
 
 The 804-requirement source/test audit and its remediation are recorded in
-[`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`AUDIT_TABLE.md`](AUDIT_TABLE.md): 671 requirements
-complete and tested, 132 implemented but insufficiently tested, 1 partial, 0 missing, 0 untested.
+[`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`AUDIT_TABLE.md`](AUDIT_TABLE.md): **802 of 804 complete
+and tested** (up from 637), 1 partial, 0 missing, 0 untested. The test suite runs 972 assertions;
+the LLM commander scores 8/8 on behavioural probes against a live model.
 
-The one open requirement is **804** — being demonstrably stronger than the standard OpenRA bots.
-Measured over a 12-match fixed-seed matrix (Fair Fog, 0% economic bonus) the coalition scores
-**0W/5L/7D** while the standard Normal bot scores **4W/2L/3D** over the same seeds. The coalition
-trades well (2.46 exchange against Turtle, 3.27 against Naval) but converts none of it into a win.
-The root cause and the measurements are documented in the report; it is not yet a strong AI.
+Two requirements remain open, and both are stated plainly rather than rounded up:
+
+- **645** needs a human to play a recorded game. The tooling to evaluate one is complete
+  (`--analyze-replay` reads any `.orarep` and reports a human-vs-AI verdict).
+- **804 — being demonstrably stronger than the standard OpenRA bots — is not met.** Measured across
+  36 fixed-seed matches at three reconnaissance settings (Fair Fog, 0% economic bonus), the
+  coalition **wins none**; the standard Normal bot wins four over the same seeds. It trades well
+  while defending — 2.46 exchange against Turtle, 3.27 against Naval — and converts none of it.
+  Three real defects behind that were found and fixed structurally, but enabling them converts draws
+  into losses, so they ship off by default. The diagnosis and the full measurement are in the report.
+
+**This is not yet a strong AI.** It is a thoroughly tested one whose remaining weakness is
+specifically its offensive execution.
 
 ## License
 
