@@ -87,6 +87,18 @@ namespace OpenRA
 
 			/// <summary>AI event counts parsed from the telemetry log (waves, feints, scouts, LLM calls...).</summary>
 			public Dictionary<string, int> Events = [];
+
+			/// <summary>Total wall-clock milliseconds spent inside world.Tick() (req 700).</summary>
+			public double TickMilliseconds;
+
+			/// <summary>Slowest single tick in milliseconds - the spike a frame budget actually feels.</summary>
+			public double SlowestTickMilliseconds;
+
+			/// <summary>Mean milliseconds per simulated tick, the headline performance figure.</summary>
+			public double MeanTickMilliseconds => Ticks == 0 ? 0 : TickMilliseconds / Ticks;
+
+			/// <summary>Peak simultaneous actors observed during the match (req 695).</summary>
+			public int PeakActorCount;
 		}
 
 		/// <summary>
@@ -230,6 +242,10 @@ namespace OpenRA
 			var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
 			var telemetryOffset = File.Exists(telemetryPath) ? new FileInfo(telemetryPath).Length : 0L;
 
+			// Tick cost is measured, not assumed (req 700): without it a performance regression is
+			// invisible to the suite, which otherwise only asserts that ticks completed.
+			var tickTimer = new System.Diagnostics.Stopwatch();
+			var actorSampleInterval = Math.Max(1, maxTicks / 100);
 			while (result.Ticks < maxTicks && !world.IsGameOver)
 			{
 				// The game loop schedules end-of-game and other delayed actions outside the sync scope;
@@ -239,8 +255,28 @@ namespace OpenRA
 				Sync.RunUnsynced(world, orderManager.TickImmediate);
 				if (orderManager.TryTick())
 				{
+					tickTimer.Restart();
 					world.Tick();
+					tickTimer.Stop();
+
+					var elapsed = tickTimer.Elapsed.TotalMilliseconds;
+					result.TickMilliseconds += elapsed;
+					if (elapsed > result.SlowestTickMilliseconds)
+						result.SlowestTickMilliseconds = elapsed;
+
 					result.Ticks = world.WorldTick;
+
+					// Sampled rather than counted every tick: enumerating the actor list 30,000 times
+					// would itself distort the timing this loop is measuring.
+					if (result.Ticks % actorSampleInterval == 0)
+					{
+						var live = 0;
+						foreach (var a in world.Actors)
+							live++;
+
+						if (live > result.PeakActorCount)
+							result.PeakActorCount = live;
+					}
 				}
 			}
 

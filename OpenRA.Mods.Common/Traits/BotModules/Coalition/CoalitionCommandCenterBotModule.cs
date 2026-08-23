@@ -258,10 +258,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// Schedules an early strategic review when a tactical controller cannot execute its mission.
 		/// Requests are debounced so a persistent missing capability cannot cause a review storm.
 		/// </summary>
+		/// <summary>
+		/// Debounce rule for controller-driven replanning. A controller can report the same inability
+		/// every tick, so without this one blocked mission would re-plan the whole coalition
+		/// continuously. Pure so the rule is testable without a World (reqs 548, 549).
+		/// </summary>
+		public static bool MayReplan(int currentTick, int lastReplanTick, int interval)
+		{
+			return lastReplanTick == int.MinValue || currentTick - lastReplanTick >= Math.Max(1, interval);
+		}
+
 		public void RequestReplan(string reason)
 		{
-			if (world == null || (lastControllerReplanTick != int.MinValue
-				&& world.WorldTick - lastControllerReplanTick < info.BlackboardInterval))
+			if (world == null || !MayReplan(world.WorldTick, lastControllerReplanTick, info.BlackboardInterval))
 				return;
 
 			lastControllerReplanTick = world.WorldTick;

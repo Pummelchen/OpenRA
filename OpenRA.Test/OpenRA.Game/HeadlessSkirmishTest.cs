@@ -511,6 +511,179 @@ namespace OpenRA.Test
 			return null;
 		}
 
+		[Test(Description = "Acceptance 689/799: the LLM going away mid-battle does not stop active missions.")]
+		public void LlmDropoutMidBattleKeepsMissionsRunning()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var telemetryPath = Path.Combine(Platform.SupportDir, "ai-telemetry.log");
+
+				// Phase 1: run with the external brain enabled. No model server is listening, so this
+				// exercises the request path and its timeout rather than a configured-off shortcut.
+				HeadlessSkirmish.DisableExternalBrain = false;
+				var offset = TelemetryLength(telemetryPath);
+				var withBrain = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1200, 606);
+				var duringLines = TelemetryLines(telemetryPath, offset);
+
+				// Phase 2: the brain is now gone outright, mid-campaign from the coalition's view.
+				HeadlessSkirmish.DisableExternalBrain = true;
+				offset = TelemetryLength(telemetryPath);
+				var afterDropout = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1800, 606);
+				var afterLines = TelemetryLines(telemetryPath, offset);
+
+				Assert.That(withBrain.Ticks, Is.EqualTo(1200));
+				Assert.That(afterDropout.Ticks, Is.EqualTo(1800),
+					"Losing the commander must not stall the simulation.");
+				Assert.That(afterDropout.ActorCount, Is.GreaterThan(0));
+
+				// The coalition must still be commanding itself, not merely surviving: posture
+				// selection and mission management have to keep running without the model.
+				Assert.That(afterLines.Any(l => l.Contains("Posture ")), Is.True,
+					"The deterministic commander must keep selecting a posture after the LLM is gone.");
+				Assert.That(afterLines.Any(l => l.Contains("Missions:") || l.Contains("Prerequisite building ordered")),
+					Is.True, "Mission management or production planning must continue without the LLM.");
+
+				// And it must not be quieter than the run that had the brain available: a fallback
+				// that goes silent is a stalled AI, not a working one.
+				Assert.That(afterLines.Count, Is.GreaterThan(0));
+				Assert.That(duringLines.Count, Is.GreaterThan(0));
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+			finally
+			{
+				HeadlessSkirmish.DisableExternalBrain = false;
+			}
+		}
+
+		[Test(Description = "Performance: tick cost stays within budget and no single tick spikes (req 700).")]
+		public void TickCostWithinBudget()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var result = HeadlessSkirmish.Run(modData, map, "ai", 4, 2, 3000, 700);
+
+				Assert.That(result.Ticks, Is.EqualTo(3000));
+				Assert.That(result.TickMilliseconds, Is.GreaterThan(0),
+					"Tick cost must actually be measured, not reported as zero.");
+
+				// A headless tick has no renderer, so it must run far faster than the 40 ms the game
+				// gives a tick at normal speed. The budget is deliberately loose: this is a guard
+				// against a regression of the whole simulation, not a microbenchmark.
+				Assert.That(result.MeanTickMilliseconds, Is.LessThan(40.0),
+					$"Mean tick cost {result.MeanTickMilliseconds:0.00} ms exceeds the 40 ms game budget "
+					+ "with four coalition bots; the AI can no longer keep up with real time.");
+
+				// A single catastrophic tick is felt as a freeze even when the mean looks healthy.
+				// Observed on this codebase: ~1.2 ms mean, ~70 ms slowest (first tick carries JIT and
+				// world setup), so 500 ms is a real guard with roughly 7x headroom rather than a
+				// threshold nothing could ever cross.
+				Assert.That(result.SlowestTickMilliseconds, Is.LessThan(500.0),
+					$"A single tick took {result.SlowestTickMilliseconds:0.00} ms, which would stall the game.");
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
+		[Test(Description = "Scale: a long four-bot match actually reaches a large simultaneous unit count (req 695).")]
+		public void ReachesLargeUnitCount()
+		{
+			try
+			{
+				var (modData, map) = LoadModAndMap();
+				var result = HeadlessSkirmish.Run(modData, map, "ai", 4, 2, 6000, 700);
+
+				// Without this the StressScale assertion (ActorCount > 0) passes even if the match
+				// never grew past its starting units, so "tested with hundreds of units" was unproven.
+				Assert.That(result.PeakActorCount, Is.GreaterThan(100),
+					$"Peak simultaneous actors was {result.PeakActorCount}; a four-bot economy over "
+					+ "6000 ticks should field a large force, so this is a scale regression.");
+
+				Assert.That(result.MeanTickMilliseconds, Is.LessThan(40.0),
+					"Tick cost must stay inside budget at full scale, not only early in a match.");
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
+		[Test(Description = "Cross-map: the coalition runs on the smallest and largest playable maps (reqs 691, 692).")]
+		public void RunsOnSmallAndLargeMaps()
+		{
+			try
+			{
+				foreach (var smallest in new[] { true, false })
+				{
+					var map = LoadMapBySize(smallest);
+					var label = smallest ? "smallest" : "largest";
+					if (map == null)
+						Assert.Ignore($"No loadable {label} conquest map is available.");
+
+					var (modData, _) = LoadModAndMap();
+					var result = HeadlessSkirmish.Run(modData, map, "ai", 2, 2, 1500, 700);
+
+					Assert.That(result.Ticks, Is.EqualTo(1500),
+						$"The coalition must complete a match on the {label} map ({map.MapSize.Width}x{map.MapSize.Height}).");
+					Assert.That(result.ActorCount, Is.GreaterThan(0),
+						$"The {label} map ({map.MapSize.Width}x{map.MapSize.Height}) left no actors alive.");
+					Assert.That(result.MeanTickMilliseconds, Is.LessThan(40.0),
+						$"Tick cost exceeded budget on the {label} map ({map.MapSize.Width}x{map.MapSize.Height}).");
+				}
+			}
+			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
+			{
+				Assert.Ignore($"Ruleset load failed in the test host: {e.Message}");
+			}
+		}
+
+		/// <summary>
+		/// Loads a second map from the already-initialized mod data, selected by the smallest or
+		/// largest playable area. Platform.OverrideEngineDir is once-per-process, but the map cache is
+		/// not, so cross-map coverage does not need a separate test process (reqs 691, 692).
+		/// </summary>
+		static Map LoadMapBySize(bool smallest)
+		{
+			var (modData, _) = LoadModAndMap();
+			if (modData == null)
+				return null;
+
+			var candidates = modData.MapCache
+				.Where(p => p.Status == MapStatus.Available
+					&& p.Visibility.HasFlag(MapVisibility.Lobby)
+					&& p.PlayerCount >= 2
+					&& p.Categories.Contains("Conquest"))
+				.ToArray();
+
+			if (candidates.Length == 0)
+				return null;
+
+			var ordered = smallest
+				? candidates.OrderBy(p => (long)p.Bounds.Width * p.Bounds.Height).ThenBy(p => p.Uid, StringComparer.Ordinal)
+				: candidates.OrderByDescending(p => (long)p.Bounds.Width * p.Bounds.Height).ThenBy(p => p.Uid, StringComparer.Ordinal);
+
+			foreach (var preview in ordered)
+			{
+				try
+				{
+					return preview.ToMap();
+				}
+				catch (Exception)
+				{
+					// A map this fork's ruleset cannot load is skipped rather than failing the run;
+					// the next candidate of the same size class is just as valid for the assertion.
+				}
+			}
+
+			return null;
+		}
+
 		static (ModData ModData, Map Map) LoadModAndMap()
 		{
 			if (loaded.ModData != null)

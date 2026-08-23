@@ -64,8 +64,11 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			{
 				map = LoadMap(utility, mapArg);
 			}
-			catch (KeyNotFoundException)
+			catch (Exception e) when (e is KeyNotFoundException or InvalidDataException)
 			{
+				if (e is InvalidDataException)
+					Console.WriteLine(e.Message);
+
 				Console.WriteLine($"Map '{mapArg}' is not installed. Available skirmish maps:");
 				foreach (var preview in utility.ModData.MapCache.Where(p =>
 					p.Status == MapStatus.Available && p.Visibility.HasFlag(MapVisibility.Lobby)))
@@ -105,6 +108,8 @@ namespace OpenRA.Mods.Common.UtilityCommands
 			}
 
 			Console.WriteLine($"Finished: {result.Ticks} ticks, {(result.GameOver ? "game over" : "time limit reached")}, {result.ActorCount} actors");
+			Console.WriteLine($"Performance: {result.MeanTickMilliseconds:0.000} ms/tick mean, " +
+				$"{result.SlowestTickMilliseconds:0.000} ms slowest, peak {result.PeakActorCount} actors");
 			foreach (var client in result.Clients.OrderBy(c => c.Index))
 				Console.WriteLine($"  {client.Index,2}  {(client.IsBot ? (client.BotEnabled ? "AI enabled" : "AI disabled") : "observer")}  " +
 					$"team {client.Team}  faction {client.Faction}  {client.Name}  kills_cost={client.KillsCost} deaths_cost={client.DeathsCost}");
@@ -133,7 +138,34 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				return utility.ModData.MapCache[uid].ToMap();
 			}
 
-			return utility.ModData.MapCache[mapArg].ToMap();
+			// MapCache's indexer returns an unavailable placeholder for an unknown key rather than
+			// throwing, so calling ToMap() on it produces a NullReferenceException instead of a usable
+			// error. Resolve explicitly and fail with a message that says what to do.
+			var byUid = utility.ModData.MapCache[mapArg];
+			if (byUid.Status == MapStatus.Available)
+				return byUid.ToMap();
+
+			// Accept the map's title or directory name, which is the form the documentation uses
+			// (MAP=shattered-mountain), not only the 40-character uid.
+			var normalized = Normalize(mapArg);
+			var match = utility.ModData.MapCache.FirstOrDefault(p =>
+				p.Status == MapStatus.Available && Normalize(p.Title) == normalized);
+
+			if (match != null)
+				return match.ToMap();
+
+			throw new InvalidDataException(
+				$"Map '{mapArg}' was not found. Pass a map directory path, a map uid, or a map title. "
+				+ "Run --simulate with an invalid map to list the installed skirmish maps.");
+		}
+
+		/// <summary>Folds titles and directory names to a common form so "shattered-mountain" matches "Shattered Mountain".</summary>
+		static string Normalize(string value)
+		{
+			if (string.IsNullOrEmpty(value))
+				return string.Empty;
+
+			return new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
 		}
 
 		static string ParseArg(string[] args, string key, string def)

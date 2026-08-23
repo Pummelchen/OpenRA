@@ -115,6 +115,28 @@ namespace OpenRA.Test
 				"Intercepting at the base is base defense, not interception.");
 		}
 
+		[TestCase(TestName = "Controller replan requests are debounced so one blocked mission cannot re-plan every tick.")]
+		public void ReplanRequestsAreDebounced()
+		{
+			// TacticalController.Unable(reason, requestReplan: true) fires from eight sites and can
+			// repeat every tick while a mission stays blocked. Without this rule the coalition would
+			// re-plan continuously instead of once per blackboard interval (reqs 548, 549).
+			const int Interval = 40;
+
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(100, int.MinValue, Interval), Is.True,
+				"The first inability must always reach the commander.");
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(101, 100, Interval), Is.False,
+				"The same inability one tick later must not re-plan again.");
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(139, 100, Interval), Is.False);
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(140, 100, Interval), Is.True,
+				"Once the interval has elapsed a still-blocked mission may re-plan.");
+
+			// A zero or negative interval must not turn into a divide-by-zero or an always-open gate
+			// that reintroduces per-tick replanning.
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(101, 100, 0), Is.True);
+			Assert.That(CoalitionCommandCenterBotModule.MayReplan(100, 100, 0), Is.False);
+		}
+
 		[TestCase(TestName = "Doctrine missions map to a defense kind the executor can act on.")]
 		public void DoctrineDirectives()
 		{
