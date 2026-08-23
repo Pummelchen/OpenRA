@@ -89,7 +89,7 @@ namespace OpenRA.Test
 			var average = matcher.AverageStrategy();
 			foreach (var p in average)
 				Assert.That(p, Is.EqualTo(1f / 3f).Within(0.05f),
-					$"Rock-paper-scissors has exactly one equilibrium; got [{string.Join(", ", average.Select(x => x.ToString("F3")))}].");
+					$"Rock-paper-scissors has exactly one equilibrium; got [{string.Join(", ", average.Select(x => x.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)))}].");
 		}
 
 		[TestCase(TestName = "Against a fixed opponent it best-responds, which is correct.")]

@@ -174,6 +174,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		Player player;
 		World world;
 		StrategicBrainBotModule brain;
+
+		/// <summary>The rebuilt decision layer. Null when the trait is absent, which leaves the old behaviour intact.</summary>
+		CommanderPlanBotModule planner;
 		LlmIntent llmIntent;
 		int lastBlackboardTick;
 		int lastCommandTick;
@@ -621,6 +624,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			player = bot.Player;
 			world = player.World;
 			brain = player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>().FirstOrDefault(m => !m.IsTraitDisabled);
+			planner = player.PlayerActor.TraitsImplementing<CommanderPlanBotModule>().FirstOrDefault(m => !m.IsTraitDisabled);
 
 			var tick = world.WorldTick;
 			if (tick - lastBlackboardTick >= info.BlackboardInterval)
@@ -796,6 +800,44 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// with better tactics and reserve commitment); defend only when clearly outnumbered.
 			var (wantAttack, wantDefend, wantBuild) = CommandValidator.ResolveCommanderIntent(llmIntent?.Posture, ratio);
 
+			// The searched plan, when one is committed, overrides the intent derived from the
+			// instantaneous army ratio. That ratio is exactly the wrong thing to steer by: every
+			// successful attack makes it worse before it makes it better, because units are lost to
+			// the defences before the production behind them is destroyed. Deriving intent from it
+			// each review meant recalling assaults at the moment they began to work, and no
+			// threshold could have fixed that - the flaw was in re-deciding at all.
+			//
+			// A committed plan is not reconsidered here. It is reviewed against the abort conditions
+			// it declared at launch, inside CommanderPlanBotModule, and a falling army ratio is
+			// deliberately not among them.
+			var plannedObjective = (CPos?)null;
+			if (planner != null && planner.Driving)
+			{
+				var verb = planner.Verb;
+				switch (verb)
+				{
+					case Commander.Model.MacroVerb.Attack:
+					case Commander.Model.MacroVerb.Harass:
+					case Commander.Model.MacroVerb.Feint:
+						wantAttack = true;
+						wantDefend = false;
+						plannedObjective = planner.ObjectiveCell;
+						break;
+
+					case Commander.Model.MacroVerb.Defend:
+					case Commander.Model.MacroVerb.Consolidate:
+						wantAttack = false;
+						wantDefend = true;
+						break;
+
+					default:
+						// Expand, Tech and Produce leave the field alone and let the build logic run.
+						wantAttack = false;
+						wantBuild = true;
+						break;
+				}
+			}
+
 			// The offensive objective: the observed enemy base when one has been seen, otherwise the
 			// region inferred from where enemy forces keep arriving from. Without the fallback a
 			// coalition that never scouts a structure can never name an objective, so it spends the
@@ -835,7 +877,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			lastReconInForce = reconInForce;
 
-			if ((wantAttack || reconInForce) && offensiveRegion >= 0)
+			// A plan that names a place can act on it even when no enemy region has been identified
+			// by the blackboard - the search reasons over the region graph and the belief state, and
+			// has already decided the objective is worth taking.
+			if (plannedObjective.HasValue && offensiveRegion < 0)
+				offensiveRegion = Array.IndexOf(Blackboard.Regions, Blackboard.RegionOf(plannedObjective.Value));
+
+			if ((wantAttack || reconInForce) && (offensiveRegion >= 0 || plannedObjective.HasValue))
 			{
 				// Main effort: concentrate the coalition on the single highest-value objective so
 				// effort is not spread evenly across all fronts.
@@ -851,12 +899,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				// worth taking; the influence map says where the enemy is thin enough that taking it
 				// is possible. Aiming at the region centre sends the army at the strongest point of
 				// the base, which is how an assault becomes a grind against the perimeter.
-				var target = InfluenceAssaultTarget() ?? scored ?? RegionCenter(offensiveRegion);
+				var target = plannedObjective ?? InfluenceAssaultTarget() ?? scored
+					?? (offensiveRegion >= 0 ? RegionCenter(offensiveRegion) : Blackboard.HomeCell);
 
 				// A decisive edge turns the main effort into a breakthrough; a fair fight stays a
 				// conventional attack. A heavily fortified enemy is besieged instead.
 				var attackType = ratio < 0.5f ? MissionType.Breakthrough : MissionType.Attack;
-				if (Blackboard.Regions[offensiveRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
+				if (offensiveRegion >= 0
+					&& Blackboard.Regions[offensiveRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
 					attackType = MissionType.Siege;
 
 				// An inferred objective is advanced on to find and fix the enemy, not besieged: there

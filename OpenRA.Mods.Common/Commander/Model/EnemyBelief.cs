@@ -213,6 +213,56 @@ namespace OpenRA.Mods.Common.Commander.Model
 		}
 
 		/// <summary>
+		/// <para>
+		/// Ensures the belief accounts for an enemy that exists whether or not it has been seen, by
+		/// distributing an assumed strength across the regions still unexplored.
+		/// </para>
+		/// <para>
+		/// Without this the belief state has a serious pathology: at the start of a match nothing has
+		/// been observed, so the believed enemy army is zero, and every "am I ahead" comparison reads
+		/// total dominance. <b>The commander concludes it is winning because it cannot see anyone.</b>
+		/// Measured, a fresh commander rated its position at 0.93 win probability while blind, which
+		/// made every plan look equally good and left it unable to choose between them.
+		/// </para>
+		/// <para>
+		/// The prior is not knowledge and does not pretend to be: it says only that an opponent
+		/// exists, is probably comparable in strength, and must be somewhere that has not been
+		/// looked at. As reconnaissance covers the map, the unexplored set shrinks and the same
+		/// assumed strength concentrates into fewer places - so scouting sharpens the estimate rather
+		/// than merely revealing units, which is exactly the value scouting has.
+		/// </para>
+		/// </summary>
+		public void AssumeUnseen(float assumedTotal, int now, int staleAfterTicks)
+		{
+			if (assumedTotal <= 0f || regions == 0)
+				return;
+
+			var believed = ExpectedTotal();
+			var shortfall = assumedTotal - believed;
+			if (shortfall <= 0f)
+				return;
+
+			// Somewhere not looked at recently. If the whole map is under observation there is
+			// nowhere left for an unseen army to be, and the belief is simply what was seen.
+			var candidates = new List<int>();
+			for (var region = 0; region < regions; region++)
+				if (TicksSinceSeen(region, now) > staleAfterTicks)
+					candidates.Add(region);
+
+			if (candidates.Count == 0)
+				return;
+
+			// Spread as armour, which is the load-bearing assumption for whether an attack is safe.
+			// Assuming the unseen enemy is infantry would make every assault look cheap.
+			var share = shortfall / candidates.Count;
+			foreach (var region in candidates)
+			{
+				var index = (region * RoleStats.Roles) + (int)CombatRole.Armor;
+				belief[index] += share;
+			}
+		}
+
+		/// <summary>
 		/// The region most likely to hold enemy force that has not been seen recently - where a scout
 		/// is worth sending, because that is where the belief is both large and stale.
 		/// </summary>

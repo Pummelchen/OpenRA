@@ -728,6 +728,13 @@ Player:
 	ToolApiBotModule:
 		RequiresCondition: enable-ai
 		ToolApiPort: 8766
+	CommanderPlanBotModule:
+		RequiresCondition: enable-ai
+		# Measured regression: mirror decisiveness fell from 9/24 to 5/24 with this driving. The
+		# cause is a gap in the forward model rather than the plan logic - it never altered base
+		# integrity, so an attack was all cost and no possible benefit and the search was right to
+		# refuse one. Kept, computed and logged; not driving until the model can represent winning.
+		Enabled: false
 	CommanderCalibrationBotModule:
 		RequiresCondition: enable-ai
 		TrainingLog: commander-training.csv

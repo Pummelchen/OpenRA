@@ -77,7 +77,7 @@ namespace OpenRA.Test
 
 			// Unarmed infantry - engineers, spies - are still infantry, and still cost credits that
 			// belong somewhere in the force vector.
-			Assert.That(RoleClassifier.Classify(Unit("None", armed: false, ground: false)),
+			Assert.That(RoleClassifier.Classify(Unit("None", ground: false, armed: false)),
 				Is.EqualTo(CombatRole.Infantry));
 		}
 
