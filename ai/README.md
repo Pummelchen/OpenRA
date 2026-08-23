@@ -81,14 +81,24 @@ Run fixed-seed Fair-Fog matches and compare Supreme with a standard scripted bas
 
 ```sh
 python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
-  --vs rush,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0
+  --vs rush,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0 --details
 python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
   --bot-type normal --vs rush --runs 3 --ticks 30000 --seed-base 805 --intelligence 0
 ```
 
 The report separates fog-limited commander exchange from ground-truth player statistics
 and reports wins, losses, and time-limit draws. A nonzero simulation exit or missing
-`Finished:` marker fails the batch instead of being counted as a match.
+`Finished:` marker fails the batch instead of being counted as a match. `--details` adds
+each seed's outcome, ground-truth exchange, and duration so a mean regression can be traced
+to the exact deterministic match.
+
+The fallback tactical executor owns all actor orders. Ground forces advance as cohesive
+screened groups; air and naval forces acquire only currently visible, weapon-valid contacts,
+cap focus assignments, preserve active weapon cycles, and refresh stale movement at a bounded
+cadence. Aircraft rearm instead of receiving conflicting attack orders, recoverable damaged
+units use service facilities, and close raids trigger a nearest-unit response proportional to
+the observed attackers. These rules run identically whether the external model is available or
+the deterministic strategic brain is in control.
 
 ## Terminal monitor
 

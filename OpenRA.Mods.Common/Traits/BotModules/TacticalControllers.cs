@@ -9,8 +9,10 @@
  */
 #endregion
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using OpenRA.Mods.Common.Activities;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Traits;
 
@@ -24,6 +26,9 @@ namespace OpenRA.Mods.Common.Traits
 	/// </summary>
 	public abstract class TacticalController
 	{
+		readonly Dictionary<uint, uint> assignedTargets = [];
+		readonly Dictionary<uint, int> lastOrderTicks = [];
+
 		protected readonly StrategicBrainBotModule Brain;
 		protected readonly StrategicBrainBotModuleInfo Info;
 		protected World World => Brain.World;
@@ -71,6 +76,148 @@ namespace OpenRA.Mods.Common.Traits
 			FailureReason = null;
 			NeedsReplan = false;
 		}
+
+		/// <summary>Returns only enemy actors that are observable by this player right now.</summary>
+		protected Actor[] VisibleEnemiesAround(WPos center, int radiusCells)
+		{
+			return World.FindActorsInCircle(center, WDist.FromCells(radiusCells))
+				.Where(a => a.IsInWorld && !a.IsDead && a.OccupiesSpace != null
+					&& Player.RelationshipWith(a.Owner) == PlayerRelationship.Enemy
+					&& Player.Shroud.IsVisible(a.CenterPosition) && a.CanBeViewedByPlayer(Player))
+				.OrderBy(a => a.ActorID)
+				.ToArray();
+		}
+
+		protected static bool CanAttackTarget(Actor attacker, Actor target)
+		{
+			var actorTarget = Target.FromActor(target);
+			return attacker.TraitsImplementing<AttackBase>()
+				.Any(a => !a.IsTraitDisabled && !a.IsTraitPaused && a.HasAnyValidWeapons(actorTarget));
+		}
+
+		protected static bool BusyAttack(Actor actor)
+		{
+			if (actor.IsIdle)
+				return false;
+
+			var activity = actor.CurrentActivity;
+			return activity is Attack or FlyAttack || activity.NextActivity is Attack or FlyAttack;
+		}
+
+		protected static bool IsRearming(Actor actor)
+		{
+			return !actor.IsIdle && (actor.CurrentActivity.ActivitiesImplementing<Resupply>().Any()
+				|| actor.CurrentActivity.ActivitiesImplementing<ReturnToBase>().Any());
+		}
+
+		static TacticalTargetProfile TargetProfile(Actor actor)
+		{
+			var health = actor.TraitOrDefault<IHealth>();
+			var healthPercent = health == null || health.MaxHP <= 0 ? 100 : health.HP * 100 / health.MaxHP;
+			return new TacticalTargetProfile(
+				actor.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0,
+				healthPercent,
+				actor.Info.HasTraitInfo<AttackBaseInfo>(),
+				actor.Info.HasTraitInfo<BuildingInfo>(),
+				actor.Info.HasTraitInfo<ProductionInfo>());
+		}
+
+		/// <summary>
+		/// Acquires local visible contacts, assigns a bounded number of compatible attackers to each,
+		/// and returns the units that received or retained direct-fire responsibilities.
+		/// </summary>
+		protected HashSet<Actor> Engage(Actor[] force, WPos center, int radiusCells,
+			Func<Actor, bool> targetAllowed = null)
+		{
+			var engaged = new HashSet<Actor>();
+			if (force.Length == 0)
+				return engaged;
+
+			var validUnitIds = force.Select(a => a.ActorID).ToHashSet();
+			foreach (var id in assignedTargets.Keys.Where(id => !validUnitIds.Contains(id)).ToArray())
+			{
+				assignedTargets.Remove(id);
+				lastOrderTicks.Remove(id);
+			}
+
+			var candidates = VisibleEnemiesAround(center, radiusCells)
+				.Where(a => (targetAllowed == null || targetAllowed(a)) && force.Any(u => CanAttackTarget(u, a)))
+				.ToArray();
+			if (candidates.Length == 0)
+				return engaged;
+
+			var profiles = candidates.ToDictionary(a => a, TargetProfile);
+			var assignments = candidates.ToDictionary(a => a, _ => 0);
+			foreach (var unit in force.OrderBy(a => a.ActorID))
+			{
+				// Preserve an attack that is already executing. Retargeting mid-shot throws away
+				// weapon cycles and is the main source of destructive micro-order churn.
+				if (BusyAttack(unit))
+				{
+					if (assignedTargets.TryGetValue(unit.ActorID, out var assignedTargetId))
+					{
+						var assignedTarget = candidates.FirstOrDefault(target => target.ActorID == assignedTargetId);
+						if (assignedTarget != null)
+							assignments[assignedTarget]++;
+					}
+
+					engaged.Add(unit);
+					continue;
+				}
+
+				var choices = candidates
+					.Where(target => CanAttackTarget(unit, target)
+						&& assignments[target] < TacticalEngagement.FocusSlots(profiles[target]))
+					.Select(target => new
+					{
+						Target = target,
+						Score = TacticalEngagement.TargetScore(profiles[target],
+							(unit.CenterPosition - target.CenterPosition).LengthSquared)
+					})
+					.OrderByDescending(choice => choice.Score)
+					.ThenBy(choice => choice.Target.ActorID)
+					.ToArray();
+				if (choices.Length == 0)
+					continue;
+
+				var target = choices[0].Target;
+				assignments[target]++;
+				engaged.Add(unit);
+
+				var sameDirective = assignedTargets.TryGetValue(unit.ActorID, out var targetId)
+					&& targetId == target.ActorID;
+				lastOrderTicks.TryGetValue(unit.ActorID, out var lastOrderTick);
+				if (!sameDirective || TacticalEngagement.ShouldRefreshOrder(unit.IsIdle, World.WorldTick,
+					lastOrderTick, Info.TacticalOrderRefreshTicks))
+				{
+					Bot.QueueOrder(new Order("Attack", unit, Target.FromActor(target), false));
+					lastOrderTicks[unit.ActorID] = World.WorldTick;
+				}
+
+				assignedTargets[unit.ActorID] = target.ActorID;
+			}
+
+			return engaged;
+		}
+
+		/// <summary>Advances non-engaged units while rate-limiting path refreshes and preserving live attacks.</summary>
+		protected void Advance(IEnumerable<Actor> units, WPos target, string order = "AttackMove")
+		{
+			foreach (var unit in units.OrderBy(a => a.ActorID))
+			{
+				if (BusyAttack(unit) || IsRearming(unit))
+					continue;
+
+				lastOrderTicks.TryGetValue(unit.ActorID, out var lastOrderTick);
+				if (!TacticalEngagement.ShouldRefreshOrder(unit.IsIdle, World.WorldTick,
+					lastOrderTick, Info.TacticalOrderRefreshTicks))
+					continue;
+
+				Bot.QueueOrder(new Order(order, unit, Target.FromPos(target), false));
+				lastOrderTicks[unit.ActorID] = World.WorldTick;
+				assignedTargets.Remove(unit.ActorID);
+			}
+		}
 	}
 
 	/// <summary>Ground controller: the land component of assault waves.</summary>
@@ -113,7 +260,8 @@ namespace OpenRA.Mods.Common.Traits
 				{
 					var center = mainForce.Select(a => a.CenterPosition).Average();
 					var spread = Info.FormationMaxLeadCells * 1024;
-					var ahead = mainForce.Where(a => TacticalFormation.IsAheadOfCenter(a.CenterPosition, target, center, (long)spread * spread)).ToArray();
+					var ahead = mainForce.Where(a => TacticalFormation.IsAheadOfCenter(a.CenterPosition,
+						target, center, (long)spread * spread)).ToArray();
 					var followers = mainForce.Except(ahead).ToArray();
 					if (ahead.Length > 0 && followers.Length > 0)
 					{
@@ -175,7 +323,48 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
-			Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: air));
+			var ready = new List<Actor>();
+			foreach (var actor in air)
+			{
+				if (IsRearming(actor))
+					continue;
+
+				var ammoPools = actor.TraitsImplementing<AmmoPool>().ToArray();
+				var rearmable = actor.TraitOrDefault<Rearmable>();
+				var needsBase = rearmable != null && ammoPools.Any(pool => rearmable.Info.AmmoPools.Contains(pool.Info.Name) && !pool.HasAmmo);
+				if (needsBase)
+				{
+					Bot.QueueOrder(new Order("ReturnToBase", actor, false));
+					continue;
+				}
+
+				ready.Add(actor);
+			}
+
+			if (ready.Count > 0)
+			{
+				var airForce = ready.ToArray();
+				var center = airForce.Select(a => a.CenterPosition).Average();
+				var representative = airForce[0];
+				bool SafeTarget(Actor candidate)
+				{
+					var antiAir = VisibleEnemiesAround(candidate.CenterPosition, Info.TacticalAirDangerRadius)
+						.Count(enemy => CanAttackTarget(enemy, representative));
+					return antiAir * 3 < airForce.Length;
+				}
+
+				var engaged = Engage(airForce, center, Info.TacticalEngagementScanRadius * 2, SafeTarget);
+				var objectiveAntiAir = VisibleEnemiesAround(target, Info.TacticalAirDangerRadius)
+					.Count(enemy => CanAttackTarget(enemy, representative));
+				if (objectiveAntiAir * 3 >= airForce.Length)
+				{
+					foreach (var actor in airForce.Where(a => !engaged.Contains(a)))
+						Bot.QueueOrder(new Order("ReturnToBase", actor, false));
+				}
+				else
+					Advance(airForce.Where(a => !engaged.Contains(a)), target);
+			}
+
 			MarkExecuted();
 		}
 	}
@@ -201,7 +390,9 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 			}
 
-			Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(target), false, groupedActors: naval));
+			var center = naval.Select(a => a.CenterPosition).Average();
+			var engaged = Engage(naval, center, Info.TacticalEngagementScanRadius * 2);
+			Advance(naval.Where(a => !engaged.Contains(a)), target);
 			MarkExecuted();
 		}
 	}

@@ -633,6 +633,13 @@ Player:
 		RequiresCondition: enable-ai
 		Difficulty: 3
 		MicroPrecision: 3
+		RetreatHealthPercent: 30
+		AssetDefenseScanRadius: 18
+		DefenseUnitsPerAttacker: 8
+		TacticalEngagementScanRadius: 16
+		TacticalOrderRefreshTicks: 75
+		TacticalAirDangerRadius: 8
+		CounterPursuitCells: 30
 		ArmyPriority: 2tnk, 3tnk, 4tnk, e1, e3, ttnk, v2rl, heli, mig, jeep, arty
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
@@ -644,6 +651,7 @@ Player:
 		ScoutMinDistance: 40
 		ScoutInterval: 100
 		ScoutSendPerInterval: 1
+		ScoutSpawnApproachOffset: 3
 		PrerequisiteArmyThreshold: 10
 		ExpansionUnitTypes: mcv
 		ExpansionArmyThreshold: 100

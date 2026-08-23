@@ -313,6 +313,16 @@ withheld when friendly units crowd the blast area.
 **Rule:** the commander may not move or attack with individual units. Emergency survival remains in the
 deterministic tactical controllers, so there is no LLM direct-control bypass.
 
+The executor resolves each accepted objective by unit domain. Ground units keep a cohesive
+screen with artillery and anti-air support; air and naval units select only currently visible,
+weapon-valid local contacts. Target value, combat capability, damage, and distance determine
+priority, while per-target focus caps and order-refresh intervals prevent overkill and command
+churn. Aircraft autonomously rearm and avoid observed anti-air concentrations when the strike
+package is insufficient. Damaged repairable units remain out of the field force until serviced;
+units without a compatible repair facility return after reaching safety. Visible raids against
+structures, harvesters, or MCVs receive the nearest bounded defensive commitment before strategic
+missions continue. None of these decisions expands the commander's fog-of-war information.
+
 ### Tool endpoint (`tool.call.v1`)
 
 The engine serves the tools over HTTP from the running game (`ToolApiBotModule`,

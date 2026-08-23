@@ -13,6 +13,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
+using OpenRA.Mods.Common.Activities;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Traits;
 
@@ -103,6 +104,9 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
 
+		[Desc("Distance in cells from a public spawn center used as the scout approach point.")]
+		public readonly int ScoutSpawnApproachOffset = 3;
+
 		[Desc("Minimum combat-unit count before production may spend on technology prerequisites.")]
 		public readonly int PrerequisiteArmyThreshold = 10;
 
@@ -161,6 +165,15 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Interval (in ticks) between tactical updates.")]
 		public readonly int TacticInterval = 20;
 
+		[Desc("Radius in cells in which the tactical executor acquires currently visible local contacts.")]
+		public readonly int TacticalEngagementScanRadius = 16;
+
+		[Desc("Interval in ticks after which a non-combat movement directive may be refreshed to recover idle or stuck units.")]
+		public readonly int TacticalOrderRefreshTicks = 75;
+
+		[Desc("Radius in cells around an air objective used to detect visible anti-air coverage.")]
+		public readonly int TacticalAirDangerRadius = 8;
+
 		[Desc("Number of combat units required before the bot adopts an attack posture.")]
 		public readonly int AttackForceThreshold = 14;
 
@@ -182,6 +195,12 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Enemy units within this many cells of the base center trigger base defense.")]
 		public readonly int BaseDefenseScanRadius = 25;
 
+		[Desc("Currently visible enemies within this many cells of any economic or production asset trigger interception.")]
+		public readonly int AssetDefenseScanRadius = 18;
+
+		[Desc("Maximum defenders committed per observed attacker inside the close asset-defense perimeter.")]
+		public readonly int DefenseUnitsPerAttacker = 6;
+
 		[Desc("The army is not committed to a wave while it is smaller than this many units.")]
 		public readonly int MinWaveSize = 6;
 
@@ -193,6 +212,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		[Desc("How long (in ticks) after repelling a base attack the counterattack window stays open.")]
 		public readonly int CounterDelayTicks = 400;
+
+		[Desc("Distance in cells projected beyond an observed attacker when estimating its approach corridor for a counterattack.")]
+		public readonly int CounterPursuitCells = 30;
 
 		[Desc("Allied bases are reinforced when enemies are spotted within this many cells.")]
 		public readonly int AllyReinforceScanRadius = 40;
@@ -226,6 +248,7 @@ namespace OpenRA.Mods.Common.Traits
 		// a mobile enemy's current position after it has moved back under fog.
 		readonly Dictionary<uint, Sighting> sightings = [];
 		readonly HashSet<Actor> retreating = [];
+		readonly HashSet<Actor> completedUnserviceableRetreats = [];
 		readonly HashSet<Actor> claimedUnits = [];
 		readonly HashSet<Actor> scouts = [];
 		readonly HashSet<Actor> missionScouts = [];
@@ -852,35 +875,64 @@ namespace OpenRA.Mods.Common.Traits
 				return;
 
 			var units = OwnCombatUnits().ToList();
+			retreating.RemoveWhere(a => !a.IsInWorld || a.IsDead);
+			completedUnserviceableRetreats.RemoveWhere(a => !a.IsInWorld || a.IsDead);
 			var retreatCell = RetreatCell(baseCenter.Value);
 			var holdCell = World.Map.CellContaining(MostValuableStructurePosition() ?? baseCenter.Value);
 
 			// Micro-precision scales the retreat threshold: a precise bot pulls units earlier.
 			var retreatThreshold = acceptableLossFraction > 0f
 				? (int)Math.Clamp(50f - acceptableLossFraction * 40f, 10f, 50f)
-				: Info.ResolvedDifficulty().RetreatHealthPercent();
+				: Math.Min(Info.RetreatHealthPercent, Info.ResolvedDifficulty().RetreatHealthPercent());
 
 			foreach (var a in units)
 			{
 				var health = a.TraitOrDefault<IHealth>();
 				var fraction = health == null ? 100 : health.HP * 100 / health.MaxHP;
+				if (fraction > Info.RegroupHealthPercent)
+					completedUnserviceableRetreats.Remove(a);
+
 				if (retreating.Contains(a))
 				{
-					// A retreated unit rejoins the army once it has recovered or reached the base.
+					// A retreated unit repairs when a compatible service facility exists. Actors that
+					// cannot be repaired (most infantry) rejoin after reaching safety instead of being
+					// trapped forever in a low-health retreat loop.
 					var nearBase = (a.CenterPosition - baseCenter.Value).LengthSquared <= BaseRadiusSquared(10);
-					if (fraction > Info.RegroupHealthPercent || nearBase)
-						retreating.Remove(a);
-					else
+					if (fraction > Info.RegroupHealthPercent)
 					{
-						Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
+						retreating.Remove(a);
 						continue;
 					}
+
+					var repairable = a.TraitOrDefault<Repairable>();
+					var repairBuilding = repairable?.FindRepairBuilding(a);
+					if (repairBuilding != null)
+					{
+						var resupplying = !a.IsIdle && a.CurrentActivity.ActivitiesImplementing<Resupply>().Any();
+						if (!resupplying)
+							Bot.QueueOrder(new Order("Repair", a, Target.FromActor(repairBuilding), false));
+						continue;
+					}
+
+					if (nearBase)
+					{
+						retreating.Remove(a);
+						completedUnserviceableRetreats.Add(a);
+						continue;
+					}
+
+					Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
+					continue;
 				}
 
-				if (fraction < retreatThreshold)
+				if (fraction < retreatThreshold && !completedUnserviceableRetreats.Contains(a))
 				{
 					retreating.Add(a);
-					Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
+					var repairBuilding = a.TraitOrDefault<Repairable>()?.FindRepairBuilding(a);
+					if (repairBuilding != null)
+						Bot.QueueOrder(new Order("Repair", a, Target.FromActor(repairBuilding), false));
+					else
+						Bot.QueueOrder(new Order("Move", a, Target.FromCell(World, holdCell), false));
 				}
 			}
 
@@ -909,7 +961,11 @@ namespace OpenRA.Mods.Common.Traits
 			// nearby threat (so a minor raid does not strip the whole army from its missions), and the
 			// most valuable structure's vicinity is defended first.
 			var defendedPos = MostValuableStructurePosition() ?? baseCenter.Value;
-			var baseThreat = ClosestEnemyTo(defendedPos, BaseRadiusSquared(Info.BaseDefenseScanRadius));
+			var assetThreat = ClosestVisibleThreatToAsset(Info.AssetDefenseScanRadius);
+			if (assetThreat != null)
+				defendedPos = assetThreat.Value.Asset;
+			var baseThreat = assetThreat?.Threat
+				?? ClosestEnemyTo(defendedPos, BaseRadiusSquared(Info.BaseDefenseScanRadius));
 			if (baseThreat != null)
 			{
 				SetPosture(Posture.Defend);
@@ -918,16 +974,20 @@ namespace OpenRA.Mods.Common.Traits
 				// The counterattack objective is the best observed estimate of where the attackers
 				// originated: a currently/previously observed enemy base center when available, otherwise
 				// the contact cell. No hidden actor position is consulted.
-				counterPos = World.Map.CellContaining(enemyBaseCenter ?? baseThreat.Value);
+				var counterOrigin = enemyBaseCenter ?? TacticalFormation.ProjectBeyondContact(baseThreat.Value,
+					baseCenter.Value, Info.CounterPursuitCells * 1024);
+				counterPos = World.Map.Clamp(World.Map.CellContaining(counterOrigin));
 				enemyCountAtDefense = enemyArmyCount;
 
 				var nearby = sightings.Values.Count(s =>
 					(s.Position - defendedPos).LengthSquared <= BaseRadiusSquared(Info.BaseDefenseScanRadius));
-				var minCommitment = Math.Min(Info.MinWaveSize, activeArmy.Length);
-				var commitment = Math.Clamp(nearby * 3, minCommitment, activeArmy.Length);
-				var defenders = Claim(activeArmy).Take(commitment).ToArray();
+				var commitment = TacticalEngagement.DefenseCommitment(nearby, activeArmy.Length,
+					Info.MinWaveSize, Info.DefenseUnitsPerAttacker);
+				var defenders = activeArmy.OrderBy(a => (a.CenterPosition - baseThreat.Value).LengthSquared)
+					.Take(commitment).ToArray();
 				if (defenders.Length > 0)
-					Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(baseThreat.Value), false, groupedActors: defenders));
+					ExecuteTacticalForce(defenders, baseThreat.Value);
+
 				return;
 			}
 
@@ -1018,10 +1078,10 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				if (sharedBB != null)
 					sharedBB.LastCounterattackTick = World.WorldTick;
-				var counter = Claim(activeArmy).ToArray();
+				var counter = activeArmy.ToArray();
 				if (counter.Length > 0)
 				{
-					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, counterPos.Value), false, groupedActors: counter));
+					ExecuteTacticalForce(counter, World.Map.CenterOfCell(counterPos.Value));
 					CoalitionTelemetry.Log(World,
 						$"Counterattack with {counter.Length} units toward estimated origin {counterPos.Value}: {counterDecision.Reason}");
 
@@ -1075,9 +1135,9 @@ namespace OpenRA.Mods.Common.Traits
 			if (counterTarget != null)
 			{
 				SetPosture(Posture.Defend);
-				var interceptors = Claim(activeArmy).ToArray();
+				var interceptors = activeArmy.ToArray();
 				if (interceptors.Length > 0)
-					Bot.QueueOrder(new Order("AttackMove", null, Target.FromCell(World, counterTarget.Value), false, groupedActors: interceptors));
+					ExecuteTacticalForce(interceptors, World.Map.CenterOfCell(counterTarget.Value));
 				return;
 			}
 
@@ -1281,11 +1341,7 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
-			ground?.Attack(availableArmy, target.Value);
-			if (availableArmy.Any(a => Info.AirUnitTypes.Contains(a.Info.Name)))
-				air?.Attack(availableArmy, target.Value);
-			if (coalitionHasWater && availableArmy.Any(a => Info.NavalPriority.Contains(a.Info.Name)))
-				naval?.Attack(availableArmy, target.Value);
+			ExecuteTacticalForce(availableArmy, target.Value);
 
 			// Mark the wave launch so the opponent model can measure the enemy's response time,
 			// and record how much enemy contact this raid generated (raid-sensitivity signal).
@@ -1342,6 +1398,17 @@ namespace OpenRA.Mods.Common.Traits
 		public static bool MayIssueWave(int currentTick, int lastWaveTick, int interval)
 		{
 			return lastWaveTick <= 0 || currentTick - lastWaveTick >= Math.Max(1, interval);
+		}
+
+		/// <summary>Executes one objective through weapon-domain controllers without cross-domain order conflicts.</summary>
+		void ExecuteTacticalForce(Actor[] force, WPos target)
+		{
+			if (force.Any(a => !Info.AirUnitTypes.Contains(a.Info.Name) && !Info.NavalPriority.Contains(a.Info.Name)))
+				ground?.Attack(force, target);
+			if (force.Any(a => Info.AirUnitTypes.Contains(a.Info.Name)))
+				air?.Attack(force, target);
+			if (coalitionHasWater && force.Any(a => Info.NavalPriority.Contains(a.Info.Name)))
+				naval?.Attack(force, target);
 		}
 
 		/// <summary>Claims units for a mission: returns the unclaimed subset and marks them as ordered this tick.</summary>
@@ -1484,7 +1551,7 @@ namespace OpenRA.Mods.Common.Traits
 			var spawnCandidates = World.Map.ActorDefinitions
 				.Where(n => n.Value.Value == "mpspawn")
 				.Select(n => new ActorReference(n.Key, n.Value).GetValue<LocationInit, CPos>())
-				.Select(spawn => SpawnApproachCell(spawn, baseCell, 6))
+				.Select(spawn => SpawnApproachCell(spawn, baseCell, Info.ScoutSpawnApproachOffset))
 				.Where(cpos => !Player.Shroud.IsExplored(cpos)
 					&& !attemptedScoutTargets.Contains(cpos)
 					&& (World.Map.CenterOfCell(cpos) - baseCenter).LengthSquared >= minDistanceSq
@@ -1737,6 +1804,42 @@ namespace OpenRA.Mods.Common.Traits
 			}
 
 			return closest;
+		}
+
+		/// <summary>
+		/// Finds a currently observable enemy threatening any own structure, harvester, or MCV.
+		/// Unlike strategic sightings this intentionally ignores stale memory: tactical defense must
+		/// not chase an actor after it disappears under fog.
+		/// </summary>
+		(WPos Threat, WPos Asset)? ClosestVisibleThreatToAsset(int radiusCells)
+		{
+			var assets = World.Actors.Where(a => a.IsInWorld && !a.IsDead && a.Owner == Player
+				&& (a.Info.HasTraitInfo<BuildingInfo>() || a.Info.Name is "harv" or "mcv")).ToArray();
+			if (assets.Length == 0)
+				return null;
+
+			var radiusSquared = BaseRadiusSquared(radiusCells);
+			(WPos Threat, WPos Asset)? best = null;
+			var bestDistance = long.MaxValue;
+			foreach (var enemy in World.Actors)
+			{
+				if (!enemy.IsInWorld || enemy.IsDead || enemy.OccupiesSpace == null
+					|| Player.RelationshipWith(enemy.Owner) != PlayerRelationship.Enemy
+					|| !Player.Shroud.IsVisible(enemy.CenterPosition) || !enemy.CanBeViewedByPlayer(Player))
+					continue;
+
+				foreach (var asset in assets)
+				{
+					var distance = (enemy.CenterPosition - asset.CenterPosition).LengthSquared;
+					if (distance > radiusSquared || distance >= bestDistance)
+						continue;
+
+					best = (enemy.CenterPosition, asset.CenterPosition);
+					bestDistance = distance;
+				}
+			}
+
+			return best;
 		}
 
 		/// <summary>

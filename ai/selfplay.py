@@ -11,6 +11,7 @@ Usage (run from the repo root):
   ai/selfplay.py --sweep-reserve 4,6,8 --runs 3          # reserve fraction grid
   ai/selfplay.py --maps a,b,c --runs 4                   # cross-map overfitting check
   ai/selfplay.py --bot-type normal --vs rush --runs 3   # scripted baseline comparison
+  ai/selfplay.py --vs rush --runs 3 --details            # per-seed outcome/exchange/ticks
 """
 
 import argparse
@@ -290,6 +291,7 @@ def run_head_to_head(opponents: list, args) -> None:
         exchanges = []
         ratios = []
         ground_truths = []
+        details = []
         for i in range(args.runs):
             result = run_sim(args.map, 2, 2, args.ticks, args.seed_base + i,
                              bot_types=[args.bot_type, opponent], intelligence=args.intelligence)
@@ -308,6 +310,8 @@ def run_head_to_head(opponents: list, args) -> None:
             deaths = result.get("death_costs", {}).get(1, 0)
             if deaths > 0:
                 ground_truths.append(kills / deaths)
+            outcome = "W" if 1 in winner_teams else "L" if 2 in winner_teams else "D"
+            details.append((result["seed"], outcome, kills / max(1, deaths), result.get("ticks", 0)))
 
         mean_exchange = statistics.mean(exchanges) if exchanges else float("nan")
         mean_ratio = statistics.mean(ratios) if ratios else float("nan")
@@ -315,6 +319,9 @@ def run_head_to_head(opponents: list, args) -> None:
         print(f"  {args.bot_type} vs {opponent}: W {coalition_wins}/L {opponent_wins}/D {stalemates}, "
               f"fog exchange {mean_exchange:.2f}, ground-truth exchange {mean_truth:.2f}, "
               f"predicted ratio {mean_ratio:.2f}")
+        if args.details:
+            for seed, outcome, exchange, ticks in details:
+                print(f"    seed {seed}: {outcome}, exchange {exchange:.2f}, ticks {ticks}")
 
 
 def summarize(label: str, results: list) -> None:
@@ -342,6 +349,8 @@ def main() -> None:
                         help="bot type placed on team 1 for head-to-head comparisons (default: ai)")
     parser.add_argument("--intelligence", type=int, default=None,
                         help="override the coalition commander's fog advantage (0 = fair fog, 3 = omniscient)")
+    parser.add_argument("--details", action="store_true",
+                        help="print per-seed outcome, exchange, and duration for head-to-head runs")
     parser.add_argument("--bots", type=int, default=4)
     parser.add_argument("--teams", type=int, default=2)
     parser.add_argument("--ticks", type=int, default=6000)

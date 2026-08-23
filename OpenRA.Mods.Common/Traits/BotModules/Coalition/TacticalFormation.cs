@@ -48,5 +48,20 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		{
 			return (position - target).LengthSquared < (center - target).LengthSquared - spreadSquared;
 		}
+
+		/// <summary>
+		/// Projects beyond an observed attacker along the axis from home to contact. This estimates
+		/// the attacker's approach corridor without reading any hidden actor or hidden base position.
+		/// </summary>
+		public static WPos ProjectBeyondContact(WPos contact, WPos home, int distance)
+		{
+			var direction = contact - home;
+			var length = direction.Length;
+			if (length <= 0 || distance <= 0)
+				return contact;
+
+			return new WPos(contact.X + direction.X * distance / length,
+				contact.Y + direction.Y * distance / length, contact.Z);
+		}
 	}
 }

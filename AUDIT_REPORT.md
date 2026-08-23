@@ -64,6 +64,21 @@ against Turtle and a 1.24 exchange/draw against Naval. These are comparative str
 measurements, not a claim that every seed or matchup is won; the same matrix remains
 available for regression tracking through `ai/selfplay.py --bot-type`.
 
+### Post-audit tactical-executor hardening
+
+The deterministic fallback was subsequently hardened without changing the strategic
+LLM boundary or the Fair-Fog/economic settings. The executor now services recoverable
+retreats, returns ammunition-limited aircraft to base, preserves active attack cycles,
+uses bounded visible-contact focus for air/naval forces, intercepts raids near any economic
+or production asset with the nearest proportional force, and projects counter-pursuit from
+the observed approach corridor. The same three-seed Rush gate now reports **0W / 2L / 1D**
+and **1.39 mean ground-truth exchange** (seed exchanges 2.04, 1.28, and 0.84). This is a 70%
+exchange improvement over the audited 0.82 Supreme result and 136% above the 0.59 scripted
+Normal baseline. A one-seed cross-opponent check drew against Naval at 1.91 exchange and
+Turtle without combat, but lost to Normal at 0.16 exchange after a late strategic launch.
+The executor result therefore demonstrates stronger tactical efficiency, not completion of
+the separate strategic timing/economy tuning problem or a guarantee of winning every seed.
+
 ## Coding-agent final report
 
 1. **20 most important missing/partial requirements:** none; the final register has
