@@ -17,7 +17,7 @@ import tempfile
 from types import SimpleNamespace
 
 AI_DIR = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ("model_server.py", "selfplay.py", "llm_eval.py", "test_llm_eval.py")
+SCRIPTS = ("model_server.py", "selfplay.py", "llm_eval.py", "test_llm_eval.py", "test_selfplay.py")
 
 
 def compile_all():
@@ -151,16 +151,25 @@ def selfplay_failure_regression():
     print("self-play failure handling OK")
 
 
-def llm_eval_scorer_regression():
-    """Runs the scorer suite against the shipped llm_eval module (reqs 729-738)."""
+def _run_suite(script: str, label: str):
     import subprocess
     here = os.path.dirname(os.path.abspath(__file__))
     completed = subprocess.run(
-        [sys.executable, os.path.join(here, "test_llm_eval.py")],
+        [sys.executable, os.path.join(here, script)],
         capture_output=True, text=True, check=False)
     output = (completed.stdout + completed.stderr).strip()
-    assert completed.returncode == 0, f"llm_eval scorer tests failed:\n{output}"
-    print(output.splitlines()[-1] if output else "llm_eval scorer tests OK")
+    assert completed.returncode == 0, f"{label} failed:\n{output}"
+    print(output.splitlines()[-1] if output else f"{label} OK")
+
+
+def llm_eval_scorer_regression():
+    """Runs the scorer suite against the shipped llm_eval module (reqs 729-738)."""
+    _run_suite("test_llm_eval.py", "llm_eval scorer tests")
+
+
+def selfplay_harness_regression():
+    """Runs the sweep/batch harness suite against the shipped selfplay module (reqs 716-725)."""
+    _run_suite("test_selfplay.py", "selfplay harness tests")
 
 
 def main():
@@ -170,6 +179,7 @@ def main():
     repeat_state_regression()
     selfplay_failure_regression()
     llm_eval_scorer_regression()
+    selfplay_harness_regression()
     print("selfcheck OK")
     return 0
 
