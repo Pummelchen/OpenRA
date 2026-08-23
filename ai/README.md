@@ -12,7 +12,7 @@ positions require current visibility; lost contacts become actor-free last-known
 Allied AI bots (ExternalBrainBotModule on each)
   → POST /decide  { identical team snapshot + "screenshotPath" }
   → model_server.py (ai/model_server.py)  — one team plan per round, cached
-  → mlx-vlm server (Gemma 4 E4B, MLX 4-bit, vision)
+  → mlx-vlm server (Qwen3.5 4B, MLX 8-bit, vision)
   ← team plan { strategy, attack, feint, counter, roles, produce, retreat, transport }
   → each bot applies its own share (role, production, tactics)
 ```
@@ -20,7 +20,7 @@ Allied AI bots (ExternalBrainBotModule on each)
 - **Team command center**: every allied bot posts an *identical* team snapshot (all members'
   units, buildings, cash, and enemy intel from the shared allied shroud). The server caches
   **one team plan per consultation round**, so all friendly bots receive the same orders and
-  act as a single coordinated force. Gemma assigns roles (`main`/`escort`/`naval`/`defend`),
+  act as a single coordinated force. Qwen3.5 assigns roles (`main`/`escort`/`naval`/`defend`),
   picks coordinated attack/feint/counter targets, production boosts, retreats, and optional
   transport missions (stealth infantry insertions).
 - The radar PNG is generated on demand by `RadarCaptureBotModule` (HD, 1920 px wide) right
@@ -32,23 +32,32 @@ Allied AI bots (ExternalBrainBotModule on each)
 
 ## Running the model server
 
-Dependency-free Python (stdlib only); requires `mlx-lm` + `mlx-vlm` for the vision model:
+The brain server is dependency-free Python (stdlib only). The vision endpoint requires a
+current `mlx-vlm` release with Qwen3.5 support:
 
 ```sh
-# 1. Serve Gemma 4 E4B (MLX 4-bit) with vision support on port 11435
-/opt/homebrew/bin/python3 -m mlx_vlm.server \
-  --model mlx-community/gemma-4-e4b-it-4bit --port 11435
+# 1. Install/upgrade the Apple-Silicon vision runtime
+/opt/homebrew/bin/python3.13 -m pip install --upgrade mlx-vlm
 
-# 2. Run the brain server
+# 2. Serve Qwen3.5 4B (MLX 8-bit) with vision support on port 11435
+/opt/homebrew/bin/python3.13 -m mlx_vlm.server \
+  --model mlx-community/Qwen3.5-4B-MLX-8bit --port 11435
+
+# 3. Run the brain server
 AI_MODEL_ENDPOINT=http://127.0.0.1:11435/v1/chat/completions \
-AI_MODEL_NAME=mlx-community/gemma-4-e4b-it-4bit \
-python3 ai/model_server.py --llm --vision
+AI_MODEL_NAME=mlx-community/Qwen3.5-4B-MLX-8bit \
+/opt/homebrew/bin/python3.13 ai/model_server.py --llm --vision
 
 # Dummy backend (no model needed, for testing):
 python3 ai/model_server.py
 ```
 
 Health check: `curl http://127.0.0.1:8765/health`
+
+`ai/run.sh` performs the same startup with this model by default. Qwen thinking mode is
+left disabled so the commander's 200-token response budget is spent on the required plan JSON
+and tool calls. The model is downloaded to the Hugging Face cache on first launch; the Hub card
+lists an approximately 4.8 GB download and approximately 5.8 GB peak memory use.
 
 ## Engine tool API
 
@@ -112,7 +121,7 @@ tail -f ai/brain.log
 Example:
 
 ```
-[06:12:31] PROMPT [tick=2000 round=20] -> mlx-community/gemma-4-e4b-it-4bit: Tick 2000. Cash 8000. Own units (16): 2x 2tnk, 1x e1. Enemy sightings: 1x 3tnk, 1x mig. + radar image ai-radar.png (312 KB)
+[06:12:31] PROMPT [tick=2000 round=20] -> mlx-community/Qwen3.5-4B-MLX-8bit: Tick 2000. Cash 8000. Own units (16): 2x 2tnk, 1x e1. Enemy sightings: 1x 3tnk, 1x mig. + radar image ai-radar.png (312 KB)
 [06:12:41] REPLY <- "{\"produce\": [\"2tnk\"], \"attack\": {\"x\": 0, \"y\": 0}, \"retreat\": false}"
 [06:12:41] PLAN [tick=2000 round=20] -> {"produce": ["2tnk"], "attack": {"x": 82, "y": 92}, "retreat": false}
 ```

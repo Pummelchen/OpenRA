@@ -54,3 +54,7 @@ update.log
 # Python
 __pycache__/
 *.pyc
+
+# Local AI server output
+/ai/mlx-vlm.log
+/ai/brain-server.log

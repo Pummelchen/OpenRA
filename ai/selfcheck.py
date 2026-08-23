@@ -56,7 +56,10 @@ def rotation_regression():
 
 def commander_contract_regression():
     import json
-    from model_server import SYSTEM_PROMPT, format_tool_trace
+    from model_server import DEFAULT_MODEL_ENDPOINT, DEFAULT_MODEL_NAME, SYSTEM_PROMPT, format_tool_trace
+
+    assert DEFAULT_MODEL_NAME == "mlx-community/Qwen3.5-4B-MLX-8bit"
+    assert DEFAULT_MODEL_ENDPOINT == "http://127.0.0.1:11435/v1/chat/completions"
 
     required = (
         "Coalition victory is your primary",

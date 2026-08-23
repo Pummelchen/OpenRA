@@ -436,7 +436,7 @@ tools; uncertain intelligence cannot be promoted to a “mistake.”
 4. **Tactical intelligence** — threat fields, `estimate_engagement`, routes, readiness.
 5. **Deterministic strategic commander** — utility-based posture/mission chooser (proves
    the API without an LLM).
-6. **LLM commander** — swap the heuristic strategist for Gemma via `command.intent.v1`
+6. **LLM commander** — swap the heuristic strategist for Qwen3.5 via `command.intent.v1`
    + tools; keep 5 as fallback.
 7. **Deception** — feints/probes/fake retreats with measured enemy reaction.
 8. **Special operations** — Tanya/spy/engineer missions with exposure-map routing.

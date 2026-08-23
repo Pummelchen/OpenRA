@@ -12,7 +12,7 @@ This fork introduces a new AI game style — **Supreme Allied Command** — set 
 
 The AI is a hybrid:
 
-- **Strategic commander (LLM)**: a local vision-capable language model (Gemma 4 E4B, 4-bit MLX quantized) reads a full-map radar snapshot and a precise team report every 15 seconds, then decides strategy, corps roles, attack targets, production counters, and missions.
+- **Strategic commander (LLM)**: a local vision-capable language model ([Qwen3.5 4B, 8-bit MLX](https://huggingface.co/mlx-community/Qwen3.5-4B-MLX-8bit)) reads a full-map radar snapshot and a precise team report every 15 seconds, then decides strategy, corps roles, attack targets, production counters, and missions.
 - **Tactical executor (deterministic engine code)**: C# controllers carry out the plan at engine speed — cohesive mixed-domain waves, visible-contact target selection, bounded focus fire, repair/rearm cycles, proportional asset defense, counter-pursuit, feints, and stealth transport insertions.
 - **Coalition**: every allied bot maintains the identical shared world model (deterministic, no message passing), so the whole team always acts on one plan.
 

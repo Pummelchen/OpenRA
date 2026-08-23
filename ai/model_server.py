@@ -13,9 +13,9 @@ Two backends are supported:
 Usage:
   python3 model_server.py                      # dummy backend on 127.0.0.1:8765
   python3 model_server.py --port 9000          # custom port
-  AI_MODEL_ENDPOINT=http://localhost:11434/v1/chat/completions \
-  AI_MODEL_NAME=qwen3 \
-  python3 model_server.py --llm                # LLM backend
+  AI_MODEL_ENDPOINT=http://127.0.0.1:11435/v1/chat/completions \
+  AI_MODEL_NAME=mlx-community/Qwen3.5-4B-MLX-8bit \
+  python3 model_server.py --llm --vision       # Qwen3.5 MLX backend
 
 Tool API (optional): the commander may call engine-validated tools (estimate_engagement,
 plan_routes, score_targets, ...) served by the game's ToolApiBotModule. Set AI_TOOL_ENDPOINT
@@ -39,6 +39,8 @@ if sys.version_info < (3, 11):
     sys.exit("Python 3.11 or newer is required (found %d.%d)." % (sys.version_info[0], sys.version_info[1]))
 
 DEFAULT_PORT = 8765
+DEFAULT_MODEL_ENDPOINT = "http://127.0.0.1:11435/v1/chat/completions"
+DEFAULT_MODEL_NAME = "mlx-community/Qwen3.5-4B-MLX-8bit"
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
 BRAIN_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB cap; truncate from the top when exceeded.
 
@@ -48,8 +50,8 @@ BRAIN_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB cap; truncate from the top when 
 PLAN_CACHE: dict = {}
 PLAN_CACHE_MAX = 100
 
-MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", "http://localhost:11434/v1/chat/completions")
-MODEL_NAME = os.getenv("AI_MODEL_NAME", "qwen3")
+MODEL_ENDPOINT = os.getenv("AI_MODEL_ENDPOINT", DEFAULT_MODEL_ENDPOINT)
+MODEL_NAME = os.getenv("AI_MODEL_NAME", DEFAULT_MODEL_NAME)
 MODEL_API_KEY = os.getenv("AI_MODEL_API_KEY", "")
 
 # The engine's tool API (ToolApiBotModule in the game). Tool calls from the commander are forwarded
