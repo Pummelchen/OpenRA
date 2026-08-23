@@ -55,7 +55,7 @@ namespace OpenRA.Test
 
 			var joint = packages.First(p => p.MissionId == "m1");
 			Assert.That(joint.IsJoint, Is.True, "Two allied players contribute, so the package is joint.");
-			Assert.That(joint.Owners, Is.EquivalentTo(new[] { "Alpha", "Bravo" }));
+			Assert.That(joint.Owners.Order(), Is.EqualTo(new[] { "Alpha", "Bravo" }));
 			Assert.That(joint.TotalUnits, Is.EqualTo(16));
 			Assert.That(joint.Strength, Is.EqualTo(160f));
 
@@ -110,7 +110,7 @@ namespace OpenRA.Test
 		[TestCase(TestName = "Packaging is deterministic, so every allied bot builds the identical view.")]
 		public void PackagingIsDeterministic()
 		{
-			ForceGroup[] Forces() =>
+			static ForceGroup[] Forces() =>
 			[
 				Group("Charlie", "m2", 4, 40f),
 				Group("Alpha", "m1", 10, 100f),

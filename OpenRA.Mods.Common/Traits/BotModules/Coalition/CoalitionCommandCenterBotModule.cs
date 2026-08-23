@@ -380,6 +380,42 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return world.Map.Rules.Actors.TryGetValue(type, out var actorInfo) ? CostOf(actorInfo) : 0;
 		}
 
+		/// <summary>Scores the combat estimator against real engagement outcomes (req 159).</summary>
+		public EngagementOutcomeLog EngagementLog { get; } = new();
+
+		/// <summary>
+		/// Predicts each offensive mission as it commits and resolves it when it concludes, so the
+		/// estimator is measured per engagement rather than once per match. A mission is the right
+		/// engagement unit here: it is the granularity the commander actually commits force at.
+		/// </summary>
+		void TrackEngagementOutcomes(float coalitionArmy, float enemyArmy)
+		{
+			var tick = world.WorldTick;
+			foreach (var mission in missions.Missions)
+			{
+				if (!MissionManager.IsOffensive(mission.Type))
+					continue;
+
+				if (mission.Status == MissionStatus.Executing)
+				{
+					// The prediction is the estimate at the moment force was committed; re-predicting
+					// an open engagement is ignored by the log, so hindsight cannot improve the score.
+					var (winRatio, lossFraction) = CombatEstimator.Estimate(coalitionArmy, enemyArmy);
+					EngagementLog.Predict(mission.Id, tick, winRatio, lossFraction, coalitionArmy);
+				}
+				else if (mission.Status is MissionStatus.Succeeded or MissionStatus.Failed or MissionStatus.Aborted)
+				{
+					// Actual loss fraction: what the committed force actually lost, taken from the
+					// casualty tracking on the groups that carried the mission.
+					var committed = Blackboard.Forces
+						.Where(f => f.MissionId == mission.Id)
+						.ToArray();
+					var actualLoss = committed.Length == 0 ? 0f : committed.Average(f => f.CasualtyFraction);
+					EngagementLog.Resolve(mission.Id, tick, mission.Status == MissionStatus.Succeeded, actualLoss);
+				}
+			}
+		}
+
 		/// <summary>Cells the coalition must not lose: the main base plus every production facility.</summary>
 		IEnumerable<CPos> ProtectedAssetCells()
 		{
@@ -630,6 +666,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			// Advance the mission lifecycle.
 			missions.Update(Blackboard, coalitionArmy, enemyArmy);
+
+			// Score the combat estimator per engagement (req 159): each offensive mission is one
+			// engagement, predicted when it is committed and resolved when it concludes.
+			TrackEngagementOutcomes(coalitionArmy, enemyArmy);
 
 			// Select posture before scoring targets or creating missions so every decision in this
 			// review uses one coherent policy rather than the previous review's stance.
@@ -1303,6 +1343,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				CoalitionTelemetry.Log(world,
 					$"Opponent model: {opponent.Playstyle}, build={opponent.PredictedBuild}, confidence={opponent.Confidence:0.00}");
 				CoalitionTelemetry.Log(world, PredictionLog.Summary());
+				CoalitionTelemetry.Log(world, EngagementLog.Summary());
 			}
 		}
 

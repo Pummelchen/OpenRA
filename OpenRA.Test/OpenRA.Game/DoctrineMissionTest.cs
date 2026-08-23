@@ -10,7 +10,6 @@
 #endregion
 
 using System;
-using System.Linq;
 using NUnit.Framework;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
@@ -75,8 +74,12 @@ namespace OpenRA.Test
 		public void DoctrineMissionsAreFullySpecified()
 		{
 			var manager = new MissionManager();
-			foreach (var type in new[]
-				{ MissionType.Exploitation, MissionType.EmergencyReinforcement, MissionType.Interception })
+			var doctrineTypes = new[]
+			{
+				MissionType.Exploitation, MissionType.EmergencyReinforcement, MissionType.Interception
+			};
+
+			foreach (var type in doctrineTypes)
 			{
 				var mission = manager.CreateMission(type, 80, new CPos(12, 12), "objective");
 				Assert.That(mission.DesiredEffects, Is.Not.Empty, $"{type} has no desired effect.");
