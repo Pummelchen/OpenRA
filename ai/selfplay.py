@@ -15,6 +15,7 @@ Usage (run from the repo root):
 """
 
 import argparse
+import json
 import os
 import re
 import statistics
@@ -26,6 +27,14 @@ if sys.version_info < (3, 11):
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AI_YAML = os.path.join(REPO, "mods", "ra", "rules", "ai.yaml")
+
+# The mid-size conquest maps the commander is graded on: 122x122 to 130x130. Small maps hide
+# economic weakness because everything is in range of everything; large maps hide it because
+# nothing ever meets. Mid-size is where the doctrine in COMMANDER_HANDBOOK.md is decided.
+MID_SIZE_MAPS = ["chernobyl", "snow-town", "shattered-mountain", "code-19"]
+
+# The stock OpenRA bot types the commander must beat, plus itself.
+DEFAULT_OPPONENTS = ["rush", "normal", "turtle", "naval"]
 
 
 def run_sim(map_arg: str, bots: int, teams: int, ticks: int, seed: int, bot_types=None, intelligence=None,
@@ -196,6 +205,102 @@ def summarize_head_to_head(label: str, results: list) -> None:
           f"ground-truth exchange {mean_truth:.2f}, predicted {mean_ratio:.2f}")
 
 
+def score_of(results: list) -> dict:
+    """Win/loss/draw and mean ground-truth exchange for one map-opponent cell."""
+    wins = losses = draws = 0
+    exchanges = []
+    for r in results:
+        winner_teams = r.get("winner_teams", [])
+        if 1 in winner_teams:
+            wins += 1
+        elif 2 in winner_teams:
+            losses += 1
+        else:
+            draws += 1
+        kills = r.get("kill_costs", {}).get(1, 0)
+        deaths = r.get("death_costs", {}).get(1, 0)
+        if deaths > 0:
+            exchanges.append(kills / deaths)
+
+    return {
+        "wins": wins, "losses": losses, "draws": draws,
+        "exchange": round(statistics.mean(exchanges), 2) if exchanges else None,
+    }
+
+
+def run_benchmark(args) -> None:
+    """The scorecard the commander is graded on (COMMANDER_HANDBOOK.md section 14).
+
+    Every mid-size map against every stock bot type, plus a mirror match of the commander
+    against itself. The mirror matters as much as the scripted opponents: a commander that
+    never attacks draws every mirror, so a decisive mirror result is the health signal that
+    the offensive doctrine works at all.
+    """
+    maps = [m.strip() for m in args.maps.split(",")] if args.maps else MID_SIZE_MAPS
+    opponents = [o.strip() for o in args.vs.split(",")] if args.vs else DEFAULT_OPPONENTS
+
+    grid = {}
+    for map_name in maps:
+        map_path = map_name if os.path.sep in map_name else os.path.join(REPO, "mods", "ra", "maps", map_name)
+        for opponent in opponents + ["mirror"]:
+            bot_types = [args.bot_type, args.bot_type] if opponent == "mirror" else [args.bot_type, opponent]
+            results = []
+            for i in range(args.runs):
+                try:
+                    results.append(run_sim(map_path, 2, 2, args.ticks, args.seed_base + i,
+                                           bot_types=bot_types, intelligence=args.intelligence,
+                                           faction=args.faction))
+                except RuntimeError as exc:
+                    print(f"  !! {map_name} vs {opponent} seed {args.seed_base + i}: {exc}")
+            grid[(map_name, opponent)] = score_of(results)
+
+    # Scorecard
+    print(f"\n=== benchmark: '{args.bot_type}' on {len(maps)} mid-size maps, "
+          f"{args.runs} seeds, {args.ticks} ticks ===")
+    header = f"{'map':<20}" + "".join(f"{o:>16}" for o in opponents + ["mirror"])
+    print(header)
+    print("-" * len(header))
+
+    for map_name in maps:
+        row = f"{map_name:<20}"
+        for opponent in opponents + ["mirror"]:
+            cell = grid[(map_name, opponent)]
+            row += f"{cell['wins']}W/{cell['losses']}L/{cell['draws']}D".rjust(16)
+        print(row)
+
+    total_wins = sum(c["wins"] for c in grid.values())
+    total_losses = sum(c["losses"] for c in grid.values())
+    total_draws = sum(c["draws"] for c in grid.values())
+    played = total_wins + total_losses + total_draws
+
+    scripted = [(k, v) for k, v in grid.items() if k[1] != "mirror"]
+    scripted_wins = sum(v["wins"] for _, v in scripted)
+    scripted_played = sum(v["wins"] + v["losses"] + v["draws"] for _, v in scripted)
+
+    mirror = [v for k, v in grid.items() if k[1] == "mirror"]
+    mirror_decisive = sum(v["wins"] + v["losses"] for v in mirror)
+    mirror_played = sum(v["wins"] + v["losses"] + v["draws"] for v in mirror)
+
+    print("-" * len(header))
+    print(f"TOTAL           {total_wins}W / {total_losses}L / {total_draws}D  over {played} matches")
+    print(f"vs scripted     win rate {scripted_wins}/{scripted_played} "
+          f"({100.0 * scripted_wins / max(1, scripted_played):.0f}%)")
+    print(f"mirror          decisive {mirror_decisive}/{mirror_played} "
+          f"({100.0 * mirror_decisive / max(1, mirror_played):.0f}%) "
+          f"- a commander that cannot beat itself cannot close a game")
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({
+                "bot_type": args.bot_type, "maps": maps, "opponents": opponents,
+                "runs": args.runs, "ticks": args.ticks,
+                "grid": {f"{m}|{o}": v for (m, o), v in grid.items()},
+                "totals": {"wins": total_wins, "losses": total_losses, "draws": total_draws},
+                "scripted_win_rate": round(scripted_wins / max(1, scripted_played), 4),
+                "mirror_decisive_rate": round(mirror_decisive / max(1, mirror_played), 4),
+            }, f, indent=2)
+
+
 def run_sweep(label: str, setter, values: list, args) -> None:
     original = open(AI_YAML, encoding="utf-8").read()
     # Track env vars that need clearing (for env-var-based sweeps like threat/target/specialops).
@@ -350,6 +455,9 @@ def main() -> None:
     parser.add_argument("--vs", help="comma-separated scripted bot types to fight head-to-head, e.g. rush,turtle,naval")
     parser.add_argument("--bot-type", default="ai",
                         help="bot type placed on team 1 for head-to-head comparisons (default: ai)")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="run the full scorecard: every mid-size map vs every stock bot plus a mirror match")
+    parser.add_argument("--json", help="write the benchmark scorecard to this path")
     parser.add_argument("--faction", default=None,
                         help="pin every bot to one playable faction (e.g. soviet, allies) so a batch varies only strategy (req 717)")
     parser.add_argument("--intelligence", type=int, default=None,
@@ -385,6 +493,10 @@ def main() -> None:
         if raw:
             run_sweep(label, setter, [cast(x) for x in raw.split(",")], args)
             return
+
+    if args.benchmark:
+        run_benchmark(args)
+        return
 
     if args.maps:
         run_cross_map([m.strip() for m in args.maps.split(",") if m.strip()], args)

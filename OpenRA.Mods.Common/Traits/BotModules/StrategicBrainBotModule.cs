@@ -113,6 +113,12 @@ namespace OpenRA.Mods.Common.Traits
 			"See AUDIT_REPORT.md.")]
 		public readonly int ScoutLifetimeBudget = 0;
 
+		[Desc("Radius (in cells) around the objective in which the assault looks for structures to",
+			"attack. An assault that attack-moves to a cell engages the first thing it meets, which",
+			"on a defended base is the perimeter defence; naming a structure target instead is what",
+			"turns a raid into a siege. See COMMANDER_HANDBOOK.md section 7.")]
+		public readonly int SiegeScanRadius = 14;
+
 		[Desc("How many new scouts are deployed per interval.")]
 		public readonly int ScoutSendPerInterval = 3;
 

@@ -340,3 +340,120 @@ In order of authority:
    a substitute for it.
 
 A change that improves exchange ratio and does not improve win rate has not improved the AI.
+
+---
+
+## 15. The decision model — the mathematics
+
+The commander must not be a chain of rules ("attack when army ≥ 24"). Rules of that shape are
+brittle, readable by an opponent after two matches, and cannot express *where* or *why*. What
+follows is the model it should reason with instead. Each entry is a standard result from the RTS-AI
+literature, chosen because it answers a question the commander actually has.
+
+### 15.1 Influence maps — "where"
+
+A grid over the map. Each unit and structure deposits influence at its cell, spread outward with
+distance decay; own forces positive, observed enemy negative. Summing gives derived layers that
+answer the spatial questions directly:
+
+| Layer | Definition | Question it answers |
+|---|---|---|
+| **Influence** | `Σ own − Σ enemy` | Who controls this ground |
+| **Front line** | zero crossings of influence | Where the fighting is |
+| **Tension** | `Σ own + Σ enemy` | Where both sides are invested |
+| **Vulnerability** | `tension − abs(influence)` | Where the enemy is *thin relative to what it is worth* |
+| **Threat** | enemy influence weighted by anti-X capability | Where this force must not go |
+
+The assault objective is the cell maximising *enemy value × vulnerability*. The feint objective is
+the cell that maximises **drawn influence per credit risked** — somewhere the enemy must answer but
+we can afford to lose. Defensive positioning is the front line, not the base perimeter.
+
+This replaces "attack the enemy base region" with a continuous, terrain-aware answer that updates as
+the map is uncovered — which is exactly the adaptive behaviour the fixed-region approach cannot express.
+
+### 15.2 Lanchester's square law — "will this fight be won"
+
+For ranged units, fighting power scales with the **square** of numbers: `α·N² − β·M² = constant`.
+The practical consequences the commander must act on:
+
+- **Concentration beats increments.** Doubling a force quadruples its power. Two waves of 10 lose to
+  one wave of 20 — this is the mathematical statement of the handbook's "arrive concentrated".
+- **Predicted survivors** = `sqrt(N² − (β/α)·M²)`, which is a far better commit signal than a
+  strength ratio, because it says how much is *left* to exploit with.
+- Splitting a force is only correct when the halves fight *separate* battles, never the same one.
+
+### 15.3 Multi-armed bandits — "learn what works"
+
+Strategy selection as a bandit problem, using UCB1:
+
+```
+score(arm) = mean_reward(arm) + c·sqrt(2·ln(total_plays) / plays(arm))
+```
+
+Each arm is an opening or a posture (expand-first, early pressure, tech, harass, siege). The reward
+is measured progress — economy delta, ground taken, enemy value destroyed per credit committed. The
+second term forces exploration of under-tried options and decays as evidence accumulates.
+
+This is the **self-improving** part: within a match it shifts weight toward what is working against
+*this* opponent on *this* map, and across matches the priors persist. It is also the correct answer
+to the brief's "not static": the commander does not follow one doctrine, it runs a portfolio and
+lets the results re-weight it.
+
+### 15.4 Harvester economics — "is ore being converted fast enough"
+
+Income is a queueing problem, and Little's Law applies directly:
+
+```
+income_rate = harvesters × load_size / round_trip_time
+round_trip_time = 2 × distance/speed + harvest_time + unload_time
+```
+
+Consequences the commander must compute rather than guess:
+- **A refinery closer to ore is worth more than another harvester**, whenever travel dominates the
+  round trip. That is why the community advice is to place refineries next to ore.
+- **Adding a harvester pays off only until the refinery's unload queue saturates.** Past that the
+  marginal harvester adds zero income and costs 1 100 credits.
+- **The value of an expansion** is its ore volume divided by its round-trip time, discounted by the
+  risk of holding it.
+
+Ore is not a background activity. It is the rate that sets everything else, and the commander should
+treat a drop in income as an emergency on the same level as losing a production building.
+
+### 15.5 Terrain — read it, don't assume it
+
+Region decomposition plus chokepoint detection (already present in `CoalitionMapAnalysis`) gives the
+graph the influence map runs over. What matters for planning:
+
+- **Chokepoints are force multipliers**, in both directions: hold one with few units, and never
+  assault through one without reducing it first.
+- **Water splits the map into components.** Naval matters only where a contiguous water body
+  actually connects the two bases — otherwise a shipyard is wasted credits.
+- **Articulation points** (regions whose removal disconnects the graph) are the highest-value ground
+  on the map and the correct place for a blocking force or an expansion.
+
+### 15.6 Bayesian opponent modelling — "what is he doing"
+
+Maintain a posterior over enemy strategy given observations: `P(strategy | evidence)`. Evidence is
+cheap and continuous — structures seen, unit types met, timing of first contact, whether probes were
+punished. The posterior drives production and posture, and its *variance* drives reconnaissance: the
+commander scouts where the model is least certain, which is the value-of-information rule the
+handbook already asks for.
+
+### 15.7 How these compose
+
+```
+terrain graph ──► influence maps ──► candidate objectives (attack / feint / defend / expand)
+                        ▲                        │
+   observations ────────┘                        ▼
+        │                            Lanchester: can this be won, with what left over
+        ▼                                        │
+  Bayesian opponent model ──► production          ▼
+        │                                UCB1 portfolio: which plan, given what has worked
+        └────────────────────────────────────────┘
+                     harvester economics gates all of it
+```
+
+The first 10–15 minutes are deliberately **balanced**: economy first, continuous cheap
+reconnaissance, terrain learned as it is uncovered, no committed strategy. The portfolio commits only
+when the influence map and the opponent model agree on an objective and Lanchester says it can be
+taken with a force left over to hold it.

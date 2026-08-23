@@ -231,6 +231,53 @@ namespace OpenRA.Mods.Common.Traits
 			return pool.Where(a => !Info.AirUnitTypes.Contains(a.Info.Name) && !Info.NavalPriority.Contains(a.Info.Name)).ToArray();
 		}
 
+		/// <summary>
+		/// The structure the main force should attack, or null when nothing worth attacking is
+		/// visible. Fog-safe: only currently observable enemy actors are considered.
+		/// </summary>
+		Actor SelectSiegeTarget(WPos objective, out int visibleDefences)
+		{
+			var structures = VisibleEnemiesAround(objective, Info.SiegeScanRadius)
+				.Where(a => a.Info.HasTraitInfo<BuildingInfo>())
+				.ToArray();
+
+			visibleDefences = structures.Count(IsDefence);
+			if (structures.Length == 0)
+				return null;
+
+			var candidates = structures.Select(a => new SiegeCandidate(a.Info.Name, a.Location,
+				(a.CenterPosition - objective).Length / 1024, IsDefence(a))).ToArray();
+
+			var chosen = SiegeTargeting.SelectMainForceTarget(candidates);
+			if (chosen == null)
+				return null;
+
+			return structures.FirstOrDefault(a => a.Location == chosen.Value.Cell);
+		}
+
+		/// <summary>The defence artillery should be reducing, or null when none is visible.</summary>
+		Actor SelectDefenceTarget(WPos objective)
+		{
+			var defences = VisibleEnemiesAround(objective, Info.SiegeScanRadius)
+				.Where(a => a.Info.HasTraitInfo<BuildingInfo>() && IsDefence(a))
+				.ToArray();
+
+			if (defences.Length == 0)
+				return null;
+
+			var candidates = defences.Select(a => new SiegeCandidate(a.Info.Name, a.Location,
+				(a.CenterPosition - objective).Length / 1024, true)).ToArray();
+
+			var chosen = SiegeTargeting.SelectArtilleryTarget(candidates);
+			return chosen == null ? null : defences.FirstOrDefault(a => a.Location == chosen.Value.Cell);
+		}
+
+		/// <summary>A structure that shoots back is a defence; anything else is an objective.</summary>
+		static bool IsDefence(Actor a)
+		{
+			return a.Info.HasTraitInfo<AttackBaseInfo>();
+		}
+
 		/// <summary>Orders the ground component of an assault wave toward the target.</summary>
 		public void Attack(Actor[] available, WPos target)
 		{
@@ -251,7 +298,20 @@ namespace OpenRA.Mods.Common.Traits
 			var mainForce = land.Where(a => !artilleryTypes.Contains(a.Info.Name)
 				&& !Info.AntiAirUnits.Contains(a.Info.Name)).ToArray();
 
-			if (mainForce.Length > 0)
+			// Siege targeting (handbook §7): once the objective is in sight, the main force attacks a
+			// structure rather than attack-moving to a cell. An attack-move engages whatever it meets,
+			// which on a defended base means grinding against the perimeter pillbox while the economy
+			// that replaces it keeps running - high exchange, nothing killed that matters, draw.
+			var siegeTarget = SelectSiegeTarget(target, out var visibleDefences);
+
+			if (mainForce.Length > 0 && siegeTarget != null)
+			{
+				// Artillery reduces the defence first where it can; the main force goes for what
+				// actually costs the opponent the game.
+				Bot.QueueOrder(new Order("Attack", null, Target.FromActor(siegeTarget), false, groupedActors: mainForce));
+				Log($"Siege: main force attacking {siegeTarget.Info.Name} ({visibleDefences} defences visible)");
+			}
+			else if (mainForce.Length > 0)
 			{
 				// Speed coordination: fast units (tanks) must not outrun slow support (infantry, AA).
 				// Units that are more than 15 cells ahead of the group center hold position briefly
@@ -281,6 +341,18 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				var supportAnchor = mainForce.Length > 0 ? mainForce.Select(a => a.CenterPosition).Average() : target;
 				Bot.QueueOrder(new Order("AttackMove", null, Target.FromPos(supportAnchor), false, groupedActors: antiAir));
+			}
+
+			if (artillery.Length > 0 && visibleDefences > 0)
+			{
+				var defenceTarget = SelectDefenceTarget(target);
+				if (defenceTarget != null)
+				{
+					Bot.QueueOrder(new Order("Attack", null, Target.FromActor(defenceTarget), false, groupedActors: artillery));
+					Log($"Siege: artillery reducing {defenceTarget.Info.Name}");
+					MarkExecuted();
+					return;
+				}
 			}
 
 			if (artillery.Length > 0)
