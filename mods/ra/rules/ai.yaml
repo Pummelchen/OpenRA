@@ -670,7 +670,7 @@ Player:
 		Difficulty: 3
 		ExternalBrainUrl: http://127.0.0.1:8765
 		ExternalBrainBreakSeconds: 15
-		ExternalBrainTimeout: 2000
+		ExternalBrainTimeout: 120000
 	RadarCaptureBotModule:
 		RequiresCondition: enable-ai
 		RadarCaptureWidth: 1920

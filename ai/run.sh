@@ -13,21 +13,30 @@
 
 set -eo pipefail
 
-PYTHON="${PYTHON:-/opt/homebrew/bin/python3.13}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "${HERE}/.." && pwd)"
+LOCAL_PYTHON="${PROJECT_ROOT}/.venv-ai/bin/python"
+if [[ -x "${LOCAL_PYTHON}" ]]; then
+	DEFAULT_PYTHON="${LOCAL_PYTHON}"
+else
+	DEFAULT_PYTHON="/opt/homebrew/bin/python3.13"
+fi
+
+PYTHON="${PYTHON:-${DEFAULT_PYTHON}}"
 MODEL="${AI_MODEL_NAME:-mlx-community/Qwen3.5-4B-MLX-8bit}"
 VLM_PORT="${AI_VLM_PORT:-11435}"
 BRAIN_PORT="${AI_BRAIN_PORT:-8765}"
-HERE="$(cd "$(dirname "$0")" && pwd)"
 VLM_LOG="${AI_VLM_LOG:-${HERE}/mlx-vlm.log}"
 BRAIN_SERVER_LOG="${AI_BRAIN_SERVER_LOG:-${HERE}/brain-server.log}"
+export HF_HOME="${HF_HOME:-${PROJECT_ROOT}/.hf-cache}"
 
 if ! command -v "${PYTHON}" >/dev/null 2>&1; then
 	echo "Python runtime not found: ${PYTHON}" >&2
 	exit 1
 fi
 
-if ! "${PYTHON}" -c 'import mlx_vlm' >/dev/null 2>&1; then
-	echo "mlx-vlm is not installed for ${PYTHON}. Run: ${PYTHON} -m pip install --upgrade mlx-vlm" >&2
+if ! "${PYTHON}" -c 'import jinja2, mlx_vlm' >/dev/null 2>&1; then
+	echo "mlx-vlm runtime dependencies are not installed for ${PYTHON}. See ai/README.md for project-local setup." >&2
 	exit 1
 fi
 

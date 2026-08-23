@@ -42,7 +42,7 @@ namespace OpenRA.Mods.Common.Traits
 		public readonly int Difficulty = 3;
 
 		[Desc("HTTP request timeout in milliseconds. A timed-out request falls back to the scripted brain.")]
-		public readonly int ExternalBrainTimeout = 2000;
+		public readonly int ExternalBrainTimeout = 120000;
 
 		public override object Create(ActorInitializer init) { return new ExternalBrainBotModule(this, init); }
 	}

@@ -7,7 +7,8 @@ automated-testable; the LLM layer is validated by the in-game session described 
 ## Prerequisites
 
 - A .NET **10** SDK (`~/.dotnet`), or set `DOTNET` in the `Makefile`.
-- For the LLM layer (optional): `mlx-lm` + `mlx-vlm` on Apple Silicon (see `ai/README.md`).
+- For the LLM layer (optional): the project-local `mlx-vlm` + `jinja2` environment on Apple Silicon
+  (see `ai/README.md`).
 
 ## Build
 

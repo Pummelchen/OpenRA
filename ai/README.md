@@ -27,37 +27,39 @@ Allied AI bots (ExternalBrainBotModule on each)
   before each consultation.
 - Consultations are paced: the next request (and a fresh radar capture) is only sent **15
   seconds after the previous analysis was received** (`ExternalBrainBreakSeconds`).
-- Requests are asynchronous with a timeout: if the server is down or slow, the bots silently
-  fall back to their built-in scripted brains.
+- Requests are asynchronous with a 120-second timeout: if the server is down or does not answer
+  within that budget, the bots silently fall back to their built-in scripted brains.
 
 ## Running the model server
 
 The brain server is dependency-free Python (stdlib only). The vision endpoint requires a
-current `mlx-vlm` release with Qwen3.5 support:
+current `mlx-vlm` release with Qwen3.5 support. Keep the runtime and model cache local to
+the checkout so `ai/run.sh` can use them automatically:
 
 ```sh
-# 1. Install/upgrade the Apple-Silicon vision runtime
-/opt/homebrew/bin/python3.13 -m pip install --upgrade mlx-vlm
+# 1. Create the project-local Apple-Silicon vision runtime
+/opt/homebrew/bin/python3.13 -m venv .venv-ai
+.venv-ai/bin/python -m pip install --upgrade pip mlx-vlm jinja2
 
-# 2. Serve Qwen3.5 4B (MLX 8-bit) with vision support on port 11435
-/opt/homebrew/bin/python3.13 -m mlx_vlm.server \
-  --model mlx-community/Qwen3.5-4B-MLX-8bit --port 11435
+# 2. Download Qwen3.5 4B (MLX 8-bit) into the project-local cache
+hf download mlx-community/Qwen3.5-4B-MLX-8bit --cache-dir .hf-cache/hub
 
-# 3. Run the brain server
-AI_MODEL_ENDPOINT=http://127.0.0.1:11435/v1/chat/completions \
-AI_MODEL_NAME=mlx-community/Qwen3.5-4B-MLX-8bit \
-/opt/homebrew/bin/python3.13 ai/model_server.py --llm --vision
+# 3. Start the vision endpoint and coalition brain server
+ai/run.sh
 
 # Dummy backend (no model needed, for testing):
-python3 ai/model_server.py
+.venv-ai/bin/python ai/model_server.py
 ```
 
 Health check: `curl http://127.0.0.1:8765/health`
 
-`ai/run.sh` performs the same startup with this model by default. Qwen thinking mode is
-left disabled so the commander's 200-token response budget is spent on the required plan JSON
-and tool calls. The model is downloaded to the Hugging Face cache on first launch; the Hub card
-lists an approximately 4.8 GB download and approximately 5.8 GB peak memory use.
+`ai/run.sh` automatically prefers `.venv-ai/bin/python` and sets `HF_HOME` to the ignored
+project-local `.hf-cache` directory. Qwen thinking mode is left disabled so the commander's
+512-token response budget is spent on the required plan JSON and tool calls. If the explicit
+download step is skipped, the first launch downloads the model into that cache. The verified
+snapshot occupies approximately 4.8 GiB on disk, and a local completion smoke test used 6.04 GB
+peak memory. Override `PYTHON`, `HF_HOME`, `AI_MODEL_TIMEOUT_SECONDS`, or `AI_MODEL_MAX_TOKENS`
+when an intentionally shared runtime/cache or a different bounded inference budget is desired.
 
 ## Engine tool API
 
@@ -151,7 +153,7 @@ ExternalBrainBotModule:
     RequiresCondition: enable-ai
     ExternalBrainUrl: http://127.0.0.1:8765
     ExternalBrainBreakSeconds: 15
-    ExternalBrainTimeout: 2000
+    ExternalBrainTimeout: 120000
 RadarCaptureBotModule:
     RequiresCondition: enable-ai
     RadarCaptureWidth: 1920

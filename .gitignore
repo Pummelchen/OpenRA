@@ -54,6 +54,8 @@ update.log
 # Python
 __pycache__/
 *.pyc
+/.venv-ai/
+/.hf-cache/
 
 # Local AI server output
 /ai/mlx-vlm.log

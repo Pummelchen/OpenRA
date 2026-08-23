@@ -41,6 +41,8 @@ if sys.version_info < (3, 11):
 DEFAULT_PORT = 8765
 DEFAULT_MODEL_ENDPOINT = "http://127.0.0.1:11435/v1/chat/completions"
 DEFAULT_MODEL_NAME = "mlx-community/Qwen3.5-4B-MLX-8bit"
+MODEL_TIMEOUT_SECONDS = max(1.0, float(os.getenv("AI_MODEL_TIMEOUT_SECONDS", "120")))
+MODEL_MAX_TOKENS = max(64, int(os.getenv("AI_MODEL_MAX_TOKENS", "512")))
 BRAIN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain.log")
 BRAIN_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB cap; truncate from the top when exceeded.
 
@@ -365,14 +367,14 @@ def chat_completion(endpoint: str, model: str, api_key: str, messages: list) -> 
         "model": model,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 200,
+        "max_tokens": MODEL_MAX_TOKENS,
     }
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     req = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as response:
+    with urllib.request.urlopen(req, timeout=MODEL_TIMEOUT_SECONDS) as response:
         data = json.loads(response.read().decode("utf-8"))
     return data["choices"][0]
 
