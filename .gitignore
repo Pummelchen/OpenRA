@@ -57,6 +57,7 @@ __pycache__/
 /.venv-ai/
 /.hf-cache/
 
-# Local AI server output
+# Local AI server output (ai/brain.log.example is the committed sample)
 /ai/mlx-vlm.log
 /ai/brain-server.log
+/ai/brain.log

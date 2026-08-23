@@ -17,7 +17,7 @@ import tempfile
 from types import SimpleNamespace
 
 AI_DIR = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ("model_server.py", "selfplay.py", "llm_eval.py")
+SCRIPTS = ("model_server.py", "selfplay.py", "llm_eval.py", "test_llm_eval.py")
 
 
 def compile_all():
@@ -151,12 +151,25 @@ def selfplay_failure_regression():
     print("self-play failure handling OK")
 
 
+def llm_eval_scorer_regression():
+    """Runs the scorer suite against the shipped llm_eval module (reqs 729-738)."""
+    import subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    completed = subprocess.run(
+        [sys.executable, os.path.join(here, "test_llm_eval.py")],
+        capture_output=True, text=True, check=False)
+    output = (completed.stdout + completed.stderr).strip()
+    assert completed.returncode == 0, f"llm_eval scorer tests failed:\n{output}"
+    print(output.splitlines()[-1] if output else "llm_eval scorer tests OK")
+
+
 def main():
     compile_all()
     rotation_regression()
     commander_contract_regression()
     repeat_state_regression()
     selfplay_failure_regression()
+    llm_eval_scorer_regression()
     print("selfcheck OK")
     return 0
 

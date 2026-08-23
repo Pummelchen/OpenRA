@@ -7,6 +7,9 @@ automated-testable; the LLM layer is validated by the in-game session described 
 ## Prerequisites
 
 - A .NET **10** SDK (`~/.dotnet`), or set `DOTNET` in the `Makefile`.
+- **Python 3.11 or newer** for the AI tooling (`ai/selfcheck.py`, `ai/selfplay.py`, `ai/llm_eval.py`).
+  A system `python3` older than 3.11 will refuse to run them; use the project-local runtime
+  (`.venv-ai/bin/python`) created below.
 - For the LLM layer (optional): the project-local `mlx-vlm` + `jinja2` environment on Apple Silicon
   (see `ai/README.md`).
 
@@ -26,6 +29,16 @@ headless skirmish tests drive real games through the `--simulate` harness.
 dotnet test bin/OpenRA.Test.dll --test-adapter-path:.
 # or, one fixture:
 dotnet test bin/OpenRA.Test.dll --test-adapter-path:. --filter "FullyQualifiedName~CommandValidatorTest"
+```
+
+### Python tooling tests
+
+The Python evaluation layer has its own suite, driven both directly and from the C# fixture
+`LlmEvalTest` (which runs the real module in a subprocess rather than re-implementing it):
+
+```sh
+.venv-ai/bin/python ai/selfcheck.py      # includes the scorer suite
+.venv-ai/bin/python ai/test_llm_eval.py  # all 11 llm_eval scorers on their own
 ```
 
 Key fixtures:
