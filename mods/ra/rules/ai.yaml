@@ -609,13 +609,14 @@ Player:
 		InititalMinimumRefineryCount: 0
 		AdditionalMinimumRefineryCount: 2
 		TechTypes: dome, atek, stek, fix, afld, hpad
-		ProductionTypes: barr,tent,weap
+		ProductionTypes: barr,tent,weap,kenn
 		NavalProductionTypes: spen, syrd
 		NavalWaterMinimumCells: 100
 		NewProductionCashThreshold: 7000
 		SiloTypes: silo
 		DefenseTypes: hbox,pbox,gun,ftur,tsla,agun,sam
 		BuildingLimits:
+			kenn: 1
 			barr: 7
 			tent: 7
 			dome: 1
@@ -691,7 +692,7 @@ Player:
 		FeintFraction: 6
 		CommitReserveRatio: 0.6
 		CoordinatedAttackMinimum: 24
-		ScoutUnitTypes: jeep, e1
+		ScoutUnitTypes: dog, e1, jeep
 		ScoutSquadSize: 6
 		ScoutMinDistance: 40
 		ScoutInterval: 100

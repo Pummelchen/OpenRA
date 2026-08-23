@@ -117,6 +117,16 @@ namespace OpenRA.Mods.Common.Traits
 			"turns a raid into a siege. See COMMANDER_HANDBOOK.md section 7.")]
 		public readonly int SiegeScanRadius = 14;
 
+		[Desc("Unit produced specifically for reconnaissance, ahead of using line troops as scouts.",
+			"A dog costs 200 against rifle infantry's 100 but moves at 100 against their 54 - close",
+			"to double - so per cell revealed it is the cheaper scout, and it arrives sooner, which",
+			"matters more than price when the entire point is early information. Requires a kennel.",
+			"Empty disables dedicated scout production. See COMMANDER_HANDBOOK.md section 6.")]
+		public readonly string DedicatedScoutType = "dog";
+
+		[Desc("How many dedicated scouts to keep available while the enemy base is still unlocated.")]
+		public readonly int DedicatedScoutReserve = 3;
+
 		[Desc("Promote artillery and anti-air to the front of the build order when the army has less",
 			"than the doctrine ratio. Artillery out-ranges base defence, which is the cheap way",
 			"through a defended perimeter - but promoting it costs armour, so whether it pays is a",
@@ -282,6 +292,7 @@ namespace OpenRA.Mods.Common.Traits
 		int missionScoutsDeployed;
 		readonly HashSet<Actor> deceptionForce = [];
 		readonly List<string> requestedProduction = [];
+		string lastScoutType;
 		readonly HashSet<uint> teamRetreatActorIds = [];
 		bool teamRetreatActive;
 		bool enemyBaseEverLocated;
@@ -773,6 +784,66 @@ namespace OpenRA.Mods.Common.Traits
 						Bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, replacement, 1));
 						CoalitionTelemetry.Log(World, $"Emergency replacement: {replacement} ordered");
 						return;
+					}
+				}
+			}
+
+			// Dedicated scout production. Dogs are excluded from ExcludeFromArmyTypes on purpose -
+			// they are poor line troops and must not be swept into combat waves - which also means
+			// the ordinary pick order will never build one. Reconnaissance is the precondition for
+			// naming an objective at all, so it gets its own request rather than competing with the
+			// army for a queue slot.
+			if (Info.DedicatedScoutReserve > 0 && !enemyBaseEverLocated)
+			{
+				// Derived from what this faction can actually build right now, not named in config.
+				// The dog is the obvious scout and its kennel is Soviet-only, so an Allied commander
+				// told to scout with dogs simply never scouts.
+				var candidates = queues
+					.SelectMany(q => q.BuildableItems())
+					.Distinct()
+					.Select(ScoutSelection.Candidate)
+					.Where(c => c != null)
+					.Select(c => c.Value);
+
+				var scoutType = ScoutSelection.Preferred(Info.ScoutUnitTypes, candidates);
+
+				// The best scout overall may not be buildable yet. A dog needs a kennel, which the
+				// base builder deprioritises into never - so if the better scout is one prerequisite
+				// away, order that building rather than settling for the fallback all match.
+				var aspirational = Info.ScoutUnitTypes.FirstOrDefault() ?? ScoutSelection.Best(Info.ScoutUnitTypes
+					.Select(t => World.Map.Rules.Actors.TryGetValue(t, out var actorInfo) ? actorInfo : null)
+					.Where(i => i != null)
+					.Select(ScoutSelection.Candidate)
+					.Where(c => c != null)
+					.Select(c => c.Value));
+
+				if (!string.IsNullOrEmpty(aspirational) && aspirational != scoutType)
+				{
+					var missing = MissingPrerequisiteBuilding(aspirational);
+					var buildingQueue = queues.FirstOrDefault(q => q.Info.Type == "Building");
+					if (missing != null && buildingQueue != null
+						&& !queues.Any(q => q.AllQueued().Any(i => i.Item == missing))
+						&& buildingQueue.BuildableItems().Any(i => i.Name == missing))
+					{
+						Bot.QueueOrder(Order.StartProduction(buildingQueue.Actor, missing, 1));
+						CoalitionTelemetry.Log(World, $"Reconnaissance: ordering {missing} to unlock {aspirational}");
+					}
+				}
+
+				if (!string.IsNullOrEmpty(scoutType))
+				{
+					var available = World.Actors.Count(a => a.IsInWorld && !a.IsDead
+						&& a.Owner == Player && a.Info.Name == scoutType);
+					var pending = requestedProduction.Count(n => n == scoutType);
+
+					if (available + pending < Info.DedicatedScoutReserve)
+					{
+						requestedProduction.Add(scoutType);
+						if (scoutType != lastScoutType)
+						{
+							lastScoutType = scoutType;
+							CoalitionTelemetry.Log(World, $"Reconnaissance: producing {scoutType} as scout");
+						}
 					}
 				}
 			}
@@ -1664,8 +1735,16 @@ namespace OpenRA.Mods.Common.Traits
 			if (toSend <= 0)
 				return;
 
-			var infantry = OwnCombatUnits().Where(a => Info.ScoutUnitTypes.Contains(a.Info.Name)
-				&& !scouts.Contains(a)).ToArray();
+			// Draw from every owned unit rather than the combat pool: the dedicated scout is
+			// deliberately excluded from the army, so looking only at combat units would never find
+			// one. Ordered by the configured preference so dogs go first while any remain.
+			var infantry = World.Actors
+				.Where(a => a.IsInWorld && !a.IsDead && a.Owner == Player
+					&& Info.ScoutUnitTypes.Contains(a.Info.Name) && !scouts.Contains(a)
+					&& a.TraitOrDefault<Mobile>() != null)
+				.OrderBy(a => Array.IndexOf(Info.ScoutUnitTypes, a.Info.Name))
+				.ThenBy(a => a.ActorID)
+				.ToArray();
 			if (infantry.Length == 0)
 				return;
 
