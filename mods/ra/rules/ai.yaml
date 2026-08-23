@@ -728,6 +728,8 @@ Player:
 	ToolApiBotModule:
 		RequiresCondition: enable-ai
 		ToolApiPort: 8766
+	CommanderCalibrationBotModule:
+		RequiresCondition: enable-ai
 	CoalitionCheatsBotModule:
 		RequiresCondition: enable-ai
 		InstantBuild: true
