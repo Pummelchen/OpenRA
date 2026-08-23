@@ -539,6 +539,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		// State for detecting material events between reviews.
 		readonly StrategicEventDetector eventDetector = new();
 
+		/// <summary>Scores the opponent model's forecasts against later observation (req 622).</summary>
+		public OpponentPredictionLog PredictionLog { get; } = new();
+
 		/// <summary>
 		/// Detects a material event worth an immediate strategic review, or null. Compares the current
 		/// blackboard against the previous review: enemy base discovery, enemy composition changes,
@@ -1240,6 +1243,37 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// dozens of sightings make the biases trustworthy.
 			opponent.Confidence = Math.Clamp(total / 20f, 0f, 1f);
 
+			// Score the model's own forecasts (req 622). Each review states what it expects; the next
+			// review that actually observes the answer resolves it. A prediction is only recorded once
+			// the profile carries some confidence, so the opening guess is not counted against it.
+			if (opponent.Confidence > 0.2f)
+			{
+				PredictionLog.Predict("playstyle", opponent.Playstyle, world.WorldTick, opponent.Confidence);
+				PredictionLog.Predict("build", opponent.PredictedBuild, world.WorldTick, opponent.Confidence);
+				if (opponent.PreferredAttackLane >= 0)
+					PredictionLog.Predict("attack_lane", opponent.PreferredAttackLane.ToString(
+						System.Globalization.CultureInfo.InvariantCulture), world.WorldTick, opponent.Confidence);
+			}
+
+			// Resolution: a forecast is checked only against evidence strong enough to settle it, so a
+			// thin snapshot never confirms or refutes the profile.
+			if (total >= 8)
+			{
+				PredictionLog.Observe("playstyle", OpponentModel.DerivePlaystyle(army, structures));
+				PredictionLog.Observe("build", build);
+			}
+
+			// The attack lane resolves against where the enemy actually massed its mobile forces.
+			var mobileLane = laneCounts
+				.Where(kv => kv.Key != Blackboard.HomeRegion)
+				.OrderByDescending(kv => kv.Value)
+				.ThenBy(kv => kv.Key)
+				.Select(kv => (int?)kv.Key)
+				.FirstOrDefault();
+			if (mobileLane != null && total >= 8)
+				PredictionLog.Observe("attack_lane",
+					mobileLane.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
 			// Copy the durable learned values into the fresh model: response time from accumulated
 			// wave-to-reaction delays, and raid sensitivity from how much enemy contact our raids
 			// generate.
@@ -1268,6 +1302,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				lastOpponentProfile = profile;
 				CoalitionTelemetry.Log(world,
 					$"Opponent model: {opponent.Playstyle}, build={opponent.PredictedBuild}, confidence={opponent.Confidence:0.00}");
+				CoalitionTelemetry.Log(world, PredictionLog.Summary());
 			}
 		}
 

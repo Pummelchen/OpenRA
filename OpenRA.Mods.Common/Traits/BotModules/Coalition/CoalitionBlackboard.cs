@@ -256,6 +256,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		public readonly CoalitionRegion[] Regions;
 		public readonly List<ForceGroup> Forces = [];
+
+		/// <summary>
+		/// Committed forces grouped into one package per mission (req 26). A package may span several
+		/// allied players: orders still go per-owner because OpenRA forbids anything else, but the
+		/// commander assigns, inspects and scores the joint force as a single object.
+		/// </summary>
+		public IReadOnlyList<CoalitionForcePackage> ForcePackages => forcePackages ??= CoalitionForcePackage.Build(Forces);
+
+		IReadOnlyList<CoalitionForcePackage> forcePackages;
+
+		/// <summary>Drops the cached packaging after force assignments change.</summary>
+		public void InvalidateForcePackages() { forcePackages = null; }
 		public readonly List<SpecialAsset> SpecialAssets = [];
 		public readonly List<SpecialAsset> Transports = [];
 		public readonly List<ProductionFacility> Facilities = [];

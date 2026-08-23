@@ -139,6 +139,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 							return InspectRegion(context, args);
 						case "inspect_force":
 							return InspectForce(context, args);
+						case "inspect_force_package":
+							return InspectForcePackage(context, args);
 						case "inspect_enemy_intelligence":
 							return InspectEnemyIntelligence(context, args);
 						case "get_recent_events":
@@ -264,6 +266,56 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				["buildable_cells"] = context.MapAnalysis?.BuildableCells?[index] ?? 0,
 				["expansion_value"] = Round(context.MapAnalysis?.ExpansionValue?[index] ?? 0f),
 				["threats"] = ThreatObject(region.Threats)
+			});
+		}
+
+		/// <summary>
+		/// Reports a joint force package: the combined strength, readiness and capabilities of every
+		/// allied contingent committed to one mission (req 26). This is the level the commander should
+		/// judge an operation at - a package that is "short on anti-air" is short across the whole
+		/// coalition, not merely in one ally's contingent.
+		/// </summary>
+		static string InspectForcePackage(ToolContext context, JsonElement args)
+		{
+			var missionId = RequireString(args, "mission");
+			var packages = CoalitionForcePackage.Build(context.Forces);
+			var package = packages.FirstOrDefault(p =>
+				string.Equals(p.MissionId, missionId, StringComparison.OrdinalIgnoreCase));
+			if (package == null)
+				return Error("UNKNOWN_MISSION", $"no force package is committed to mission \"{missionId}\"");
+
+			var members = new JsonArray();
+			foreach (var member in package.Members)
+				members.Add(new JsonObject
+				{
+					["owner"] = member.Owner,
+					["units"] = member.TotalUnits,
+					["strength"] = Round(member.Strength),
+					["readiness"] = Round(member.Readiness),
+					["role"] = member.Role
+				});
+
+			return Ok(new JsonObject
+			{
+				["mission"] = package.MissionId,
+				["joint"] = package.IsJoint,
+				["contributors"] = package.Members.Count,
+				["members"] = members,
+				["composition"] = new JsonObject
+				{
+					["infantry"] = package.Counts[(int)UnitClass.Infantry],
+					["armor"] = package.Counts[(int)UnitClass.Armor],
+					["air"] = package.Counts[(int)UnitClass.Air],
+					["naval"] = package.Counts[(int)UnitClass.Naval],
+					["support"] = package.Counts[(int)UnitClass.Support]
+				},
+				["capabilities"] = FriendlyCapabilityObject(package.Capabilities),
+				["total_units"] = package.TotalUnits,
+				["strength"] = Round(package.Strength),
+				["readiness"] = Round(package.Readiness),
+				["cohesion"] = Round(package.Cohesion),
+				["casualty_fraction"] = Round(package.CasualtyFraction),
+				["center"] = new JsonObject { ["x"] = package.Center.X, ["y"] = package.Center.Y }
 			});
 		}
 
