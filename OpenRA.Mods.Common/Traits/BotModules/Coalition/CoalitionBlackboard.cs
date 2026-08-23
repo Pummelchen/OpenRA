@@ -314,6 +314,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		public int EnemyRegion = -1;
 
 		/// <summary>
+		/// A probable enemy base region inferred from the direction observed enemy forces arrive from,
+		/// used only while no enemy structure has ever been seen. This is inference from observed
+		/// contacts, never hidden state: it is what an attacking force's approach corridor tells you.
+		/// Marked separately from <see cref="EnemyRegion"/> so a guess is never mistaken for a sighting.
+		/// </summary>
+		public int InferredEnemyRegion = -1;
+
+		/// <summary>True when the offensive target is an inference rather than an observed position.</summary>
+		public bool EnemyRegionIsInferred => EnemyRegion < 0 && InferredEnemyRegion >= 0;
+
+		/// <summary>
 		/// Shared counterattack gate: the tick of the last coalition-wide counterattack launch.
 		/// Each bot checks this before firing its own counterattack so the coalition doesn't send
 		/// N duplicate counterattack waves from N bots.
@@ -925,7 +936,66 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					(int)enemyStructures.Average(i => i.LastSeenCell.X),
 					(int)enemyStructures.Average(i => i.LastSeenCell.Y));
 				EnemyRegion = RegionOf(cell).Index;
+				return;
 			}
+
+			// No enemy structure has ever been seen. Without an objective the coalition spends the
+			// whole match reacting - out-trading the enemy while never threatening it - so infer the
+			// most likely base from public map metadata: an unexplored starting location, preferring
+			// the one nearest the direction enemy forces actually arrive from. Starting locations are
+			// map data, not hidden player state, and the occupant is never read; this only says where
+			// a base could be, which is exactly what a commander reasons from before scouting.
+			var spawns = StartingLocations();
+			if (spawns.Length == 0)
+				return;
+
+			var mobile = EnemyIntel.Where(i => i.Class != UnitClass.Structure).ToArray();
+			var approach = mobile.Length == 0 ? (CPos?)null : new CPos(
+				(int)mobile.Average(i => i.LastSeenCell.X),
+				(int)mobile.Average(i => i.LastSeenCell.Y));
+
+			var candidate = InferEnemyBaseCell(spawns, HomeCell, approach,
+				cell => Team.Any(ally => ally.Shroud.IsExplored(cell)));
+
+			if (candidate != null)
+				InferredEnemyRegion = RegionOf(candidate.Value).Index;
+		}
+
+		/// <summary>Public starting locations declared by the map.</summary>
+		CPos[] StartingLocations()
+		{
+			return World.Map.ActorDefinitions
+				.Where(n => n.Value.Value == "mpspawn")
+				.Select(n => new ActorReference(n.Key, n.Value).GetValue<LocationInit, CPos>())
+				.ToArray();
+		}
+
+		/// <summary>
+		/// Picks the most likely enemy base from the map's starting locations. Explored spawns are
+		/// ruled out - the coalition has looked there and found no base - and of the rest the one
+		/// closest to the axis enemy forces arrive along is preferred, falling back to the most
+		/// distant spawn when there has been no contact at all. Pure, so it is testable without a World.
+		/// </summary>
+		public static CPos? InferEnemyBaseCell(CPos[] spawns, CPos home, CPos? approach, Func<CPos, bool> isExplored)
+		{
+			var candidates = spawns
+				.Where(s => s != home && !(isExplored?.Invoke(s) ?? false))
+				.ToArray();
+
+			if (candidates.Length == 0)
+				return null;
+
+			// Deterministic ordering: every allied bot must infer the identical objective.
+			if (approach == null)
+				return candidates
+					.OrderByDescending(s => (s - home).LengthSquared)
+					.ThenBy(s => s.Y).ThenBy(s => s.X)
+					.First();
+
+			return candidates
+				.OrderBy(s => (s - approach.Value).LengthSquared)
+				.ThenBy(s => s.Y).ThenBy(s => s.X)
+				.First();
 		}
 
 		/// <summary>Appends a new event, dropping stale entries beyond the cap.</summary>

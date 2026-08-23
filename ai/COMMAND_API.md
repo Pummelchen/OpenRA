@@ -247,6 +247,7 @@ The commander is offered tools; it must use them instead of estimating mechanics
 | `get_global_summary` | — | posture, force/economic summary | snapshot |
 | `inspect_region` | region_id | region details, control, threats | map analyzer |
 | `inspect_force` | force_id | composition, strength, readiness, commitment | force registry |
+| `inspect_force_package` | mission | joint force across allied players: combined strength, readiness, cohesion, capabilities | force registry |
 | `inspect_enemy_intelligence` | region? | enemy intel with confidence/age | intel tracker |
 | `get_recent_events` | since_tick | event log (see §8) | telemetry |
 | `get_opponent_model` | — | opponent model | opponent model |

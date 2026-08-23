@@ -14,6 +14,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
+using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 
 namespace OpenRA.Test
 {
@@ -337,11 +338,15 @@ namespace OpenRA.Test
 		{
 			try
 			{
-				var (result, lines) = RunAndCapture(4, 2, 3000, 700);
+				// 6000 ticks, not 3000: on this map the coalition's first scouts are dispatched
+				// after the opening economy phase, so a shorter budget asserted behaviour that had
+				// not happened yet and could only pass on telemetry left by an earlier test.
+				var (result, lines) = RunAndCapture(4, 2, 6000, 700);
 
 				Assert.That(result.Events.Count, Is.GreaterThan(0), "The match telemetry should capture AI events.");
 				Assert.That(lines.Any(l => l.Contains("Scout sent") || l.Contains("Recon probe")), Is.True,
-					"The coalition must scout or probe the map to resolve uncertainty.");
+					$"The coalition must scout or probe the map to resolve uncertainty. Captured {lines.Count} lines: "
+					+ string.Join(" | ", lines.Take(8)));
 			}
 			catch (Exception e) when (e.ToString().Contains("Chronoshiftable") || e.ToString().Contains("RulesetLoaded"))
 			{
@@ -457,6 +462,10 @@ namespace OpenRA.Test
 
 		static long TelemetryLength(string path)
 		{
+			// The telemetry writer is held open across matches. Closing it before measuring makes the
+			// offset exact: a stale length lets a previous match's lines bleed into this test's window,
+			// which is how a test could pass on another test's evidence.
+			CoalitionTelemetry.Flush();
 			return File.Exists(path) ? new FileInfo(path).Length : 0;
 		}
 

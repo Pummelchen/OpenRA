@@ -71,7 +71,7 @@ The game also serves an **engine-validated tool API** for the commander
 `get_economy_state` (cash, power, refineries, harvesters, resources), `get_production_state`
 (queues + progress), `compare_force_packages`, `estimate_enemy_response`, `find_attack_windows`,
 `find_special_ops_routes`, `get_mission_status`, `get_force_readiness`, `get_transport_status`,
-`get_route_status`, plus the production, mission, force, reserve, reconnaissance, and posture
+`get_route_status`, `inspect_force_package` (a joint force spanning several allied players), plus the production, mission, force, reserve, reconnaissance, and posture
 mutation tools documented in `COMMAND_API.md`. Every call is validated against the live blackboard and answered from
 deterministic engine computations — the LLM never receives fabricated mechanics. The model
 server forwards the commander's function calls here and relays results back into the conversation:
@@ -95,6 +95,9 @@ python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
   --vs rush,turtle,naval --runs 3 --ticks 30000 --seed-base 805 --intelligence 0 --details
 python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain \
   --bot-type normal --vs rush --runs 3 --ticks 30000 --seed-base 805 --intelligence 0
+
+# hold the faction constant so a batch varies only the strategy under test
+python3 ai/selfplay.py --map mods/ra/maps/shattered-mountain --faction soviet --runs 4
 ```
 
 The report separates fog-limited commander exchange from ground-truth player statistics
@@ -110,6 +113,20 @@ cadence. Aircraft rearm instead of receiving conflicting attack orders, recovera
 units use service facilities, and close raids trigger a nearest-unit response proportional to
 the observed attackers. These rules run identically whether the external model is available or
 the deterministic strategic brain is in control.
+
+## Replay analysis
+
+Any OpenRA replay - including a game played against a human - can be evaluated with the same
+tooling, and AI decisions can be read against the replay's own tick timeline:
+
+```sh
+utility.sh ra --analyze-replay REPLAY=~/path/to/game.orarep \
+  TELEMETRY="$HOME/Library/Application Support/OpenRA/ai-telemetry.log"
+```
+
+The report lists players, factions, teams, outcomes, duration and an explicit human-vs-AI verdict.
+Headless matches use an echo connection with no recorder, so batch runs remain covered by fixed-seed
+determinism rather than replay files.
 
 ## Terminal monitor
 

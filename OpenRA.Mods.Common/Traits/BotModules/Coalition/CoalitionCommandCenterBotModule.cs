@@ -31,6 +31,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Interval (in ticks) between command decisions.")]
 		public readonly int CommandInterval = 100;
 
+		[Desc("Advance on a starting location inferred from public map data when the enemy base has not",
+			"been found. Off by default: measured over a full opponent matrix this produced no wins and",
+			"drew units away from reconnaissance. See AUDIT_REPORT.md for the measurements.")]
+		public readonly bool AdvanceOnInferredBase = false;
+
 		[Desc("Enemy actor types classified as infantry.")]
 		public readonly FrozenSet<string> InfantryTypes = [];
 
@@ -358,6 +363,40 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			var estimatedEnemyArmy = enemyToFriendlyRatio * coalitionArmy;
 			return observedMobile > 0 && estimatedEnemyArmy >= materialContact && coalitionArmy >= materialContact
 				&& enemyToFriendlyRatio > 0f && enemyToFriendlyRatio <= 1f;
+		}
+
+		/// <summary>Force multiple of the coordinated minimum required before advancing on an inferred objective.</summary>
+		public const int AdvanceForceMultiple = 3;
+
+		/// <summary>Tick at which the coalition first had an army and no located enemy base.</summary>
+		int enemyBaseSearchStartTick = -1;
+		bool lastReconInForce;
+
+		/// <summary>
+		/// Whether a coalition that cannot find the enemy should advance to make contact. Requires a
+		/// force worth committing and a sustained failure to locate the enemy base, so this never
+		/// pre-empts a deliberate assault or throws away an early army. Pure, so the rule is testable
+		/// without a World.
+		/// </summary>
+		public static bool ShouldAdvanceToFindEnemy(int observedEnemyRegion, int coalitionArmy,
+			int coordinatedMinimum, int currentTick, int searchStartTick, int commandInterval)
+		{
+			// An observed base means the normal assault gate applies; nothing to search for.
+			if (observedEnemyRegion >= 0)
+				return false;
+
+			// Committing before the coalition fields a real force would feed units in piecemeal.
+			// The multiple matters: advancing on an unconfirmed objective across a large map is far
+			// more costly than defending, so it is only worth doing with an overwhelming force.
+			if (coalitionArmy < coordinatedMinimum * AdvanceForceMultiple)
+				return false;
+
+			// Give reconnaissance a fair chance first: only advance once scouting has had time and
+			// still failed. Ten command intervals is minutes of game time, not a hair trigger.
+			if (searchStartTick < 0)
+				return false;
+
+			return currentTick - searchStartTick >= Math.Max(1, commandInterval) * 10;
 		}
 
 		/// <summary>Concentrates a contact interception midway toward home instead of charging the enemy front.</summary>
@@ -706,7 +745,46 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// with better tactics and reserve commitment); defend only when clearly outnumbered.
 			var (wantAttack, wantDefend, wantBuild) = CommandValidator.ResolveCommanderIntent(llmIntent?.Posture, ratio);
 
-			if (wantAttack && Blackboard.EnemyRegion >= 0)
+			// The offensive objective: the observed enemy base when one has been seen, otherwise the
+			// region inferred from where enemy forces keep arriving from. Without the fallback a
+			// coalition that never scouts a structure can never name an objective, so it spends the
+			// entire match reacting - out-trading the enemy while never threatening it, which ends in
+			// a time-limit draw at best.
+			var offensiveRegion = Blackboard.EnemyRegion >= 0 ? Blackboard.EnemyRegion
+				: info.AdvanceOnInferredBase ? Blackboard.InferredEnemyRegion : -1;
+
+			// Reconnaissance in force. The deliberate-assault gate needs a 33% strength edge, but the
+			// enemy estimate carries a fog floor proportional to the unexplored map, so an army that
+			// never advances can never earn that edge - it assumes a large hidden enemy precisely
+			// because it has not looked. That deadlock is why the coalition could out-trade an
+			// opponent for a whole match and still never threaten it. A large force with no located
+			// enemy therefore advances to find and fix, which is what converts the inference into an
+			// observation and unlocks the deliberate assault.
+			// Start the search clock once the coalition actually has a force to search with, and stop
+			// it the moment the enemy base is observed so a later loss of contact restarts the timer
+			// rather than instantly re-triggering an advance.
+			if (Blackboard.EnemyRegion >= 0)
+				enemyBaseSearchStartTick = -1;
+			else if (enemyBaseSearchStartTick < 0 && coalitionArmy >= (brain?.Info.CoordinatedAttackMinimum ?? 24) * AdvanceForceMultiple)
+				enemyBaseSearchStartTick = world.WorldTick;
+
+			// Disabled by default: measured over a 12-match opponent matrix this advance did not
+			// produce a single win and cost reconnaissance, because the army it commits is the same
+			// army the scouting probes are drawn from. The capability is kept and tested because the
+			// underlying problem it addresses is real - without it the coalition never names an
+			// offensive objective at all - but shipping it on would be shipping a measured regression.
+			var reconInForce = info.AdvanceOnInferredBase && ShouldAdvanceToFindEnemy(
+				Blackboard.EnemyRegion, (int)coalitionArmy,
+				brain?.Info.CoordinatedAttackMinimum ?? 24,
+				world.WorldTick, enemyBaseSearchStartTick, info.CommandInterval);
+
+			if (reconInForce && !lastReconInForce)
+				CoalitionTelemetry.Log(world,
+					$"Reconnaissance in force: army {(int)coalitionArmy} with no located enemy base, advancing to make contact");
+
+			lastReconInForce = reconInForce;
+
+			if ((wantAttack || reconInForce) && offensiveRegion >= 0)
 			{
 				// Main effort: concentrate the coalition on the single highest-value objective so
 				// effort is not spread evenly across all fronts.
@@ -718,14 +796,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					CoalitionTelemetry.Log(world, scored != null ? $"Main effort set to {scored.Value}" : "Main effort cleared: no scored target");
 				}
 
-				var target = scored ?? RegionCenter(Blackboard.EnemyRegion);
+				var target = scored ?? RegionCenter(offensiveRegion);
 
 				// A decisive edge turns the main effort into a breakthrough; a fair fight stays a
 				// conventional attack. A heavily fortified enemy is besieged instead.
 				var attackType = ratio < 0.5f ? MissionType.Breakthrough : MissionType.Attack;
-				if (Blackboard.Regions[Blackboard.EnemyRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
+				if (Blackboard.Regions[offensiveRegion].Threats[(int)CoalitionCapability.StaticDefense] > 0.7f)
 					attackType = MissionType.Siege;
-				EnsureMission(attackType, 90, target, "Destroy enemy concentration");
+
+				// An inferred objective is advanced on to find and fix the enemy, not besieged: there
+				// is no confirmed fortification to reduce, and the advance is what turns the inference
+				// into an observation.
+				if (Blackboard.EnemyRegionIsInferred)
+					attackType = MissionType.Attack;
+
+				var objective = Blackboard.EnemyRegionIsInferred
+					? "Advance on the inferred enemy base and make contact"
+					: "Destroy enemy concentration";
+				EnsureMission(attackType, 90, target, objective);
 			}
 			else
 				mainEffort = null;
