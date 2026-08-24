@@ -108,7 +108,9 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				}
 
 				var resources = p.PlayerActor.TraitOrDefault<PlayerResources>();
-				return (count, value, resources?.GetCashAndResources() ?? 0, resources?.Earned ?? 0);
+				var stats = p.PlayerActor.TraitOrDefault<PlayerStatistics>();
+				return (count, value, resources?.GetCashAndResources() ?? 0, resources?.Earned ?? 0,
+					stats?.BuildingsKilled ?? 0, stats?.BuildingsDead ?? 0);
 			};
 
 			// Self-play evaluation must be replay-deterministic; the async model consultation (even a
@@ -142,7 +144,8 @@ namespace OpenRA.Mods.Common.UtilityCommands
 				Console.WriteLine($"  {client.Index,2}  {(client.IsBot ? (client.BotEnabled ? "AI enabled" : "AI disabled") : "observer")}  " +
 					$"team {client.Team}  faction {client.Faction}  {client.Name}  kills_cost={client.KillsCost} deaths_cost={client.DeathsCost} " +
 						$"structures={client.StructureCount} structure_value={client.StructureValue} " +
-						$"cash={client.Cash} earned={client.Earned}");
+						$"cash={client.Cash} earned={client.Earned} " +
+						$"buildings_killed={client.BuildingsKilled} buildings_lost={client.BuildingsLost}");
 			if (result.Winners.Count > 0)
 				Console.WriteLine($"Winners: {string.Join(", ", result.Winners)}");
 

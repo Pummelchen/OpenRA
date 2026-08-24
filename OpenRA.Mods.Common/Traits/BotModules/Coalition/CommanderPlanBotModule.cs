@@ -73,6 +73,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		WinProbabilityModel evaluator;
 		PuppetSearch search;
 		EnemyBelief belief;
+		StrategyPosterior posterior;
+		readonly HashSet<string> reportedStructures = [];
 		RegionGraph graph;
 		Map map;
 
@@ -136,6 +138,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return MapRegions.ToCell(map, r.CentreX, r.CentreY);
 			}
 		}
+
+		/// <summary>
+		/// <para>
+		/// How likely the opponent is to be going for air, and how confident that reading is.
+		/// </para>
+		/// <para>
+		/// This is what an opponent model is for. Waiting to see an aircraft before building
+		/// anti-air is waiting until the aircraft is overhead; an airfield sighted at four minutes
+		/// says what is coming at six, and the counter takes time to build. The confidence term
+		/// matters as much as the probability - acting on a posterior that is still nearly uniform
+		/// is just superstition, so both have to clear a bar before anything changes.
+		/// </para>
+		/// </summary>
+		public bool ExpectsEnemyAir =>
+			!IsTraitDisabled && posterior != null
+			&& posterior[OpponentStrategy.Air] > 0.35f
+			&& posterior.Confidence() > 0.15f;
+
+		/// <summary>The opponent model, for telemetry and for the search to plan against.</summary>
+		public StrategyPosterior Opponent => posterior;
 
 		/// <summary>What the plan wants done, for the executor to translate.</summary>
 		public MacroVerb? Verb => Driving ? Current.Objective.Verb : null;
@@ -208,6 +230,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			});
 
 			belief = new EnemyBelief(graph.Regions.Length, r => graph.Neighbours(r));
+			posterior = new StrategyPosterior();
 
 			CoalitionTelemetry.Log(world,
 				$"Commander plan: {graph.Regions.Length} regions, {graph.Chokepoints.Length} chokepoints, " +
@@ -235,6 +258,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				belief.Observe(region, state.Enemy.ForcesIn(region), tick, state.Enemy.StructuresIn(region));
 			}
 
+			ObserveOpponentTells(self, tick);
+
 			// An opponent exists whether or not it has been seen, and it has to be somewhere nobody
 			// has looked. This is a prior, not knowledge: it makes no claim about where they are
 			// beyond "not where we have already looked", and it shrinks as the map is uncovered.
@@ -255,6 +280,46 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// every position at 0.92 while never planning an attack.
 			peakOwnBase = Math.Max(peakOwnBase, state.Self.BaseIntegrity);
 			belief.AssumeUnseenStructures(peakOwnBase * info.UnseenEnemyFraction, tick, info.StaleVisibilityTicks);
+		}
+
+		/// <summary>
+		/// Feeds the opponent model. Each enemy structure type counts once - seeing the same airfield
+		/// twenty times is one piece of evidence, not twenty, and treating it as twenty would drive
+		/// the posterior to certainty on a single observation.
+		/// </summary>
+		void ObserveOpponentTells(Player self, int tick)
+		{
+			foreach (var actor in self.World.ActorsHavingTrait<Building>())
+			{
+				if (actor.Owner == null || actor.IsDead || !actor.IsInWorld
+					|| actor.Owner == self || actor.Owner.IsAlliedWith(self) || actor.Owner.NonCombatant)
+					continue;
+
+				if (!self.Shroud.IsVisible(actor.Location) || !reportedStructures.Add(actor.Info.Name))
+					continue;
+
+				posterior.Observe(StrategyPosterior.StructureLikelihood(CategoryOf(actor.Info.Name)));
+
+				var (best, probability) = posterior.Best();
+				CoalitionTelemetry.Log(self.World,
+					$"Opponent tell: saw {actor.Info.Name} - now {best.ToString().ToLowerInvariant()} " +
+					$"at {probability:P0} (confidence {posterior.Confidence():P0})");
+			}
+		}
+
+		/// <summary>Maps an actor name to the tell it represents, from the mod's own naming.</summary>
+		static string CategoryOf(string name)
+		{
+			return name switch
+			{
+				"barr" or "tent" or "kenn" => "barracks",
+				"proc" => "refinery",
+				"pbox" or "hbox" or "gun" or "ftur" or "tsla" or "agun" or "sam" => "defence",
+				"dome" or "atek" or "stek" or "fix" => "tech",
+				"afld" or "hpad" or "afld.ukraine" => "airfield",
+				"spen" or "syrd" => "shipyard",
+				_ => "unknown",
+			};
 		}
 
 		void ReviewAndPlan(World world, AbstractState state)

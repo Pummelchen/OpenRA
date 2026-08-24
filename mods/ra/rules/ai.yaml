@@ -665,6 +665,12 @@ Player:
 		# refineries bought nothing: income was never the constraint, throughput was. Dropping
 		# proc from 30 to 10 and raising weap/barr/tent took the exchange ratio from 1.29 to
 		# 1.90, structures from 71 to 94, and banked cash from 74% of earnings to 66%.
+		# Static defence at 7 rather than the stock 3. Ground truth over six seeds showed the
+		# commander winning the unit exchange 1.64 to 1 while LOSING the building exchange 41
+		# destroyed against 58 lost - it won field battles while its base was ground down behind
+		# it. At 7 the building trade flips to 41 against 37 and the unit exchange rises to 1.81.
+		# There is a clear optimum: at 12 it turtles, starves production, and collapses to 23
+		# destroyed against 84 lost with a 1.37 exchange and an outright loss.
 		BuildingFractions:
 			powr: 40
 			proc: 10
@@ -678,10 +684,10 @@ Player:
 			syrd: 1
 			afld: 1
 			afld.ukraine: 1
-			pbox: 9
-			gun: 9
-			ftur: 10
-			tsla: 5
+			pbox: 7
+			gun: 7
+			ftur: 7
+			tsla: 7
 			gap: 2
 			fix: 1
 			agun: 5

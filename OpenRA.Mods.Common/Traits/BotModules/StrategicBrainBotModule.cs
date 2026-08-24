@@ -925,9 +925,17 @@ namespace OpenRA.Mods.Common.Traits
 			if (Info.PromoteSupportUnits && ArmyComposition.ShouldProduceArtillery(ownArtillery, ownArmor))
 				supportFirst.AddRange(Info.ArmyPriority.Where(ArtilleryTypes.Contains));
 
-			// Anti-air is promoted only once enemy air actually exists. Before that the escort
-			// requirement is speculative, and promoting it costs armour the coalition does need.
-			if (Info.PromoteSupportUnits && enemyAirSpotted
+			// Anti-air is promoted once enemy air exists - or once the opponent model expects it.
+			// Waiting for the first aircraft means waiting until it is overhead, and anti-air takes
+			// time to build; an airfield sighted at four minutes says what is coming at six. The
+			// model has to be both confident and pointing at air before it counts, so a nearly
+			// uniform posterior changes nothing.
+			planner ??= Player.PlayerActor.TraitsImplementing<BotModules.Coalition.CommanderPlanBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+
+			var expectAir = enemyAirSpotted || (planner?.ExpectsEnemyAir ?? false);
+
+			if (Info.PromoteSupportUnits && expectAir
 				&& ArmyComposition.ShouldProduceAntiAir(ownAntiAir, ownArmor, true))
 				supportFirst.AddRange(Info.AntiAirUnits.Where(u => !Info.InfantryUnitTypes.Contains(u)));
 

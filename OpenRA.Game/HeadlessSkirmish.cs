@@ -104,7 +104,7 @@ namespace OpenRA
 		/// claiming to measure destruction. The harness sits outside the fog and can simply count.
 		/// </para>
 		/// </summary>
-		public static Func<Player, (int StructureCount, int StructureValue, int Cash, int Earned)> CaptureStructures;
+		public static Func<Player, (int StructureCount, int StructureValue, int Cash, int Earned, int BuildingsKilled, int BuildingsLost)> CaptureStructures;
 
 		/// <summary>One lobby client entry as reported by a finished simulation.</summary>
 		public sealed class ClientSummary
@@ -128,6 +128,10 @@ namespace OpenRA
 			/// <summary>Cash still banked at the end, and total ever earned.</summary>
 			public int Cash;
 			public int Earned;
+
+			/// <summary>Enemy buildings destroyed, and own buildings lost. Ground truth, not fog-limited.</summary>
+			public int BuildingsKilled;
+			public int BuildingsLost;
 		}
 
 		/// <summary>Outcome summary of a headless simulation.</summary>
@@ -351,7 +355,7 @@ namespace OpenRA
 			{
 				var player = world.Players.FirstOrDefault(p => p.ClientIndex == c.Index);
 				var (killsCost, deathsCost) = player != null && CaptureKillCosts != null ? CaptureKillCosts(player) : default;
-				var (structureCount, structureValue, cash, earned) = player != null && CaptureStructures != null ? CaptureStructures(player) : default;
+				var (structureCount, structureValue, cash, earned, buildingsKilled, buildingsLost) = player != null && CaptureStructures != null ? CaptureStructures(player) : default;
 				result.Clients.Add(new ClientSummary
 				{
 					Index = c.Index,
@@ -366,6 +370,8 @@ namespace OpenRA
 					StructureValue = structureValue,
 					Cash = cash,
 					Earned = earned,
+					BuildingsKilled = buildingsKilled,
+					BuildingsLost = buildingsLost,
 					DeathsCost = deathsCost
 				});
 			}

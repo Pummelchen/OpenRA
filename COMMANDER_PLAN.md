@@ -184,9 +184,9 @@ seeds against Rush on shattered-mountain.
 | A — Spend | Banked cash below a third of earnings | **Not met.** 74.3% → 67.6%. Real progress, gate missed. |
 | B — Objective accounting | Success rate not 100%; destroyed credits recorded | **Met.** Assaults now require holding the ground; ground-truth structure/cash reporting added to the harness. |
 | C — Find | Enemy base located in most matches | **Partially.** Scouting is belief-directed and now probes the interior instead of map edges; the located-base rate is still not counted directly. |
-| D — Destroy | Enemy economic damage above zero in most matches | **Not met.** The forward model can now represent demolition; the game number has not moved. |
+| D — Destroy | Enemy structures destroyed, measured outside the fog | **Met.** 41 destroyed against 37 lost over six seeds - the building trade is now favourable, where it was 41 against 58. The bot's own economic-damage metric read zero throughout, because it only counts enemy economy it has *observed*. |
 | E — Choose | Mirror decisiveness beats 9 of 24 | **Not met.** 7 of 24 with the searched planner, 8 of 24 without it. The planner ships disabled. |
-| F — Adapt | Each component wired or deleted | **Not started.** `StrategyPosterior`, `RegretMatching` and `BuildOrderSearch` remain referenced by nothing. |
+| F — Adapt | Each component wired or deleted | **Done.** `StrategyPosterior` wired to counter-production; `RegretMatching` and `BuildOrderSearch` deleted at 6bcef9f. |
 
 What did move, on three seeds against Rush: the exchange ratio from 1.29 to 1.72, structures from
 71 to 74, and banked cash from 74.3% to 67.6% — by taking investment out of an economy the
@@ -196,6 +196,23 @@ What did not move, through every change tried: **mirror decisiveness, which has 
 9 of 24 for the whole rebuild.** That is the number the commander is ultimately judged on, and
 nothing built so far has improved it. It is stated here rather than buried because the first plan's
 failure was precisely that its phases could all report success while this number stood still.
+
+### What target selection taught us
+
+Two attempts to make assaults finish an opponent were measured and rejected, and both are worth
+recording because the reasoning sounded right in each case.
+
+The construction yard was scoring *below a refinery* - economy is weighted x3 and production x2, so
+`proc` came to 30 against `fact`'s 20 - and over 90,000 ticks on shattered-mountain/808 the
+commander destroyed **87 enemy buildings for the loss of 2 and still could not end the match**,
+because the opponent rebuilt behind the yard indefinitely. Raising `fact` to the top of the list
+made things distinctly worse: 41 buildings destroyed fell to 15, losses rose from 37 to 46, and
+three long games that had been a dominant stalemate and two losses became three losses.
+
+The lesson is that the construction yard is the best target only *if it can actually be taken*.
+Ranking it first sends the army into the most heavily defended point of the base, where it dies -
+which is what `SiegeTargeting.RequiredLocalSuperiority` exists to prevent and what a target list
+alone cannot express. The right fix is conditional on local superiority, not a constant.
 
 ### The constraint behind Phase A
 
