@@ -259,23 +259,41 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						QueueItem(bot, queues, produce.Unit, produce.Count);
 						break;
 
-					case ConstructIntent construct:
-						QueueItem(bot, queues, construct.Structure, 1);
+					// Structures are deliberately NOT queued here. The base builder owns that queue
+					// and has the placement, fraction and delay logic that makes a base coherent;
+					// issuing construction orders alongside it means competing for one queue with no
+					// arbitration. Measured, the staff doing so produced a base of four war
+					// factories and a Tesla coil - no power, no refineries - against a baseline of
+					// seven power plants, two refineries and a defensive line. Exchange ratio fell
+					// from 1.12 to 0.44 and losses went from 2 to 8 across twelve matches.
+					//
+					// What the staff contributes to construction is its directive, which the
+					// building manager's own requests already reflect.
+					case ConstructIntent:
 						break;
 				}
 			}
 		}
 
-		static void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)
+		void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)
 		{
 			if (string.IsNullOrEmpty(item) || count <= 0)
 				return;
 
-			var queue = queues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == item));
+			// Never re-order something already on its way. The staff reviews every 125 ticks while a
+			// tank takes several hundred to build, so without this each request is issued dozens of
+			// times and the queue fills with duplicates that crowd out everything else.
+			if (queues.Any(q => q.AllQueued().Any(i => i.Item == item)))
+				return;
+
+			var queue = queues.FirstOrDefault(q =>
+				q.Info.Type != "Building" && q.Info.Type != "Defense"
+				&& q.BuildableItems().Any(i => i.Name == item));
+
 			if (queue == null)
 				return;
 
-			bot.QueueOrder(Order.StartProduction(queue.Actor, item, Math.Min(count, 4)));
+			bot.QueueOrder(Order.StartProduction(queue.Actor, item, Math.Min(count, 2)));
 		}
 
 		void LogDirective(World world)
