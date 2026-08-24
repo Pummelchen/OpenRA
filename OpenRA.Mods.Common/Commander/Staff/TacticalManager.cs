@@ -142,7 +142,14 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// 3. Not knowing where they are is itself a decision the chief must make, not a state to
 			//    drift in. A commander that attacks without finding the base first takes empty
 			//    ground, which this one did for entire matches.
-			var target = tactics?.RegionOfInterest ?? intel?.RegionOfInterest;
+			// The records keeper is consulted last and matters most when the other two have nothing:
+			// they read the live picture, which goes blank the moment the commander loses sight of
+			// a base, while the database still holds where that base was and how long ago anyone
+			// confirmed it. Without it the chief answers "no objective identified" and falls back to
+			// probing ground it has already taken - which it did while holding a seven-to-one
+			// economic advantage over an opponent whose base it had already found.
+			var records = context.From("records");
+			var target = tactics?.RegionOfInterest ?? intel?.RegionOfInterest ?? records?.RegionOfInterest;
 			if (target == null)
 			{
 				return new Directive

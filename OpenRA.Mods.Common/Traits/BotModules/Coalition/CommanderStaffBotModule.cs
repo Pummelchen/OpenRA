@@ -43,6 +43,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Log every directive the chief issues.")]
 		public readonly bool LogDirectives = true;
 
+		[Desc("Ticks between one-line summaries of the shared database. 2500 is roughly every 100 seconds.")]
+		public readonly int DatabaseReportInterval = 2500;
+
 		public override object Create(ActorInitializer init) { return new CommanderStaffBotModule(this); }
 	}
 
@@ -55,6 +58,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		ForwardModel model;
 		EnemyBelief belief;
 		StrategyPosterior posterior;
+
+		/// <summary>Shared per-match memory. Written here on the game thread, read by managers while they think.</summary>
+		readonly WorldDatabase database = new();
+		readonly HashSet<uint> seenThisSweep = [];
 		RegionGraph graph;
 		Map map;
 		Player owner;
@@ -118,11 +125,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (!leader || extractor == null || world.WorldTick % info.CycleInterval != 0)
 				return;
 
+			UpdateDatabase(bot.Player, world);
+
 			var snapshot = BuildSnapshot(bot.Player, world);
 			var intents = staff.Think(snapshot);
 
 			if (info.LogDirectives)
 				LogDirective(world);
+
+			if (world.WorldTick % info.DatabaseReportInterval == 0)
+				CoalitionTelemetry.Log(world, database.Summary());
 
 			if (info.Enabled)
 				Apply(bot, intents);
@@ -172,6 +184,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			staff.Add(new ScoutingManager());
 			staff.Add(new EconomyManager());
 			staff.Add(new BuildingProductionManager());
+			staff.Add(new RecordsManager());
+			staff.Add(new UpkeepManager());
 			staff.Add(new UnitProductionManager());
 			staff.Add(new TacticalAnalysisManager());
 			staff.Add(new DefenceManager());
@@ -190,6 +204,96 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			staff.Add(new ForceArmManager { Name = "naval-force", Order = 72, Role = CombatRole.Naval });
 
 			staff.Add(new TacticalManager());
+		}
+
+		/// <summary>
+		/// <para>
+		/// Walks what the commander can currently see and folds it into the database, then ages
+		/// everything it could not see rather than forgetting it.
+		/// </para>
+		/// <para>
+		/// Fog is respected exactly as it is everywhere else in this commander: an enemy actor is
+		/// recorded only while an allied player can actually see the cell it stands on. What the
+		/// database adds is memory of what was seen and WHEN, which is not the same as vision and is
+		/// not cheating - it is the difference between a commander that forgets an enemy base the
+		/// moment its scout dies and one that remembers where the base was and how long ago it
+		/// looked.
+		/// </para>
+		/// <para>
+		/// Runs on the game thread, before the staff thinks, so managers only ever read a database
+		/// that nothing is writing to.
+		/// </para>
+		/// </summary>
+		void UpdateDatabase(Player player, World world)
+		{
+			var tick = world.WorldTick;
+			seenThisSweep.Clear();
+
+			foreach (var actor in world.ActorsHavingTrait<IOccupySpace>())
+			{
+				if (actor.IsDead || !actor.IsInWorld || actor.Owner == null || actor.Owner.NonCombatant)
+					continue;
+
+				Allegiance side;
+				if (actor.Owner == player)
+					side = Allegiance.Self;
+				else if (actor.Owner.IsAlliedWith(player))
+					side = Allegiance.Ally;
+				else
+				{
+					// Ours and our allies' actors need no line of sight; theirs do.
+					if (!player.Shroud.IsVisible(actor.Location))
+						continue;
+
+					side = Allegiance.Enemy;
+				}
+
+				var health = actor.TraitOrDefault<Health>();
+				var fraction = health == null || health.MaxHP <= 0 ? 1f : health.HP / (float)health.MaxHP;
+
+				var region = -1;
+				if (graph != null && MapRegions.ToGrid(map, actor.Location, out var gx, out var gy))
+					region = graph.RegionAt(gx, gy);
+
+				seenThisSweep.Add(actor.ActorID);
+				database.Observe(actor.ActorID, actor.Info.Name, actor.Info.HasTraitInfo<BuildingInfo>(),
+					side, actor.Location, fraction, tick, "staff", region);
+
+				// A unit of ours that is carrying out an order is being looked after by whoever gave
+				// it; one standing still is not, whatever anybody's report says. This is what makes
+				// "unattended" a measured property of the world rather than a claim a manager can
+				// make about its own diligence.
+				//
+				// Buildings are deliberately NOT marked here. Marking healthy ones every sweep was
+				// tried and is worse than useless: the moment one takes damage it still reads as
+				// freshly attended, so the retry gate suppresses the repair that the damage was
+				// supposed to trigger - measured as two damaged buildings and zero repairs ordered.
+				// For a building, attendance means somebody repaired it.
+				if (side == Allegiance.Self && !actor.Info.HasTraitInfo<BuildingInfo>() && !actor.IsIdle)
+					database.MarkAttended(actor.ActorID, "field", tick);
+			}
+
+			// Anything previously known and not visible now becomes stale, and anything previously
+			// known that has since died is recorded as destroyed - the one thing the commander can
+			// be certain of, and the thing that tells it whether a razed structure comes back.
+			foreach (var entry in database.All)
+			{
+				if (seenThisSweep.Contains(entry.ActorId) || entry.Status == RecordStatus.Destroyed)
+					continue;
+
+				var actor = world.GetActorById(entry.ActorId);
+				if (actor == null || actor.IsDead)
+				{
+					// Only a death we could actually have witnessed. Something that went out of
+					// sight and later died unobserved is unknown, not confirmed dead - and treating
+					// the two alike is how a commander decides a base is gone because it stopped
+					// watching it.
+					if (entry.Side != Allegiance.Enemy || player.Shroud.IsVisible(entry.LastKnownCell))
+						database.RecordDestroyed(entry.ActorId, tick);
+				}
+			}
+
+			database.AgeUnseen(tick, seenThisSweep.Contains);
 		}
 
 		CommanderSnapshot BuildSnapshot(Player player, World world)
@@ -237,6 +341,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				Queues = queues,
 				Structures = structures,
 				Units = units,
+				Database = database,
 			};
 		}
 
@@ -291,10 +396,43 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					//
 					// What the staff contributes to construction is its directive, which the
 					// building manager's own requests already reflect.
+					case RepairIntent repair:
+						Repair(bot, repair);
+						break;
+
 					case ConstructIntent:
 						break;
 				}
 			}
+		}
+
+		/// <summary>
+		/// Puts a damaged building of ours back into repair, and records that somebody attended to
+		/// it so the same building is not offered up again on the next cycle.
+		/// </summary>
+		/// <remarks>
+		/// This is not duplicating the engine's repair module. That one is an
+		/// <c>IBotRespondToAttack</c> handler: it repairs while an attack notification is arriving
+		/// and does nothing at all otherwise, so a building damaged in a raid that ends is never
+		/// repaired. What is missing is not a repair order, it is anybody whose job is to notice.
+		/// </remarks>
+		void Repair(IBot bot, RepairIntent intent)
+		{
+			var actor = bot.Player.World.GetActorById(intent.ActorId);
+			if (actor == null || actor.IsDead || !actor.IsInWorld || actor.Owner != bot.Player)
+				return;
+
+			var repairable = actor.TraitOrDefault<RepairableBuilding>();
+			if (repairable == null || repairable.RepairActive)
+				return;
+
+			var health = actor.TraitOrDefault<Health>();
+			if (health == null || health.DamageState <= DamageState.Undamaged || health.DamageState == DamageState.Dead)
+				return;
+
+			bot.QueueOrder(new Order("RepairBuilding", bot.Player.PlayerActor, Target.FromActor(actor), false));
+			database.MarkAttended(intent.ActorId, "upkeep", bot.Player.World.WorldTick);
+			database.RecordOrder(intent.ActorId, "RepairBuilding", "upkeep", bot.Player.World.WorldTick);
 		}
 
 		void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)

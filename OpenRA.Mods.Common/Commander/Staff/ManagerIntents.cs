@@ -63,6 +63,27 @@ namespace OpenRA.Mods.Common.Commander.Staff
 	}
 
 	/// <summary>An assessment, carrying no action. Recorded so a decision can be explained later.</summary>
+	/// <summary>
+	/// Repair one of our own buildings.
+	/// </summary>
+	/// <remarks>
+	/// Structures are the most expensive things the commander owns and the only ones it cannot
+	/// replace under fire, so leaving them damaged is the cheapest loss it takes. The engine's own
+	/// repair module only ever runs from a response-to-attack notification, so a building damaged in
+	/// a raid that ends is never repaired at all - it simply stays broken for the rest of the match,
+	/// supplying less power or fewer units the whole time, while the commander sits on six figures
+	/// of unspent credits.
+	/// </remarks>
+	public sealed class RepairIntent : IManagerIntent
+	{
+		public uint ActorId { get; init; }
+		public string Structure { get; init; } = "";
+		public float HealthFraction { get; init; }
+		public string Reason { get; init; } = "";
+
+		public string Describe() => $"repair {Structure}#{ActorId} at {HealthFraction:P0}: {Reason}";
+	}
+
 	public sealed class AssessmentIntent : IManagerIntent
 	{
 		public string Topic { get; init; } = "";

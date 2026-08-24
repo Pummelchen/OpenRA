@@ -63,6 +63,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public IReadOnlyDictionary<string, int> Units { get; init; } =
 			new Dictionary<string, int>();
 
+		/// <summary>
+		/// Everything the commander has seen this match: units and structures on both sides, how
+		/// long ago each was actually observed, who looked, and what order was last given for it.
+		/// Read-only to managers, which is what makes it safe to read while they think in parallel.
+		/// </summary>
+		public WorldDatabase Database { get; init; }
+
 		/// <summary>Fraction of everything ever earned that is still sitting in the bank.</summary>
 		public float BankedFraction => Earned <= 0 ? 0f : Math.Clamp(Cash / (float)Earned, 0f, 1f);
 
