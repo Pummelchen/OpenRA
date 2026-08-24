@@ -214,6 +214,32 @@ Ranking it first sends the army into the most heavily defended point of the base
 which is what `SiegeTargeting.RequiredLocalSuperiority` exists to prevent and what a target list
 alone cannot express. The right fix is conditional on local superiority, not a constant.
 
+### The scorecard, against every scripted opponent
+
+Everything above was tuned against Rush, and measuring against the other three showed how badly
+that misled. Two seeds each on shattered-mountain, with the shipped configuration:
+
+| Opponent | Record | Exchange | Enemy base located |
+|---|---|---|---|
+| rush | 0W 0L | 2.12 | 1 of 3 |
+| normal | 0W 0L | 1.23 | 3 of 3 |
+| turtle | 0W 0L | 0.85 | 3 of 3 |
+| **naval** | **0W 2L** | **0.17** | 2 of 3 |
+
+**Naval is a catastrophe and it is not new.** The same matchup lost 3 of 3 before any of this
+phase's work, so it is a longstanding weakness rather than a regression - but the Rush-tuned
+configuration made the exchange ratio worse, 0.47 to 0.17.
+
+The cause is specific and it is an intelligence failure, not a combat one. The naval bot builds
+helipads and attacks with aircraft; our base is destroyed by 16,000 ticks and the telemetry reads
+`Enemy composition: armor=False air=False` throughout. **We are killed by an enemy we never
+observe**, so anti-air is never promoted, the counter is never built, and the fight is decided
+before it is understood. It loses on every map tried, so it is not terrain.
+
+Two configurations were compared across all four opponents rather than against Rush alone, and they
+came out equal - exchange 1.24 against 1.23, same record. The shipped one is kept because it fields
+larger armies for the same ratio and honours the power-headroom requirement.
+
 ### Two more measured rejections
 
 Both sounded right and both were wrong, which is why they are recorded rather than quietly dropped.
