@@ -46,6 +46,17 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Preferred unit production order. Earlier entries are produced first when buildable.")]
 		public readonly string[] ArmyPriority = [];
 
+		[Desc("Units built when the enemy is seen to hold static defence. Artillery outranges a",
+			"fortification, which is the only cheap way through a defended perimeter - and is",
+			"exactly the wrong thing to lead with in a field battle, which is why this list is",
+			"separate from AntiArmorUnits rather than merged into it.")]
+		public readonly FrozenSet<string> AntiDefenceUnits =
+			new HashSet<string> { "v2rl", "arty", "qtnk", "dtrk" }.ToFrozenSet();
+
+		[Desc("Enemy structures that count as fortifications for the purpose of the list above.")]
+		public readonly FrozenSet<string> EnemyDefenceTypes =
+			new HashSet<string> { "pbox", "hbox", "gun", "ftur", "tsla", "agun", "sam", "gap" }.ToFrozenSet();
+
 		[Desc("Units that are prioritized when enemy air units are spotted.")]
 		public readonly FrozenSet<string> AntiAirUnits = [];
 
@@ -330,6 +341,9 @@ namespace OpenRA.Mods.Common.Traits
 
 		int enemyArmyCount;
 		bool enemyAirSpotted;
+
+		/// <summary>Whether the enemy has been seen to hold fortifications worth a siege train.</summary>
+		bool enemyDefenceSpotted;
 		bool enemyArmorSpotted;
 		bool enemyInfantrySpotted;
 		string lastComposition;
@@ -520,6 +534,7 @@ namespace OpenRA.Mods.Common.Traits
 
 			enemyArmyCount = sightings.Values.Count(IsArmy);
 			enemyAirSpotted = sightings.Values.Any(s => Info.AirUnitTypes.Contains(s.Type));
+			enemyDefenceSpotted = sightings.Values.Any(s => Info.EnemyDefenceTypes.Contains(s.Type));
 			enemyArmorSpotted = sightings.Values.Any(s => Info.ArmorUnitTypes.Contains(s.Type));
 			enemyInfantrySpotted = sightings.Values.Any(s => Info.InfantryUnitTypes.Contains(s.Type));
 			enemyBaseEverLocated |= sightings.Values.Any(s => s.IsStructure);
@@ -739,8 +754,29 @@ namespace OpenRA.Mods.Common.Traits
 				pickOrder.AddRange(produceBoost);
 			if (teamRole == "naval" && coalitionHasWater)
 				pickOrder.AddRange(Info.NavalPriority);
+			// Counters are ordered by which threat actually dominates, not by a fixed hierarchy.
+			// Only the first buildable entry per queue is ever picked, so whatever leads this list
+			// is what gets built - and a fixed order meant a turtle holding fifteen fortifications
+			// and two helipads was answered with anti-air, because air came first by convention,
+			// leaving the siege train fifth and unreachable.
+			var fortifications = sightings.Values.Count(v => Info.EnemyDefenceTypes.Contains(v.Type));
+			var aircraft = sightings.Values.Count(v => Info.AirUnitTypes.Contains(v.Type));
+			var besiege = enemyDefenceSpotted && fortifications > aircraft;
+
+			if (besiege)
+				pickOrder.AddRange(Info.AntiDefenceUnits);
+
 			if (enemyAirSpotted)
 				pickOrder.AddRange(Info.AntiAirUnits);
+			// Fortifications need a different answer from tanks, and until now there was no branch
+			// for them at all - the order adapted to air, armour and infantry and was silent about
+			// static defence. Measured, leading the anti-armour list with artillery took the turtle
+			// matchup from 0.42 to 0.60 and cost the rush matchup 1.78 to 1.11, because artillery
+			// answers a fortification and loses a field battle. Making it conditional is the point:
+			// build the siege train when there is something to besiege.
+			if (enemyDefenceSpotted && !besiege)
+				pickOrder.AddRange(Info.AntiDefenceUnits);
+
 			if (enemyArmorSpotted)
 				pickOrder.AddRange(Info.AntiArmorUnits);
 			if (enemyInfantrySpotted)
