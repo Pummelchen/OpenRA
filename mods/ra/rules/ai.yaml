@@ -2,6 +2,167 @@ Player:
 	# Every bot - the coalition commander and the scripted opponents alike - opens with this much
 	# capital. Bot-versus-bot benchmarks therefore stay a like-for-like comparison; against a human
 	# it is an advantage and is reported as one.
+	# EVERY faction unlocked for the coalition bot.
+	#
+	# Buildability in this mod is gated by faction tokens - a Soviet player holds
+	# structures.soviet and so may build Soviet things, and cannot build Allied ones. These
+	# traits hand the bot all of them at once, so it may build anything in the game from any
+	# country, secret and special units included, whatever faction it happens to be playing.
+	#
+	# Granted on the player actor rather than through DeveloperMode.AllTech, which is a cheat
+	# switch tied to the lobby: this is a permanent property of the bot, it still has to build
+	# the prerequisite STRUCTURES for anything it wants, and it still pays full price. What it
+	# removes is only the accident of which country it was assigned.
+	# 46 tokens, generated from every ProvidesPrerequisite in the mod rules.
+	ProvidesPrerequisite@allfactionsaircraftallies:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.allies
+	ProvidesPrerequisite@allfactionsaircraftalliesvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.alliesvanilla
+	ProvidesPrerequisite@allfactionsaircraftengland:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.england
+	ProvidesPrerequisite@allfactionsaircraftfrance:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.france
+	ProvidesPrerequisite@allfactionsaircraftgermany:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.germany
+	ProvidesPrerequisite@allfactionsaircraftrussia:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.russia
+	ProvidesPrerequisite@allfactionsaircraftsoviet:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.soviet
+	ProvidesPrerequisite@allfactionsaircraftsovietvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.sovietvanilla
+	ProvidesPrerequisite@allfactionsaircraftukraine:
+		RequiresCondition: enable-ai
+		Prerequisite: aircraft.ukraine
+	ProvidesPrerequisite@allfactionsinfantryallies:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.allies
+	ProvidesPrerequisite@allfactionsinfantryalliesvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.alliesvanilla
+	ProvidesPrerequisite@allfactionsinfantryengland:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.england
+	ProvidesPrerequisite@allfactionsinfantryfrance:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.france
+	ProvidesPrerequisite@allfactionsinfantrygermany:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.germany
+	ProvidesPrerequisite@allfactionsinfantryrussia:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.russia
+	ProvidesPrerequisite@allfactionsinfantrysoviet:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.soviet
+	ProvidesPrerequisite@allfactionsinfantrysovietvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.sovietvanilla
+	ProvidesPrerequisite@allfactionsinfantryukraine:
+		RequiresCondition: enable-ai
+		Prerequisite: infantry.ukraine
+	ProvidesPrerequisite@allfactionspdoxgermany:
+		RequiresCondition: enable-ai
+		Prerequisite: pdox.germany
+	ProvidesPrerequisite@allfactionsshipsallies:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.allies
+	ProvidesPrerequisite@allfactionsshipsalliesvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.alliesvanilla
+	ProvidesPrerequisite@allfactionsshipsengland:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.england
+	ProvidesPrerequisite@allfactionsshipsfrance:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.france
+	ProvidesPrerequisite@allfactionsshipsgermany:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.germany
+	ProvidesPrerequisite@allfactionsshipsrussia:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.russia
+	ProvidesPrerequisite@allfactionsshipssoviet:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.soviet
+	ProvidesPrerequisite@allfactionsshipssovietvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.sovietvanilla
+	ProvidesPrerequisite@allfactionsshipsukraine:
+		RequiresCondition: enable-ai
+		Prerequisite: ships.ukraine
+	ProvidesPrerequisite@allfactionsstructuresallies:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.allies
+	ProvidesPrerequisite@allfactionsstructuresalliesvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.alliesvanilla
+	ProvidesPrerequisite@allfactionsstructuresengland:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.england
+	ProvidesPrerequisite@allfactionsstructuresfrance:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.france
+	ProvidesPrerequisite@allfactionsstructuresgermany:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.germany
+	ProvidesPrerequisite@allfactionsstructuresrussia:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.russia
+	ProvidesPrerequisite@allfactionsstructuressoviet:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.soviet
+	ProvidesPrerequisite@allfactionsstructuressovietvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.sovietvanilla
+	ProvidesPrerequisite@allfactionsstructuresukraine:
+		RequiresCondition: enable-ai
+		Prerequisite: structures.ukraine
+	ProvidesPrerequisite@allfactionsvehiclesallies:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.allies
+	ProvidesPrerequisite@allfactionsvehiclesalliesvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.alliesvanilla
+	ProvidesPrerequisite@allfactionsvehiclesengland:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.england
+	ProvidesPrerequisite@allfactionsvehiclesfrance:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.france
+	ProvidesPrerequisite@allfactionsvehiclesgermany:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.germany
+	ProvidesPrerequisite@allfactionsvehiclesrussia:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.russia
+	ProvidesPrerequisite@allfactionsvehiclessoviet:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.soviet
+	ProvidesPrerequisite@allfactionsvehiclessovietvanilla:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.sovietvanilla
+	ProvidesPrerequisite@allfactionsvehiclesukraine:
+		RequiresCondition: enable-ai
+		Prerequisite: vehicles.ukraine
+	# The campaign and secret units. Everything gated behind "~disabled" is hidden from skirmish
+	# because nothing in the mod ever provides that prerequisite - the giant ants from "It Came From
+	# Red Alert", the Hind, and the campaign variants of FACT and TRUK. Providing it to the bot and
+	# to nobody else unlocks exactly that set.
+	#
+	# The ants are the reason to be careful with this: WarriorAnt costs 300 credits and carries
+	# 12,500 hit points, against a Heavy Tank's ~1,150 for ~400. They are buildable from the infantry
+	# queue, which is the queue this commander has been leaving idle all along.
+	ProvidesPrerequisite@allfactionsdisabled:
+		RequiresCondition: enable-ai
+		Prerequisite: disabled
 	BotStartingCash:
 		Amount: 20000
 	ModularBot@RushAI:
@@ -728,7 +889,19 @@ Player:
 		TacticalOrderRefreshTicks: 75
 		TacticalAirDangerRadius: 8
 		CounterPursuitCells: 30
-		ArmyPriority: 2tnk, 3tnk, 4tnk, e1, e3, ttnk, v2rl, heli, mig, jeep, arty
+		# Every faction and every unlocked unit, ordered by what it is worth rather than by
+		# which country it came from. The commander now holds all faction prerequisites, so
+		# Soviet and Allied hardware sit in one list.
+		#
+		# The ordering is deliberate and it addresses a measured defect: the vehicle queue was
+		# producing 600-credit flak trucks while 200,000 credits sat in the bank, because the
+		# cheap thing came first in this list. Expensive units both spend the surplus and win
+		# the fight, so the heavy armour leads.
+		#
+		# warriorant is here on its numbers, not for novelty: 300 credits for 12,500 hit
+		# points, against a Mammoth at 2,000 for a fraction of that, out of the infantry queue
+		# this commander has been leaving idle.
+		ArmyPriority: warriorant, fireant, 4tnk, qtnk, ttnk, ctnk, 3tnk, shok, 2tnk, dtrk, v2rl, arty, mig, hind, 1tnk, e3, e1, jeep, scoutant
 		NavalPriority: ss, msub, dd, ca, pt, lst
 		ReserveFraction: 4
 		FeintFraction: 6
@@ -743,9 +916,14 @@ Player:
 		PrerequisiteArmyThreshold: 10
 		ExpansionUnitTypes: mcv
 		ExpansionArmyThreshold: 100
-		AntiAirUnits: v2rl, e3, mig
-		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
-		AntiInfantryUnits: ftrk, 1tnk, jeep, e4
+		AntiAirUnits: mig, v2rl, ftrk, e3
+		# These counter lists are consulted BEFORE ArmyPriority, so whatever leads them is what
+		# the vehicle queue actually builds. AntiInfantryUnits led with ftrk at 600 credits,
+		# which is precisely why the queue produced flak trucks all match while the treasury
+		# held 200,000. Both lists now lead with the heaviest thing that does the job, and both
+		# draw on every faction now that the commander is not confined to one.
+		AntiArmorUnits: qtnk, 4tnk, ttnk, ctnk, 3tnk, v2rl, dtrk
+		AntiInfantryUnits: warriorant, 4tnk, shok, ttnk, 3tnk, ftrk, 2tnk, e4
 		AirUnitTypes: mig, yak, heli, hind, mh60, badr.bomber, u2
 		ArmorUnitTypes: 1tnk, 2tnk, 3tnk, 4tnk, ttnk, stnk, apc
 		InfantryUnitTypes: e1, e2, e3, e4, e7, dog, shok
@@ -796,7 +974,12 @@ Player:
 		SupportTypes: harv, mcv
 		SpecialTypes: spy, e6, e7
 		ArmyPriority: 2tnk, 3tnk, 4tnk, e1, e3, ttnk, v2rl, heli, mig, jeep, arty
-		AntiAirUnits: v2rl, e3, mig
-		AntiArmorUnits: 4tnk, ttnk, 3tnk, v2rl
-		AntiInfantryUnits: ftrk, 1tnk, jeep, e4
+		AntiAirUnits: mig, v2rl, ftrk, e3
+		# These counter lists are consulted BEFORE ArmyPriority, so whatever leads them is what
+		# the vehicle queue actually builds. AntiInfantryUnits led with ftrk at 600 credits,
+		# which is precisely why the queue produced flak trucks all match while the treasury
+		# held 200,000. Both lists now lead with the heaviest thing that does the job, and both
+		# draw on every faction now that the commander is not confined to one.
+		AntiArmorUnits: qtnk, 4tnk, ttnk, ctnk, 3tnk, v2rl, dtrk
+		AntiInfantryUnits: warriorant, 4tnk, shok, ttnk, 3tnk, ftrk, 2tnk, e4
 		NavalPriority: ss, msub, dd, ca, pt, lst
