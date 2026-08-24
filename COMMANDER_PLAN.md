@@ -302,7 +302,80 @@ Three separate attempts to close the gap were measured and rejected:
 The honest reading is that the remaining third of the income has nowhere to go under this queue
 model, and that the next real gain is in *what* is built rather than *how much*.
 
-## 7. What carries over unchanged
+## 7. The staff, measured
+
+The staff of specialists under a tactical chief was built, wired, and A/B tested against the
+commander it would replace. Four scripted opponents, three seeds each, twelve matches per
+configuration, identical seeds throughout.
+
+| Configuration | Exchange | Losses |
+|---|---|---|
+| **Baseline — staff off** | **1.12** | 2 |
+| Staff driving, first attempt | 0.44 | 8 |
+| Staff production only | 0.99 | **1** |
+| Chief commanding, region target + reserve | 0.95 | 2 |
+| Chief commanding, target left to existing logic | 0.81 | 3 |
+
+**The staff ships not driving.** No configuration beat the baseline on exchange ratio, and none won
+a single match. That is the finding, and it is not softened by the architecture being cleaner.
+
+What the exercise did produce is a long list of defects that only appeared once the thing ran, and
+a per-opponent shape worth keeping in view: the staff *helps* where the baseline is weakest and
+hurts where it is strongest.
+
+| vs | Baseline | Staff (production only) |
+|---|---|---|
+| rush | 1.78 | 1.20 |
+| normal | 1.11 | 0.99 |
+| turtle | 0.42 | **0.66** |
+| naval | 0.89 (2 losses) | **1.06 (1 loss)** |
+
+### What wiring it found
+
+Nine defects, none of which a design review would have caught, because each manager was correct in
+isolation and the conversation between them was not:
+
+1. **"Not yet" reported as "broken."** Every specialist reported Critical within five seconds - no
+   air force, no war factory, no army - so the chief, which drops everything for a critical report,
+   sat in Recover for whole matches.
+2. **A long estimate read as a long wait.** Five seconds in, the chief announced it had "waited 352s
+   for readiness" and committed a non-existent army. It had been told it *needed* 352 seconds.
+3. **Fixing (2) caused oscillation.** Resetting the wait clock on commitment made the chief assault
+   for one directive period, restart its ninety-second timer, and fall back to pressuring -
+   alternating for the rest of the match.
+4. **Six managers issued production independently**, so production had no owner and they could
+   contradict each other. The same "nobody is responsible" failure the staff exists to end,
+   reproduced inside the staff.
+5. **Fixing (4) silently discarded requests.** Serving only Urgent meant scouting's request for the
+   dogs that find the enemy simply vanished.
+6. **Command was one-way.** Nine of eleven specialists ignored the directive, making the chief an
+   observer with opinions.
+7. **The staff fought the base builder for one queue.** It produced a base of four war factories and
+   a Tesla coil - no power, no refineries - against a baseline of seven power plants, two refineries
+   and a defensive line. Exchange 0.44.
+8. **No duplicate suppression.** Reviewing every 125 ticks while a tank takes several hundred to
+   build meant every request was issued dozens of times.
+9. **A surplus treated as an attack trigger.** Since this commander banks two thirds of its income,
+   the economy reports Surplus almost continuously - so the chief assaulted on nine cycles out of
+   ten and fed its army in piecemeal. Money with nothing to buy is a reason to press, not to charge.
+
+Defects 3, 5 and 9 were introduced by the fixes for 2, 4 and the surplus rule respectively. Three
+of the nine were mine, made while repairing the others.
+
+### What this says about the approach
+
+Two full rebuilds - a layered stack and then a staff - have each been architecturally sound, fully
+tested, and unable to beat a configuration change. The largest measured gains of the whole exercise
+came from four lines of YAML: restoring `BuildingFractions` from 1% to the upstream 30/35%, raising
+static defence from 3% to 7%, unlocking every faction, and leading the counter lists with heavy
+units instead of cheap ones. That last one alone took the worst matchup from a 0.17 exchange ratio
+to 1.13.
+
+The honest reading is that this commander's remaining deficit is not in how it decides. It is in
+what it builds and how much of its income reaches the field, and those live in configuration and in
+the production path - not in the decision layer that two rebuilds have now replaced.
+
+## 8. What carries over unchanged
 
 The mathematics was not the problem, and most of it stands: the region decomposition and its
 chokepoints, the counter-matrix reduction that makes Lanchester legitimate, the measured-and-anchored

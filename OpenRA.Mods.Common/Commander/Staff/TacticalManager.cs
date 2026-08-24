@@ -177,11 +177,19 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			var waitedTooLong = waitedSeconds > MaximumWaitSeconds;
 
-			// A surplus is a fault, not a comfort. If the economy has more than production can
-			// absorb, the extra should be in the field rather than in the bank.
+			// Are we strong enough for this to be an assault rather than a donation? The tactical
+			// analyst reports the force ratio; Strained means outnumbered, and marching an
+			// outnumbered army at a defended objective is how an army is spent rather than used.
+			var outnumbered = tactics?.Readiness is Readiness.Strained or Readiness.Critical;
+
+			// A surplus is a fault, not a comfort - but it is a PRODUCTION fault, and an earlier
+			// version treated it as an attack trigger. Since this commander banks two thirds of its
+			// income the economy reports Surplus almost continuously, so the chief assaulted on nine
+			// cycles out of ten and fed its army in piecemeal. Exchange ratio 0.84 against 1.12 for
+			// doing nothing. Money with nothing to buy is a reason to press, not to charge.
 			var surplus = economy?.Readiness == Readiness.Surplus;
 
-			if (ready || waitedTooLong || (surplus && production?.Readiness != Readiness.Critical))
+			if (!outnumbered && (ready || waitedTooLong))
 			{
 				// The clock is deliberately NOT reset here. It measures how long the chief has
 				// wanted to move and could not, and committing out of impatience does not make the
@@ -209,9 +217,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					ValidUntilTick = until,
 					Rationale = ready
 						? $"army ready, objective R{target}"
-						: waitedTooLong
-							? $"waited {waitedSeconds}s for readiness; committing rather than drifting"
-							: $"economy surplus with nothing to spend it on - commit to R{target}",
+						: $"waited {waitedSeconds}s for readiness; committing rather than drifting",
 				};
 			}
 
@@ -225,7 +231,11 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				ReserveFraction = 0.35f,
 				IssuedTick = snapshot.Tick,
 				ValidUntilTick = until,
-				Rationale = $"ready in {wait}s: pressure R{target} until then",
+				Rationale = outnumbered
+					? $"outnumbered: pressure R{target} rather than feed the army in"
+					: surplus
+						? $"money with nothing to buy: press R{target} while production catches up"
+						: $"ready in {wait}s: pressure R{target} until then",
 			};
 		}
 

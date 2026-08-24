@@ -68,6 +68,28 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The chief's standing orders, for the executing modules to read.</summary>
 		public Directive Directive => staff.Directive;
 
+		/// <summary>
+		/// The map cell the main effort is aimed at, if the chief has named one. Region centres
+		/// rather than exact targets: the chief decides where the effort goes and the execution layer
+		/// decides what to shoot at when it arrives.
+		/// </summary>
+		public CPos? ObjectiveCell => CellOf(staff.Directive.MainEffortRegion);
+
+		/// <summary>Where to make a show of force, if the chief authorised one.</summary>
+		public CPos? FeintCell => CellOf(staff.Directive.FeintRegion);
+
+		CPos? CellOf(int? region)
+		{
+			if (!Driving || graph == null || map == null || region == null)
+				return null;
+
+			if (region.Value < 0 || region.Value >= graph.Regions.Length)
+				return null;
+
+			var r = graph.Regions[region.Value];
+			return MapRegions.ToCell(map, r.CentreX, r.CentreY);
+		}
+
 		/// <summary>Whether the staff is actually driving.</summary>
 		public bool Driving => !IsTraitDisabled && info.Enabled && leader && initialised;
 

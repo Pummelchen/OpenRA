@@ -162,18 +162,39 @@ namespace OpenRA.Test
 			Assert.That(staff.Directive.Rationale, Does.Contain("rather than drifting"));
 		}
 
-		[TestCase(TestName = "A surplus is treated as a fault, not a comfort.")]
-		public void SurplusForcesCommitment()
+		[TestCase(TestName = "A surplus is a production fault, not an attack trigger.")]
+		public void SurplusPressesRatherThanCharges()
 		{
-			// Credits in the bank have never won anything. This commander banked 74% of everything
-			// it earned across a match and lost on structures while doing it.
+			// Credits in the bank have never won anything, and an earlier version of this chief drew
+			// the wrong conclusion from that: it treated a surplus as authorisation to assault. Since
+			// this commander banks roughly two thirds of its income the economy reports Surplus
+			// almost continuously, so it assaulted on nine cycles out of ten and fed its army in
+			// piecemeal - exchange ratio 0.84, against 1.12 for doing nothing at all.
+			//
+			// Money with nothing to buy is a reason to press and to spend, not to charge.
 			var directive = Run(Snapshot(),
 				new ManagerReport { Manager = "economy", Readiness = Readiness.Surplus, Headline = "74% unspent" },
 				new ManagerReport { Manager = "unit-production", Readiness = Readiness.Strained, ReadyInSeconds = 30 },
 				new ManagerReport { Manager = "tactical-analysis", Readiness = Readiness.Healthy, RegionOfInterest = 5 });
 
-			Assert.That(directive.Stance, Is.EqualTo(Stance.Assault));
-			Assert.That(directive.Rationale, Does.Contain("surplus"));
+			Assert.That(directive.Stance, Is.EqualTo(Stance.Pressure));
+			Assert.That(directive.MainEffortRegion, Is.EqualTo(5));
+			Assert.That(directive.Rationale, Does.Contain("nothing to buy"));
+		}
+
+		[TestCase(TestName = "It will not attack while outnumbered.")]
+		public void WillNotChargeWhileOutnumbered()
+		{
+			// Marching an outnumbered army at a defended objective spends it rather than using it.
+			// The tactical analyst reporting Strained means the force ratio is against us, and no
+			// amount of readiness elsewhere makes that a good moment.
+			var directive = Run(Snapshot(),
+				new ManagerReport { Manager = "economy", Readiness = Readiness.Surplus },
+				new ManagerReport { Manager = "unit-production", Readiness = Readiness.Surplus, ReadyInSeconds = 0 },
+				new ManagerReport { Manager = "tactical-analysis", Readiness = Readiness.Strained, RegionOfInterest = 5 });
+
+			Assert.That(directive.Stance, Is.EqualTo(Stance.Pressure));
+			Assert.That(directive.Rationale, Does.Contain("outnumbered"));
 		}
 
 		[TestCase(TestName = "Deception is funded only once the opponent is understood.")]

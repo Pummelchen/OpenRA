@@ -177,6 +177,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>The rebuilt decision layer. Null when the trait is absent, which leaves the old behaviour intact.</summary>
 		CommanderPlanBotModule planner;
+
+		/// <summary>The staff's tactical chief, which outranks the planner when it is driving.</summary>
+		CommanderStaffBotModule chiefStaff;
 		LlmIntent llmIntent;
 		int lastBlackboardTick;
 		int lastCommandTick;
@@ -625,6 +628,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			world = player.World;
 			brain = player.PlayerActor.TraitsImplementing<StrategicBrainBotModule>().FirstOrDefault(m => !m.IsTraitDisabled);
 			planner = player.PlayerActor.TraitsImplementing<CommanderPlanBotModule>().FirstOrDefault(m => !m.IsTraitDisabled);
+			chiefStaff = player.PlayerActor.TraitsImplementing<CommanderStaffBotModule>().FirstOrDefault(m => !m.IsTraitDisabled);
 
 			var tick = world.WorldTick;
 			if (tick - lastBlackboardTick >= info.BlackboardInterval)
@@ -793,7 +797,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			var posturePolicy = PostureSelection.PolicyFor(strategicPosture);
-			brain?.OverrideReserveFraction(posturePolicy.ReserveFraction);
+			// The chief's reserve fraction, when it is driving. This is what makes the difference
+			// between its stances real: an earlier wiring mapped Pressure and Assault to the same
+			// executor behaviour, so rebalancing them changed the stance distribution from 9:1 to
+			// 8:7 and produced byte-identical results. A raid that commits as much as an assault is
+			// not a raid.
+			// The engine takes a percentage, and the directive carries a fraction.
+			var reserveFraction = chiefStaff != null && chiefStaff.Driving
+				? (int)Math.Round(chiefStaff.Directive.ReserveFraction * 100f)
+				: posturePolicy.ReserveFraction;
+
+			brain?.OverrideReserveFraction(reserveFraction);
 
 			// Mission creation driven by the force balance, intel, and LLM intent. Attack unless the
 			// enemy is clearly stronger (an even or slightly unfavorable fight is still worth taking
@@ -811,7 +825,43 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// it declared at launch, inside CommanderPlanBotModule, and a falling army ratio is
 			// deliberately not among them.
 			var plannedObjective = (CPos?)null;
-			if (planner != null && planner.Driving)
+
+			// The chief's directive outranks everything below it. It is the only party that saw
+			// every specialist's report before deciding, which is the whole reason it exists - and
+			// unlike the ratio test below, it commits for a period rather than re-deciding every
+			// review.
+			if (chiefStaff != null && chiefStaff.Driving)
+			{
+				var directive = chiefStaff.Directive;
+				switch (directive.Stance)
+				{
+					case Commander.Staff.Stance.Assault:
+					case Commander.Staff.Stance.Pressure:
+						wantAttack = true;
+						wantDefend = false;
+
+						// The chief names the region; the influence map below still picks the cell
+						// within it. Leaving the target entirely to the existing logic was measured
+						// and was worse - 0.81 exchange against 0.95 - so the region does carry
+						// information even though a region centre is a crude aim point.
+						plannedObjective = chiefStaff.ObjectiveCell;
+						break;
+
+					case Commander.Staff.Stance.Defend:
+					case Commander.Staff.Stance.Recover:
+						wantAttack = false;
+						wantDefend = true;
+						plannedObjective = null;
+						break;
+
+					default:
+						// Build and Probe leave the field alone and let the economy run.
+						wantAttack = false;
+						wantBuild = true;
+						break;
+				}
+			}
+			else if (planner != null && planner.Driving)
 			{
 				var verb = planner.Verb;
 				switch (verb)
