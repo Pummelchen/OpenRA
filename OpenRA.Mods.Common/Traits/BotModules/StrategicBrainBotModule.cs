@@ -14,6 +14,7 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using OpenRA.Mods.Common.Activities;
+using OpenRA.Mods.Common.Commander.Model;
 using OpenRA.Mods.Common.Traits.BotModules.Coalition;
 using OpenRA.Traits;
 
@@ -39,6 +40,23 @@ namespace OpenRA.Mods.Common.Traits
 			"concern when money is tight and the wrong one when most of what has been earned is",
 			"sitting unspent.")]
 		public readonly int SpendFreelyCashThreshold = 4000;
+
+		[Desc("Own army value below which, when outweighed by what has been seen, the commander",
+			"builds the cheapest effective units rather than the heaviest. A unit that arrives",
+			"after the base has fallen is worth nothing.")]
+		public readonly int EmergencyArmyValue = 8000;
+
+		[Desc("Ticks during which the commander builds the cheapest effective units rather than the",
+			"heaviest, provided its army is still small. Heavy units are the right answer when there",
+			"is time to build them; a 2,000-credit tank that takes most of a minute is the wrong",
+			"opening against anybody who opens fast.")]
+		public readonly int EarlyGameTicks = 9000;
+
+		[Desc("Compute what to build from the mod's own damage, cost and health tables rather than",
+			"from the hand-ordered lists below. The lists cannot express degree - a mammoth counters",
+			"armour, but how much better than a heavy tank, per credit? - and go stale silently when",
+			"the mod changes.")]
+		public readonly bool ComputeProductionValue = false;
 
 		[Desc("Cash below which production orders are withheld.")]
 		public readonly int MinProductionCash = 400;
@@ -747,6 +765,28 @@ namespace OpenRA.Mods.Common.Traits
 			if (resources == null || resources.GetCashAndResources() < Info.MinProductionCash)
 				return;
 
+			// Computed rather than listed, when enabled. The lists below are rules in the plainest
+			// sense - somebody's opinion about what beats what, fixed when it was written - and this
+			// project has had to measure and reverse half of those opinions. The engine already
+			// holds the real answer in its damage, cost and health tables, so the ranking is
+			// arithmetic over what the enemy is actually fielding.
+			if (Info.ComputeProductionValue)
+			{
+				var computed = ComputedPickOrder();
+				if (computed.Count > 0)
+				{
+					var computedStr = string.Join(",", computed.Take(8));
+					if (computedStr != lastPickOrder)
+					{
+						lastPickOrder = computedStr;
+						CoalitionTelemetry.Log(World, $"Production priorities (computed): {computedStr}");
+					}
+
+					ProduceFrom(computed);
+					return;
+				}
+			}
+
 			// Build the adaptive pick order: team produce boosts and role priorities first, then
 			// counters for the scouted enemy composition, then the base army composition.
 			var pickOrder = new List<string>();
@@ -781,7 +821,41 @@ namespace OpenRA.Mods.Common.Traits
 				pickOrder.AddRange(Info.AntiArmorUnits);
 			if (enemyInfantrySpotted)
 				pickOrder.AddRange(Info.AntiInfantryUnits);
-			pickOrder.AddRange(Info.ArmyPriority);
+			// Heavy units are the right answer when there is time to build them and money to spare,
+			// and the wrong one when a rush is already inbound. Measured against the naval bot -
+			// which opens fast - the commander died at 17,000 ticks holding 137,760 credits, 87% of
+			// everything it had earned, because the first thing in its list cost 2,000 and took the
+			// best part of a minute while the enemy was already at the door.
+			//
+			// When the army is outweighed by what has actually been seen, the list is reordered
+			// cheapest-first: three tanks now beat one tank later, and a unit that arrives after the
+			// base has fallen is worth nothing at all.
+			var seenEnemyValue = sightings.Values
+				.Where(v => !v.IsStructure)
+				.Sum(v => World.Map.Rules.Actors.TryGetValue(v.Type, out var ai)
+					? ai.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0
+					: 0);
+
+			var ownValue = OwnCombatUnits().Sum(a => a.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0);
+
+			// Two ways to know the army is needed sooner than the heavy list can deliver it. The
+			// first is seeing more enemy than we have, which is the honest signal and fires rarely -
+			// reconnaissance is this commander's weakest sense, and a rule that depends on it does
+			// nothing most of the time. The second needs no intelligence at all: early in a match,
+			// nobody has a heavy army yet, and the side whose first units arrive first owns the map
+			// until the other catches up.
+			var pressed = ownValue < Info.EmergencyArmyValue
+				&& (seenEnemyValue > ownValue || World.WorldTick < Info.EarlyGameTicks);
+
+			if (pressed)
+			{
+				pickOrder.AddRange(Info.ArmyPriority
+					.OrderBy(u => World.Map.Rules.Actors.TryGetValue(u, out var ai)
+						? ai.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? int.MaxValue
+						: int.MaxValue));
+			}
+			else
+				pickOrder.AddRange(Info.ArmyPriority);
 
 			// Log production-priority changes so the build plan is auditable in telemetry.
 			var pickOrderStr = string.Join(",", pickOrder.Take(8));
@@ -1048,6 +1122,83 @@ namespace OpenRA.Mods.Common.Traits
 		public static bool MayInvestInPrerequisite(int combatUnits, int minimumArmy)
 		{
 			return minimumArmy <= 0 || combatUnits >= minimumArmy;
+		}
+
+		/// <summary>
+		/// What to build, computed from the mod's tables against the enemy actually observed.
+		/// Returns an empty list when nothing is buildable, so the caller falls back to the lists.
+		/// </summary>
+		List<string> ComputedPickOrder()
+		{
+			var queues = Player.PlayerActor.TraitsImplementing<ProductionQueue>()
+				.Where(q => q.Enabled && q.Info.Type != "Building" && q.Info.Type != "Defense")
+				.ToArray();
+
+			if (queues.Length == 0)
+				return [];
+
+			// Everything any army queue can build right now, deduplicated.
+			var candidates = new Dictionary<string, UnitCombatProfile>(StringComparer.Ordinal);
+			foreach (var queue in queues)
+			{
+				foreach (var item in queue.BuildableItems())
+				{
+					if (Info.ExcludeFromArmyTypes.Contains(item.Name) || candidates.ContainsKey(item.Name))
+						continue;
+
+					var profile = CounterMatrix.Profile(item, World.Map.Rules);
+					if (profile != null && profile.IsArmed && profile.Cost > 0)
+						candidates[item.Name] = profile;
+				}
+			}
+
+			if (candidates.Count == 0)
+				return [];
+
+			// The enemy as observed, weighted by credits rather than headcount: one mammoth is a
+			// bigger problem than one rifleman.
+			var seen = sightings.Values
+				.Where(v => !v.IsStructure)
+				.Select(v => World.Map.Rules.Actors.TryGetValue(v.Type, out var ai)
+					? (v.Type, ai.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0,
+						ai.TraitInfoOrDefault<ArmorInfo>()?.Type ?? "None")
+					: (v.Type, 0, "None"))
+				.Where(t => t.Item2 > 0);
+
+			var composition = ProductionValuation.CompositionOf(seen);
+
+			// How badly the army is needed now. Early, and while outweighed, a unit that arrives
+			// late is worth nothing however efficient it is on paper.
+			var ownValue = OwnCombatUnits().Sum(a => a.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0);
+			var urgency = ownValue >= Info.EmergencyArmyValue
+				? 0f
+				: 1f - (ownValue / (float)Math.Max(1, Info.EmergencyArmyValue));
+
+			return ProductionValuation.Rank(candidates.Values, composition, urgency)
+				.Where(v => v.Score > 0f)
+				.Select(v => v.Unit)
+				.ToList();
+		}
+
+		/// <summary>Queues the best buildable item into each idle army queue.</summary>
+		void ProduceFrom(List<string> order)
+		{
+			var used = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var queue in Player.PlayerActor.TraitsImplementing<ProductionQueue>()
+				.Where(q => q.Enabled && q.CurrentItem() == null))
+			{
+				if (queue.Info.Type is "Building" or "Defense")
+					continue;
+
+				var pick = order.FirstOrDefault(u =>
+					!used.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
+
+				if (pick == null)
+					continue;
+
+				used.Add(pick);
+				Bot.QueueOrder(Order.StartProduction(queue.Actor, pick, 1));
+			}
 		}
 
 		/// <summary>Returns the first prerequisite building of a unit that the player has not yet built, or null.</summary>

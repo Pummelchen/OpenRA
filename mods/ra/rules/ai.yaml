@@ -879,6 +879,7 @@ Player:
 		McvFactoryTypes: weap
 		MinimumConstructionYardCount: 2
 	StrategicBrainBotModule:
+		ComputeProductionValue: true
 		RequiresCondition: enable-ai
 		Difficulty: 3
 		MicroPrecision: 3
