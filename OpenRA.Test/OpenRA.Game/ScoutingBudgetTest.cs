@@ -63,6 +63,26 @@ namespace OpenRA.Test
 				"Reconnaissance is bounded; an unbounded search would bleed the army indefinitely.");
 		}
 
+		[TestCase(TestName = "A search that has stopped revealing ground is abandoned.")]
+		public void BarrenSearchIsAbandoned()
+		{
+			// The case a scout-count budget cannot see. On a water map a land scout cannot reach the
+			// enemy at all, so every further probe is a unit spent for no information - and because
+			// production is diverted to reconnaissance for as long as the enemy is unlocated, a
+			// generous allowance turns into a rout rather than a thorough search. Measured on the
+			// naval opponent, raising the budget alone took structures destroyed from thirty-three
+			// down to two.
+			Assert.That(StrategicBrainBotModule.ShouldScout(
+				enemyBaseLocated: false, activeScouts: 0, maximumScouts: 4,
+				scoutsDeployed: 4, lifetimeBudget: 120, searchIsProductive: false), Is.False,
+				"Probes that reveal nothing new are not going to start.");
+
+			Assert.That(StrategicBrainBotModule.ShouldScout(
+				enemyBaseLocated: false, activeScouts: 0, maximumScouts: 4,
+				scoutsDeployed: 4, lifetimeBudget: 120, searchIsProductive: true), Is.True,
+				"While ground is still being revealed the search is worth continuing.");
+		}
+
 		[TestCase(TestName = "Scouting stops once the enemy base is located, whatever the budget.")]
 		public void LocatingTheBaseEndsTheSearch()
 		{

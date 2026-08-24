@@ -913,6 +913,10 @@ Player:
 		ScoutMinDistance: 40
 		ScoutInterval: 100
 		ScoutSendPerInterval: 1
+		# A ceiling on the whole search, not a stopwatch on its opening. At the default of 40 the
+		# allowance was spent by 388s of a 1200s match, so any base not found in the first three
+		# minutes was never found at all.
+		ScoutLifetimeBudget: 120
 		ScoutSpawnApproachOffset: 3
 		PrerequisiteArmyThreshold: 10
 		ExpansionUnitTypes: mcv

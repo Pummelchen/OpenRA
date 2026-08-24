@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OpenRA.Mods.Common.Commander.Model
 {
@@ -306,6 +307,30 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// </summary>
 		public void AssumeUnseen(float assumedTotal, int now, int staleAfterTicks)
 		{
+			AssumeUnseen(assumedTotal, now, staleAfterTicks, null);
+		}
+
+		/// <summary>
+		/// <para>
+		/// As above, but concentrating the prior on regions the enemy plausibly started from.
+		/// </para>
+		/// <para>
+		/// Spreading the assumption evenly over every unexplored region sounds neutral and is
+		/// actively misleading: on a 57-region map it makes every region equally worth scouting, so
+		/// reconnaissance becomes a random walk. Measured against the turtle bot, forty scouts were
+		/// dispatched and the enemy base was seen ZERO times across a whole match, no objective was
+		/// ever named, and the commander drew a game against an opponent earning a seventh of what
+		/// it did.
+		/// </para>
+		/// <para>
+		/// Starting locations are public map metadata rather than hidden player state, and an
+		/// opponent began at one of them. Weighting the prior toward those regions uses information
+		/// the commander legitimately has; it is not peeking at information it does not.
+		/// </para>
+		/// </summary>
+		public void AssumeUnseen(float assumedTotal, int now, int staleAfterTicks,
+			IReadOnlyCollection<int> likelyRegions)
+		{
 			if (assumedTotal <= 0f || regions == 0)
 				return;
 
@@ -313,6 +338,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			var shortfall = assumedTotal - believed;
 			if (shortfall <= 0f)
 				return;
+
 
 			// Somewhere not looked at recently. If the whole map is under observation there is
 			// nowhere left for an unseen army to be, and the belief is simply what was seen.
@@ -324,10 +350,29 @@ namespace OpenRA.Mods.Common.Commander.Model
 			if (candidates.Count == 0)
 				return;
 
+			// An army that is hidden has to fit in the part of the map nobody is watching. Topping
+			// the belief up to the full mirror total regardless of how much ground has been ruled
+			// out throws away the negative evidence this class exists to model: it lets a commander
+			// that has swept most of the map and found nothing still believe an army the size of its
+			// own is out there somewhere. Scaling the assumption by the share of the map still unseen
+			// is the same reasoning already applied to WHERE the belief is placed, applied to HOW
+			// MUCH of it there is.
+			shortfall *= candidates.Count / (float)regions;
+			if (shortfall <= 0f)
+				return;
+
+			// Where they plausibly are, when that is known, and everywhere unseen otherwise.
+			var focused = likelyRegions == null
+				? candidates
+				: candidates.Where(likelyRegions.Contains).ToList();
+
+			if (focused.Count == 0)
+				focused = candidates;
+
 			// Spread as armour, which is the load-bearing assumption for whether an attack is safe.
 			// Assuming the unseen enemy is infantry would make every assault look cheap.
-			var share = shortfall / candidates.Count;
-			foreach (var region in candidates)
+			var share = shortfall / focused.Count;
+			foreach (var region in focused)
 			{
 				var index = (region * RoleStats.Roles) + (int)CombatRole.Armor;
 				belief[index] += share;
@@ -335,8 +380,45 @@ namespace OpenRA.Mods.Common.Commander.Model
 		}
 
 		/// <summary>
-		/// The region most likely to hold enemy force that has not been seen recently - where a scout
-		/// is worth sending, because that is where the belief is both large and stale.
+		/// <para>
+		/// Regions worth looking at, most uncertain first.
+		/// </para>
+		/// <para>
+		/// Returning a ranking rather than a single answer matters more than it sounds. The caller
+		/// refuses to re-probe somewhere it has already sent a scout, so a single best region became
+		/// unusable the moment the first scout was dispatched to it - after which every subsequent
+		/// scout fell back to a geometric sweep. Measured against the turtle bot: forty scouts sent,
+		/// the enemy base located zero times, no objective ever named, and a drawn match against an
+		/// opponent earning a seventh of what we did.
+		/// </para>
+		/// </summary>
+		public IReadOnlyList<int> MostUncertainRegions(int now, int count)
+		{
+			var scored = new List<(int Region, float Score)>();
+			for (var region = 0; region < regions; region++)
+			{
+				var staleness = Math.Min(TicksSinceSeen(region, now), 25 * 300) / (float)(25 * 300);
+				var mass = ExpectedIn(region);
+				var score = staleness * (1f + mass);
+				if (score > 0f)
+					scored.Add((region, score));
+			}
+
+			// Ties broken by index so a scouting plan is reproducible.
+			scored.Sort((a, b) => a.Score != b.Score
+				? b.Score.CompareTo(a.Score)
+				: a.Region.CompareTo(b.Region));
+
+			var result = new List<int>();
+			for (var i = 0; i < scored.Count && i < count; i++)
+				result.Add(scored[i].Region);
+
+			return result;
+		}
+
+		/// <summary>
+		/// The single region most worth looking at. Kept for callers that only want one; prefer
+		/// <see cref="MostUncertainRegions"/> when the answer may be rejected.
 		/// </summary>
 		public int MostUncertainRegion(int now)
 		{

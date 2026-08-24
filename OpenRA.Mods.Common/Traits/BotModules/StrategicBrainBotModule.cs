@@ -146,6 +146,11 @@ namespace OpenRA.Mods.Common.Traits
 			"the offensive doctrine that consumes it is measured with it.")]
 		public readonly int ScoutLifetimeBudget = 40;
 
+		[Desc("Consecutive scouting decisions that may reveal no new ground before the search is",
+			"abandoned as futile. Guards against pouring production into probes that cannot reach",
+			"the enemy at all, which is the normal case on water maps.")]
+		public readonly int BarrenScoutCycles = 25;
+
 		[Desc("Radius (in cells) around the objective in which the assault looks for structures to",
 			"attack. An assault that attack-moves to a cell engages the first thing it meets, which",
 			"on a defended base is the perimeter defence; naming a structure target instead is what",
@@ -331,6 +336,10 @@ namespace OpenRA.Mods.Common.Traits
 		readonly HashSet<uint> teamRetreatActorIds = [];
 		bool teamRetreatActive;
 		bool enemyBaseEverLocated;
+
+		/// <summary>Map cells revealed as of the last scouting decision, and how many decisions in a row have added none.</summary>
+		int lastRevealedCells;
+		int barrenScoutCycles;
 
 		// Exposed to the tactical controllers.
 		internal World World { get; private set; }
@@ -1330,7 +1339,8 @@ namespace OpenRA.Mods.Common.Traits
 			{
 				lastReserveCommitted = reserveCommitted;
 				if (reserveCommitted)
-					CoalitionTelemetry.Log(World, $"Reserve committed: coalition outnumbers the scouted enemy ({enemyArmyCount} vs {OwnCombatUnits().Count()})");
+					CoalitionTelemetry.Log(World,
+						$"Reserve committed: {OwnCombatUnits().Count()} of ours against {enemyArmyCount} scouted enemies");
 			}
 
 			var availableArmy = AvailableArmy(activeArmy);
@@ -1951,7 +1961,22 @@ namespace OpenRA.Mods.Common.Traits
 
 			scouts.RemoveWhere(a => !a.IsInWorld || a.IsDead || a.IsIdle);
 			var active = scouts.Count;
-			if (!ShouldScout(enemyBaseEverLocated, active, Info.ScoutSquadSize, scoutsDeployed, Info.ScoutLifetimeBudget))
+			// Is reconnaissance still buying anything? Ground revealed is the only honest measure of
+			// that: a probe that dies having shown us nothing new has cost a unit and returned
+			// nothing, and enough of those in a row means there is nothing further to reach.
+			var revealed = Player.Shroud.RevealedCells;
+			if (revealed > lastRevealedCells)
+			{
+				lastRevealedCells = revealed;
+				barrenScoutCycles = 0;
+			}
+			else
+				barrenScoutCycles++;
+
+			var productive = barrenScoutCycles < Info.BarrenScoutCycles;
+
+			if (!ShouldScout(enemyBaseEverLocated, active, Info.ScoutSquadSize, scoutsDeployed,
+				Info.ScoutLifetimeBudget, productive))
 				return;
 
 			var baseCenter = BaseCenter();
@@ -1998,15 +2023,6 @@ namespace OpenRA.Mods.Common.Traits
 			if (mobile == null)
 				return [];
 
-			// Where the belief state says to look, first. It knows which regions are both stale and
-			// likely to be hiding an army, which is exactly the question this method asks - whereas
-			// the geometric fallback below spends probes on map edges. Measured on a 127x127 map,
-			// the fallback alone sent forty scouts and located the enemy base zero times, so every
-			// assault that followed took empty ground.
-			var believed = BeliefScoutTarget(scout, mobile);
-			if (believed.HasValue)
-				return [believed.Value];
-
 			var minDistanceSq = (long)WDist.FromCells(Info.ScoutMinDistance).Length;
 			minDistanceSq *= minDistanceSq;
 			var stride = Math.Max(4, World.Map.MapSize.Width / 16);
@@ -2041,7 +2057,23 @@ namespace OpenRA.Mods.Common.Traits
 				isExplored: c => Player.Shroud.IsExplored(c) || attemptedScoutTargets.Contains(c),
 				isReachable: c => mobile.CanEnterCell(c, scout, BlockedByActor.Immovable));
 
-			foreach (var cpos in spawnCandidates.Concat(radial))
+			// Order of evidence, strongest first.
+			//
+			// The belief field used to pre-empt both of the sweeps below: it returned a single cell
+			// and this method returned immediately with it. That was wrong twice over. It capped
+			// every dispatch at one scout no matter how many were asked for, and it let a diffuse
+			// "somewhere stale" score outrank a starting location, which is the one place on the map
+			// an enemy base is actually known to be likely. Measured on shattered-mountain, the
+			// enemy sat at (18,18) and our base at (111,78); scouts were dispatched to (116,126) and
+			// (108,126) - the near corner - and across a whole match not one of the opponent's
+			// thirty-four buildings was ever so much as explored, let alone seen.
+			//
+			// Spawn approaches are ordered by DESCENDING distance from our own base, so the far
+			// corner is probed first rather than last. The belief field follows: it earns its place
+			// once the obvious candidates are exhausted, since it is the only source that learns.
+			var believed = BeliefScoutTargets(scout, mobile, count);
+
+			foreach (var cpos in spawnCandidates.Concat(believed).Concat(radial))
 			{
 				if (!mobile.PathFinder.PathExistsForLocomotor(mobile.Locomotor, scout.Location, cpos))
 					continue;
@@ -2091,23 +2123,29 @@ namespace OpenRA.Mods.Common.Traits
 
 		/// <summary>Returns a deterministic home-facing approach cell outside a normally occupied spawn center.</summary>
 		/// <summary>
-		/// The cell the commander's belief state most wants looked at, if it is reachable and has
-		/// not already been probed.
+		/// The cells the commander's belief state most wants looked at, reachable and not already
+		/// probed, best first. A sequence rather than a single cell: every scout already dispatched
+		/// has put its destination in attemptedScoutTargets, so one answer is unusable after the
+		/// first probe.
 		/// </summary>
-		CPos? BeliefScoutTarget(Actor scout, Mobile mobile)
+		IEnumerable<CPos> BeliefScoutTargets(Actor scout, Mobile mobile, int count)
 		{
 			planner ??= Player.PlayerActor.TraitsImplementing<BotModules.Coalition.CommanderPlanBotModule>()
 				.FirstOrDefault(m => !m.IsTraitDisabled);
 
-			var target = planner?.ScoutTarget;
-			if (target == null)
-				return null;
+			if (planner == null)
+				yield break;
 
-			var cell = target.Value;
-			if (attemptedScoutTargets.Contains(cell) || !mobile.CanEnterCell(cell, scout, BlockedByActor.Immovable))
-				return null;
+			foreach (var cell in planner.ScoutTargets(Math.Max(count, 12)))
+			{
+				if (attemptedScoutTargets.Contains(cell))
+					continue;
 
-			return cell;
+				if (!mobile.CanEnterCell(cell, scout, BlockedByActor.Immovable))
+					continue;
+
+				yield return cell;
+			}
 		}
 
 		BotModules.Coalition.CommanderPlanBotModule planner;
@@ -2132,12 +2170,34 @@ namespace OpenRA.Mods.Common.Traits
 		/// </para>
 		/// </summary>
 		public static bool ShouldScout(bool enemyBaseLocated, int activeScouts, int maximumScouts,
-			int scoutsDeployed = 0, int lifetimeBudget = 0)
+			int scoutsDeployed = 0, int lifetimeBudget = 0, bool searchIsProductive = true)
 		{
 			if (enemyBaseLocated || maximumScouts <= 0 || activeScouts >= maximumScouts)
 				return false;
 
+			// A search that has stopped revealing ground has run out of ground it can reach, and no
+			// number of further probes will change that. This is the case a pure scout-count budget
+			// cannot distinguish: on land maps a larger allowance is a decisive gain - against the
+			// turtle bot the commander went from destroying nothing and losing twenty-five buildings
+			// to destroying sixteen and losing four - while on water maps the same allowance was a
+			// rout, thirty-three structures destroyed falling to two, because production is diverted
+			// to reconnaissance for as long as the enemy is unlocated and a land scout cannot cross
+			// water however long it is given. Whether the last several probes revealed anything new
+			// separates the two directly, where counting corpses does not.
+			if (!searchIsProductive)
+				return false;
+
 			// A zero or unset budget keeps the historical behaviour for callers that do not set one.
+			//
+			// The budget is a real bound and has to stay one. Removing it entirely was measured: on
+			// land maps it was a clear gain - against the turtle bot the commander went from losing
+			// twenty-five buildings and destroying none to destroying ten and losing none - but on
+			// water maps it was a rout, from thirty-one structures destroyed to zero, because
+			// production is diverted to scouts for as long as the enemy is unlocated and a search
+			// that cannot reach the enemy never ends. What the budget must not do is expire in the
+			// opening minutes of a long match, which at forty scouts it did: probes went out every
+			// four seconds from 232s and the allowance was gone by 388s, leaving eight hundred
+			// seconds in which the commander could not look for an opponent it had not yet found.
 			var budget = lifetimeBudget > 0 ? lifetimeBudget : maximumScouts;
 			return scoutsDeployed < budget;
 		}

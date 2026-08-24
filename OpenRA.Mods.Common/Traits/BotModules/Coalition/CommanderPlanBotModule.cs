@@ -76,6 +76,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		StrategyPosterior posterior;
 		readonly HashSet<string> reportedStructures = [];
 		bool enemyBaseFound;
+
+		/// <summary>Regions containing a map starting location. Public metadata, not hidden state.</summary>
+		HashSet<int> spawnRegions;
 		RegionGraph graph;
 		Map map;
 
@@ -160,6 +163,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The opponent model, for telemetry and for the search to plan against.</summary>
 		public StrategyPosterior Opponent => posterior;
 
+		/// <summary>
+		/// Cells worth scouting, most uncertain first. A ranking rather than one answer, because the
+		/// caller refuses places it has already probed - and with a single answer the belief-directed
+		/// target became unusable after the first scout was sent to it.
+		/// </summary>
+		public IEnumerable<CPos> ScoutTargets(int count)
+		{
+			if (IsTraitDisabled || belief == null || graph == null || map == null || !leader)
+				yield break;
+
+			foreach (var region in belief.MostUncertainRegions(lastReviewTick, count))
+			{
+				if (region < 0 || region >= graph.Regions.Length)
+					continue;
+
+				var r = graph.Regions[region];
+				yield return MapRegions.ToCell(map, r.CentreX, r.CentreY);
+			}
+		}
+
 		/// <summary>What the plan wants done, for the executor to translate.</summary>
 		public MacroVerb? Verb => Driving ? Current.Objective.Verb : null;
 
@@ -188,7 +211,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// showed up as reviews quadrupling from 53 to 213 in a four-bot match, each bot
 			// countermanding the last. The coalition's whole premise is that it acts on a single
 			// plan, so exactly one member decides it.
-			if (!leader || extractor == null || world.WorldTick % info.ReviewInterval != 0)
+			if (!leader || extractor == null)
+				return;
+
+			// Observed every tick rather than every review. A scout that reaches a defended base
+			// is usually killed within seconds, so sampling on the fifteen-second planning cycle
+			// missed the sighting entirely - measured against the turtle bot, forty scouts were sent
+			// and the enemy base was recorded as located exactly zero times across a whole match.
+			// Seeing something is cheap; the expensive part is deciding what to do about it, and
+			// only that needs to wait for the cycle.
+			ObserveOpponentTells(bot.Player, world.WorldTick);
+
+			if (world.WorldTick % info.ReviewInterval != 0)
 				return;
 
 			var enemies = Enemies(bot.Player).ToArray();
@@ -233,6 +267,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			belief = new EnemyBelief(graph.Regions.Length, r => graph.Neighbours(r));
 			posterior = new StrategyPosterior();
 
+			// An opponent began at one of the map's starting locations. Those are declared in the map
+			// file, so using them is reading public metadata rather than peeking through the shroud -
+			// and without them the "somewhere we have not looked" prior is spread evenly over every
+			// unexplored region, which on a fifty-seven region map makes reconnaissance a random walk.
+			// Measured: forty scouts dispatched, the enemy base seen zero times in a whole match.
+			spawnRegions = [];
+			foreach (var definition in world.Map.ActorDefinitions)
+			{
+				if (definition.Value.Value != "mpspawn")
+					continue;
+
+				var cell = new ActorReference(definition.Key, definition.Value).GetValue<LocationInit, CPos>();
+				if (!MapRegions.ToGrid(map, cell, out var gx, out var gy))
+					continue;
+
+				var region = graph.RegionAt(gx, gy);
+				if (region >= 0)
+					spawnRegions.Add(region);
+			}
+
 			CoalitionTelemetry.Log(world,
 				$"Commander plan: {graph.Regions.Length} regions, {graph.Chokepoints.Length} chokepoints, " +
 				$"driving={info.Enabled}");
@@ -259,8 +313,6 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				belief.Observe(region, state.Enemy.ForcesIn(region), tick, state.Enemy.StructuresIn(region));
 			}
 
-			ObserveOpponentTells(self, tick);
-
 			// An opponent exists whether or not it has been seen, and it has to be somewhere nobody
 			// has looked. This is a prior, not knowledge: it makes no claim about where they are
 			// beyond "not where we have already looked", and it shrinks as the map is uncovered.
@@ -274,7 +326,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			peakSeenEnemyArmy = Math.Max(peakSeenEnemyArmy, belief.ExpectedTotal());
 
 			var assumed = Math.Max(peakSeenEnemyArmy, peakOwnArmy * info.UnseenEnemyFraction);
-			belief.AssumeUnseen(assumed, tick, info.StaleVisibilityTicks);
+			belief.AssumeUnseen(assumed, tick, info.StaleVisibilityTicks, spawnRegions);
 
 			// And they have a base. Without assuming one the evaluator sees nothing left to destroy,
 			// so an assault appears to accomplish nothing - which is how a commander ends up rating

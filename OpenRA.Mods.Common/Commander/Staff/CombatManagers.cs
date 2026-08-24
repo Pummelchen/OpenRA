@@ -56,7 +56,28 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			}
 
 			var ourArmy = state.Self.ArmyValue();
-			var theirArmy = state.Enemy.ArmyValue();
+
+			// What can actually contest the objective, not what the enemy owns everywhere.
+			//
+			// Comparing against the global believed total looks reasonable and is not: most of that
+			// total is an ASSUMPTION about forces nobody has seen, anchored to our own peak strength,
+			// so the comparison is between our army and a mirror of our army. Measured, the reported
+			// ratio was 1.00 on every single review of a thirty-thousand tick match - never above the
+			// assault threshold, never below the retreat one - while the commander out-earned its
+			// opponent seven to one and destroyed nothing. A number that cannot move cannot inform a
+			// decision.
+			//
+			// The objective's own garrison plus whatever can reinforce it in the time an assault
+			// takes is the quantity the assault actually has to beat.
+			var theirArmy = 0f;
+			if (best >= 0)
+			{
+				theirArmy = state.Enemy.ArmyValueIn(best);
+				if (snapshot.Graph != null)
+					foreach (var neighbour in snapshot.Graph.Neighbours(best))
+						theirArmy += state.Enemy.ArmyValueIn(neighbour);
+			}
+
 			var ratio = theirArmy <= 0f ? 999f : ourArmy / theirArmy;
 
 			context.Report(new ManagerReport
