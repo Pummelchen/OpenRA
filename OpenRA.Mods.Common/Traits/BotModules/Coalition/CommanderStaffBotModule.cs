@@ -400,6 +400,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						Repair(bot, repair);
 						break;
 
+					case RelocateIntent relocate:
+						Relocate(bot, relocate);
+						break;
+
 					case ConstructIntent:
 						break;
 				}
@@ -433,6 +437,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			bot.QueueOrder(new Order("RepairBuilding", bot.Player.PlayerActor, Target.FromActor(actor), false));
 			database.MarkAttended(intent.ActorId, "upkeep", bot.Player.World.WorldTick);
 			database.RecordOrder(intent.ActorId, "RepairBuilding", "upkeep", bot.Player.World.WorldTick);
+		}
+
+		/// <summary>
+		/// Moves an idle unit out of the base, and records that somebody dealt with it so it is not
+		/// picked up again next cycle.
+		/// </summary>
+		/// <remarks>
+		/// Deliberately restricted to units that are actually idle. A unit carrying out somebody
+		/// else's order is not loitering, and overriding it here would be the staff countermanding
+		/// the command centre - a single match already logs more than two thousand rejected order
+		/// conflicts without any help from this.
+		/// </remarks>
+		void Relocate(IBot bot, RelocateIntent intent)
+		{
+			var actor = bot.Player.World.GetActorById(intent.ActorId);
+			if (actor == null || actor.IsDead || !actor.IsInWorld || actor.Owner != bot.Player || !actor.IsIdle)
+				return;
+
+			var mobile = actor.TraitOrDefault<Mobile>();
+			if (mobile == null || !mobile.CanEnterCell(intent.Destination, actor, BlockedByActor.Immovable))
+				return;
+
+			bot.QueueOrder(new Order("Move", actor, Target.FromCell(bot.Player.World, intent.Destination), false));
+			database.MarkAttended(intent.ActorId, "upkeep", bot.Player.World.WorldTick);
+			database.RecordOrder(intent.ActorId, $"Move {intent.Destination}", "upkeep", bot.Player.World.WorldTick);
 		}
 
 		void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)

@@ -58,6 +58,13 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Radius in cells around the center of the base to expand.")]
 		public readonly int MaxBaseRadius = 20;
 
+		[Desc("Minimum gap, in cells, to keep between this bot's own buildings where the terrain",
+			"allows it. Zero (the default) packs them as tightly as the engine permits, which is",
+			"what makes a base a single target: one nuclear strike, one Chronosphere drop or one",
+			"artillery line takes a whole block of it. Defences and refineries are exempt - a",
+			"defensive line has to be a line, and a refinery has to reach the ore.")]
+		public readonly int MinimumBuildingSpacing = 0;
+
 		[Desc("Minimum excess power the AI should try to maintain.")]
 		public readonly int MinimumExcessPower = 0;
 

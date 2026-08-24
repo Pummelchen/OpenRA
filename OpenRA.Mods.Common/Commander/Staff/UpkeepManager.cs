@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Linq;
 using OpenRA.Mods.Common.Commander.Model;
 
@@ -52,6 +53,15 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Seconds of nobody doing anything about one of ours before it counts as neglected.</summary>
 		public float NeglectSeconds { get; init; } = 60f;
 
+		/// <summary>Share of our mobile units that may stand idle inside the base before they are moved out.</summary>
+		public float IdleInBaseFraction { get; init; } = 0.2f;
+
+		/// <summary>Cells beyond the outermost building that idle units are pushed to.</summary>
+		public int MusterMargin { get; init; } = 6;
+
+		/// <summary>Units moved out per cycle, so a whole army is not re-ordered at once.</summary>
+		public int RelocationsPerCycle { get; init; } = 6;
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var database = snapshot.Database;
@@ -83,6 +93,8 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				repaired++;
 			}
 
+			var loitering = ClearTheBase(snapshot, context, database);
+
 			var neglected = database.Neglected(NeglectSeconds).Count();
 			var mine = database.Standing(Allegiance.Self).Count();
 			var worst = damaged.Length == 0 ? 1f : damaged[0].HealthFraction;
@@ -99,12 +111,97 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					: Readiness.Healthy,
 
 				Headline = damaged.Length == 0
-					? $"{mine} of ours in good order, {neglected} unattended for {NeglectSeconds:F0}s+"
+					? $"{mine} of ours in good order, {neglected} unattended for {NeglectSeconds:F0}s+, " +
+						$"{loitering} moved out of the base"
 					: $"{damaged.Length} buildings damaged (worst {worst:P0}), {repaired} repairs ordered, " +
-						$"{neglected} of {mine} unattended for {NeglectSeconds:F0}s+",
+						$"{neglected} of {mine} unattended for {NeglectSeconds:F0}s+, {loitering} moved out of the base",
 
 				ForceValue = damaged.Length,
 			});
+		}
+
+		/// <summary>
+		/// <para>
+		/// Keeps the base clear of its own idle army. Returns how many units were moved out.
+		/// </para>
+		/// <para>
+		/// A unit with nothing to do stops where it stands, and where it stands is the base that
+		/// built it. Past a certain density that is not merely untidy: the gaps between buildings
+		/// are the only roads a base has, and units parked in them make every later unit take the
+		/// long way round. Freshly built armour then trickles to the front in ones and twos instead
+		/// of arriving as a wave, which is the difference between an attack and a queue of
+		/// casualties. This commander was measured with forty-three per cent of its army idle.
+		/// </para>
+		/// <para>
+		/// Only genuinely idle units are moved, and they are pushed straight outward from the centre
+		/// of the base rather than to a single muster point - a single point would simply relocate
+		/// the traffic jam, and radial dispersal needs no agreement about where the front is.
+		/// </para>
+		/// </summary>
+		int ClearTheBase(CommanderSnapshot snapshot, StaffContext context, WorldDatabase database)
+		{
+			var buildings = database.Standing(Allegiance.Self).Where(e => e.IsStructure).ToArray();
+			if (buildings.Length < 3)
+				return 0;
+
+			var mobile = database.Standing(Allegiance.Self).Where(e => !e.IsStructure).ToArray();
+			if (mobile.Length == 0)
+				return 0;
+
+			var centreX = (int)buildings.Average(e => e.LastKnownCell.X);
+			var centreY = (int)buildings.Average(e => e.LastKnownCell.Y);
+			var centre = new CPos(centreX, centreY);
+
+			var radius = buildings.Max(e => Distance(e.LastKnownCell, centre));
+
+			// Idle, and standing among the buildings rather than out in the field.
+			var loitering = mobile
+				.Where(e => e.LastAttendedTick < 0 && Distance(e.LastKnownCell, centre) <= radius)
+				.OrderBy(e => e.ActorId)
+				.ToArray();
+
+			var allowed = (int)(mobile.Length * IdleInBaseFraction);
+			var excess = loitering.Length - allowed;
+			if (excess <= 0)
+				return 0;
+
+			var moved = 0;
+			foreach (var entry in loitering)
+			{
+				if (moved >= Math.Min(excess, RelocationsPerCycle))
+					break;
+
+				// Straight out along the line from the centre through where it stands. A unit
+				// sitting exactly on the centre is nudged off it deterministically rather than
+				// randomly - this runs in a lockstep simulation.
+				var dx = entry.LastKnownCell.X - centre.X;
+				var dy = entry.LastKnownCell.Y - centre.Y;
+				if (dx == 0 && dy == 0)
+					dx = 1;
+
+				var length = Math.Max(1, (int)Math.Sqrt((dx * dx) + (dy * dy)));
+				var reach = radius + MusterMargin;
+
+				context.Add(new RelocateIntent
+				{
+					ActorId = entry.ActorId,
+					Destination = new CPos(
+						centre.X + (dx * reach / length),
+						centre.Y + (dy * reach / length)),
+					Reason = $"idle inside the base; {loitering.Length} of {mobile.Length} are",
+				});
+
+				moved++;
+			}
+
+			return moved;
+		}
+
+		static int Distance(CPos a, CPos b)
+		{
+			var dx = a.X - b.X;
+			var dy = a.Y - b.Y;
+			return (int)Math.Sqrt((dx * dx) + (dy * dy));
 		}
 	}
 }

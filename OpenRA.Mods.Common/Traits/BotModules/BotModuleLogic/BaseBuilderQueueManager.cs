@@ -484,6 +484,32 @@ namespace OpenRA.Mods.Common.Traits
 				return (null, null, 0);
 
 			// Find the buildable cell that is closest to pos and centered around center
+			// Whether a cell is far enough from what is already built. A base packed as tightly as
+			// the engine allows is a single target: one nuclear strike, one Chronosphere drop or one
+			// artillery line takes a whole block of it at once, and this commander already loses more
+			// buildings than it destroys in most matchups.
+			//
+			// Two categories are deliberately exempt. A defensive line has to be a line - spacing it
+			// out is the same as not building it - and a refinery has to sit where the ore is, which
+			// is a harder constraint than tidiness. Everything else can afford a gap.
+			bool IsSpacedFromOwnBuildings(CPos cell, BuildingType buildingType)
+			{
+				var spacing = baseBuilder.Info.MinimumBuildingSpacing;
+				if (spacing <= 0 || buildingType == BuildingType.Defense || buildingType == BuildingType.Refinery)
+					return true;
+
+				foreach (var other in world.FindActorsInCircle(world.Map.CenterOfCell(cell), WDist.FromCells(spacing)))
+				{
+					if (other.Owner != player || other.IsDead || !other.IsInWorld)
+						continue;
+
+					if (other.Info.HasTraitInfo<BuildingInfo>() && !baseBuilder.Info.DefenseTypes.Contains(other.Info.Name))
+						return false;
+				}
+
+				return true;
+			}
+
 			(CPos? Location, CPos Center, int Variant) FindPos(CPos center, CPos target, int minRange, int maxRange, int? tryMaintainRange = null)
 			{
 				var actorVariant = 0;
@@ -556,6 +582,9 @@ namespace OpenRA.Mods.Common.Traits
 						continue;
 
 					if (distanceToBaseIsImportant && !vbi.IsCloseEnoughToBase(world, player, variantActorInfo, cell))
+						continue;
+
+					if (!IsSpacedFromOwnBuildings(cell, type))
 						continue;
 
 					return (cell, center, actorVariant);

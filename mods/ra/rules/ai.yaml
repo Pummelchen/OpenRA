@@ -788,6 +788,18 @@ Player:
 		# stalled construction outright: structures fell from 42 to 14, deaths rose from 38,250 to
 		# 66,700, and the opponent finished with 61 buildings against our 14.
 		MinimumExcessPower: 0
+		# Spreading the base so one nuclear strike cannot take a whole block of it is sound in
+		# principle and measurably expensive here, so the capability exists and is off. Fair-economy
+		# benchmark, twelve matches, exchange ratio and average structures held:
+		#
+		#   no spacing            0.79   27 structures
+		#   spacing 1             0.79   27   (a no-op: building footprints already exceed one cell)
+		#   spacing 2             0.56   21   (a fifth of the base has nowhere to go)
+		#   spacing 2, radius 28  0.42   23   (room to spread, but a base too sprawling to defend)
+		#
+		# The cost is immediate and certain; the saving depends on the opponent actually owning a
+		# superweapon. Worth turning on against opponents that do.
+		MinimumBuildingSpacing: 0
 		ExcessPowerIncrement: 40
 		ExcessPowerIncreaseThreshold: 4
 		# Effectively uncapped. Excess power is what lets a base support more production,

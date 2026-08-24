@@ -84,6 +84,24 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public string Describe() => $"repair {Structure}#{ActorId} at {HealthFraction:P0}: {Reason}";
 	}
 
+	/// <summary>
+	/// Move one of our own units out of the way.
+	/// </summary>
+	/// <remarks>
+	/// Units with nothing to do drift to a stop wherever they happen to be, and where they happen to
+	/// be is usually the base that produced them. Enough of them standing in the gaps between
+	/// buildings turns a base into a maze: freshly built units crawl out through their own army
+	/// instead of driving to the front, and reinforcements arrive late in ones and twos.
+	/// </remarks>
+	public sealed class RelocateIntent : IManagerIntent
+	{
+		public uint ActorId { get; init; }
+		public CPos Destination { get; init; }
+		public string Reason { get; init; } = "";
+
+		public string Describe() => $"relocate #{ActorId} to {Destination}: {Reason}";
+	}
+
 	public sealed class AssessmentIntent : IManagerIntent
 	{
 		public string Topic { get; init; } = "";
