@@ -419,6 +419,14 @@ Player:
 			atek: 1
 			stek: 1
 			mslo: 1
+			# Decoys are NOT listed here, and the omission is deliberate rather than an oversight.
+			# A fake war factory costs 200 credits against roughly two thousand for the real one and
+			# an attacker cannot tell them apart, so they look like an obvious buy. They are
+			# reachable - the Defense queue reports tenf, weaf, domf and facf as buildable once this
+			# commander's all-faction prerequisites are granted - but the base builder never places
+			# one. Tested at a 3% share and again at 20%, over full matches: zero built either time,
+			# so it is a structural block in the placement path rather than the fractions losing a
+			# competition. Listing them at a share that produces nothing would read as a feature.
 		BuildingDelays:
 			dome: 6000
 			fix: 3000
@@ -765,7 +773,21 @@ Player:
 		# harvesters. Measured fair (no cheat income) on shattered-mountain the commander ran five
 		# harvesters against two refineries while the scripted opponents ran ten to fifteen; it was
 		# out-earned in three matchups of four, and the one it out-earned was the one it beat.
-		HarvestersPerRefinery: 5
+		# Grown, not bought at once. The two scarcest things in a match are not the same thing at
+		# the same time: early credits are scarce and every one spent on a harvester is one not
+		# spent on the army that has to survive the first attack, while later credits are plentiful
+		# and what is scarce is ore arriving fast enough to spend them. Three per refinery at the
+		# start, ten by the ten-minute mark.
+		HarvestersPerRefinery: 3
+		HarvestersPerRefineryMaximum: 10
+		HarvestersPerRefineryRampTicks: 15000
+		# A ceiling as well as a ratio, since there is only so much ore on a map and past some point
+		# extra harvesters queue at the ore rather than the refinery. Measured at 20 it never binds
+		# on this map - the fleet does not get that large even with a rich economy - so it is a rail
+		# rather than a tuning knob, and it is recorded here as one.
+		MaximumHarvesters: 20
+		# The opening investment, bought regardless of how few refineries exist yet. This is the
+		# boost that gets an income stream running early; the ramp above is the slow expansion.
 		InitialHarvesters: 6
 	BaseBuilderBotModule@ai:
 		RequiresCondition: enable-ai

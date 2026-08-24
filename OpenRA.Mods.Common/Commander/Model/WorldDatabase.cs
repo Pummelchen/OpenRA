@@ -83,6 +83,20 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public int LastAttendedTick { get; set; } = -1;
 		public string AttendedBy { get; set; } = "";
 
+		/// <summary>
+		/// Whether this unit is set to engage on its own initiative, and what it is set to when not.
+		/// </summary>
+		/// <remarks>
+		/// A unit that will not shoot until shot at is a unit fighting at a disadvantage it chose.
+		/// Recorded per actor because the answer is per actor: it is not enough to know the default
+		/// is right, since anything that has ever been given a stance keeps it.
+		/// </remarks>
+		public bool InAttackMode { get; set; } = true;
+		public string Stance { get; set; } = "";
+
+		/// <summary>Whether this actor can hold a stance at all. Harvesters and builders cannot.</summary>
+		public bool CanHoldStance { get; set; }
+
 		/// <summary>Times this actor type has been seen rebuilt at this position after being destroyed.</summary>
 		public int RebuildCount { get; set; }
 
@@ -277,6 +291,27 @@ namespace OpenRA.Mods.Common.Commander.Model
 			return entry.IsStructure ? entry.HealthFraction < 1f : entry.LastAttendedTick < 0;
 		}
 
+		/// <summary>
+		/// Ours that can hold a stance and are not set to engage on their own initiative.
+		/// </summary>
+		/// <remarks>
+		/// The question a manager cannot answer from the world without walking every actor it owns,
+		/// which is precisely the sort of thing this record exists to save it doing.
+		/// </remarks>
+		public IEnumerable<DatabaseEntry> NotInAttackMode() =>
+			Standing(Allegiance.Self).Where(e => !e.IsStructure && e.CanHoldStance && !e.InAttackMode);
+
+		/// <summary>Records what stance an actor is actually holding.</summary>
+		public void ObserveStance(uint actorId, bool canHoldStance, bool inAttackMode, string stance)
+		{
+			if (!entries.TryGetValue(actorId, out var entry))
+				return;
+
+			entry.CanHoldStance = canHoldStance;
+			entry.InAttackMode = inAttackMode;
+			entry.Stance = stance ?? "";
+		}
+
 		/// <summary>How many of ours, of one type, are standing. The economy is counted, not assumed.</summary>
 		public int CountOf(string type) =>
 			Standing(Allegiance.Self).Count(e => e.Type == type);
@@ -363,11 +398,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 			var damaged = Damaged().Count();
 			var neglected = Neglected(60f).Count();
+			var passive = NotInAttackMode().Count();
 
 			return $"database: {Count} tracked, mine {mine} ({CountOf("harv")} harv / {CountOf("proc")} proc), " +
 				$"enemy {enemy} ({enemyStructures} structures), " +
 				$"enemy destroyed {destroyed}, rebuilt {EnemyRebuilds}, stale {stale}, " +
-				$"damaged {damaged}, unattended>60s {neglected}";
+				$"damaged {damaged}, unattended>60s {neglected}, not-attacking {passive}";
 		}
 	}
 }

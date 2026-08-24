@@ -62,6 +62,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Units moved out per cycle, so a whole army is not re-ordered at once.</summary>
 		public int RelocationsPerCycle { get; init; } = 6;
 
+		/// <summary>Stances corrected per cycle.</summary>
+		public int StanceCorrectionsPerCycle { get; init; } = 12;
+
+		/// <summary>Attendant marking a unit as on covert business, and therefore exempt from attack mode.</summary>
+		public const string CovertAttendant = "special-ops";
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var database = snapshot.Database;
@@ -95,6 +101,27 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			var loitering = ClearTheBase(snapshot, context, database);
 
+			// Anything of ours that will not engage on its own initiative, put right. Units on
+			// covert business are exempt: they are supposed to reach somewhere without being
+			// noticed, and a unit in attack mode announces itself at the first thing it passes.
+			var passive = 0;
+			foreach (var entry in database.NotInAttackMode())
+			{
+				if (entry.AttendedBy == CovertAttendant)
+					continue;
+
+				if (passive >= StanceCorrectionsPerCycle)
+					break;
+
+				context.Add(new SetAttackModeIntent
+				{
+					ActorId = entry.ActorId,
+					CurrentStance = entry.Stance,
+				});
+
+				passive++;
+			}
+
 			var neglected = database.Neglected(NeglectSeconds).Count();
 			var mine = database.Standing(Allegiance.Self).Count();
 			var worst = damaged.Length == 0 ? 1f : damaged[0].HealthFraction;
@@ -112,9 +139,10 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 				Headline = damaged.Length == 0
 					? $"{mine} of ours in good order, {neglected} unattended for {NeglectSeconds:F0}s+, " +
-						$"{loitering} moved out of the base"
+						$"{loitering} moved out of the base, {passive} put into attack mode"
 					: $"{damaged.Length} buildings damaged (worst {worst:P0}), {repaired} repairs ordered, " +
-						$"{neglected} of {mine} unattended for {NeglectSeconds:F0}s+, {loitering} moved out of the base",
+						$"{neglected} of {mine} unattended for {NeglectSeconds:F0}s+, {loitering} moved out of the base, " +
+						$"{passive} put into attack mode",
 
 				ForceValue = damaged.Length,
 			});

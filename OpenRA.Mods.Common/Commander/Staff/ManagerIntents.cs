@@ -102,6 +102,22 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public string Describe() => $"relocate #{ActorId} to {Destination}: {Reason}";
 	}
 
+	/// <summary>
+	/// Put one of our units into attack mode.
+	/// </summary>
+	/// <remarks>
+	/// A unit that holds fire until fired upon concedes the first shot in every engagement it is
+	/// part of, which over a match is a large amount of free damage handed to the opponent. The one
+	/// deliberate exception is a unit on its way to somewhere it is not supposed to be noticed.
+	/// </remarks>
+	public sealed class SetAttackModeIntent : IManagerIntent
+	{
+		public uint ActorId { get; init; }
+		public string CurrentStance { get; init; } = "";
+
+		public string Describe() => $"attack mode for #{ActorId} (was {CurrentStance})";
+	}
+
 	public sealed class AssessmentIntent : IManagerIntent
 	{
 		public string Topic { get; init; } = "";

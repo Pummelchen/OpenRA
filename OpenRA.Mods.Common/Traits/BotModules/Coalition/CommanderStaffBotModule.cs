@@ -271,6 +271,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				// For a building, attendance means somebody repaired it.
 				if (side == Allegiance.Self && !actor.Info.HasTraitInfo<BuildingInfo>() && !actor.IsIdle)
 					database.MarkAttended(actor.ActorID, "field", tick);
+
+				// What each of ours will do when an enemy comes into range, recorded per actor. The
+				// AI default is already to engage, but a default is not a guarantee: anything that
+				// has ever been given a stance keeps it, and a unit that will not shoot until it is
+				// shot at is fighting at a disadvantage it chose.
+				if (side == Allegiance.Self)
+				{
+					var autoTarget = actor.TraitOrDefault<AutoTarget>();
+					database.ObserveStance(actor.ActorID, autoTarget != null,
+						autoTarget == null || autoTarget.Stance == UnitStance.AttackAnything,
+						autoTarget?.Stance.ToString() ?? "");
+				}
 			}
 
 			// Anything previously known and not visible now becomes stale, and anything previously
@@ -404,6 +416,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						Relocate(bot, relocate);
 						break;
 
+					case SetAttackModeIntent attackMode:
+						SetAttackMode(bot, attackMode);
+						break;
+
 					case ConstructIntent:
 						break;
 				}
@@ -462,6 +478,26 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			bot.QueueOrder(new Order("Move", actor, Target.FromCell(bot.Player.World, intent.Destination), false));
 			database.MarkAttended(intent.ActorId, "upkeep", bot.Player.World.WorldTick);
 			database.RecordOrder(intent.ActorId, $"Move {intent.Destination}", "upkeep", bot.Player.World.WorldTick);
+		}
+
+		/// <summary>Puts a unit into attack mode, so it engages rather than waiting to be engaged.</summary>
+		void SetAttackMode(IBot bot, SetAttackModeIntent intent)
+		{
+			var actor = bot.Player.World.GetActorById(intent.ActorId);
+			if (actor == null || actor.IsDead || !actor.IsInWorld || actor.Owner != bot.Player)
+				return;
+
+			var autoTarget = actor.TraitOrDefault<AutoTarget>();
+			if (autoTarget == null || autoTarget.Stance == UnitStance.AttackAnything)
+				return;
+
+			bot.QueueOrder(new Order("SetUnitStance", actor, false)
+			{
+				ExtraData = (uint)UnitStance.AttackAnything,
+			});
+
+			database.RecordOrder(intent.ActorId, "SetUnitStance AttackAnything", "upkeep",
+				bot.Player.World.WorldTick);
 		}
 
 		void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)

@@ -51,11 +51,26 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("How many harvester should player owned at least.")]
 		public readonly int InitialHarvesters = 4;
 
-		[Desc("Harvesters to keep per refinery. One refinery serves several harvesters comfortably -",
-			"it is a delivery point, not a bottleneck - so pinning the fleet to the number of",
-			"refineries sizes the economy by the wrong quantity. Defaults to 1, which is the",
-			"historical behaviour.")]
+		[Desc("Harvesters to keep per refinery at the start of a match. One refinery serves several",
+			"harvesters comfortably - it is a delivery point, not a bottleneck - so pinning the fleet",
+			"to the number of refineries sizes the economy by the wrong quantity. Defaults to 1,",
+			"which is the historical behaviour.")]
 		public readonly int HarvestersPerRefinery = 1;
+
+		[Desc("Harvesters per refinery once the ramp below has fully elapsed. The fleet is grown",
+			"rather than bought at once: early credits are the scarcest thing a commander owns and",
+			"a harvester bought before there is ore traffic to justify it is a tank not built.")]
+		public readonly int HarvestersPerRefineryMaximum = 0;
+
+		[Desc("Ticks over which the per-refinery target rises from HarvestersPerRefinery to",
+			"HarvestersPerRefineryMaximum. 15000 is ten minutes.")]
+		public readonly int HarvestersPerRefineryRampTicks = 15000;
+
+		[Desc("Hard ceiling on the mining fleet, whatever the per-refinery ratio works out to.",
+			"There is only so much ore on a map: past some point extra harvesters queue at the ore",
+			"rather than at the refinery, and every one of them is a unit the war factory did not",
+			"build. Zero means no ceiling.")]
+		public readonly int MaximumHarvesters = 0;
 
 		public override object Create(ActorInitializer init) { return new HarvesterBotModule(init.Self, this); }
 	}
@@ -185,7 +200,10 @@ namespace OpenRA.Mods.Common.Traits
 					// matchups out of four - the one it out-earned was the only one it beat.
 					var refineryCount = AIUtils.CountActorByCommonName(refineries);
 					var wanted = Math.Max(Info.InitialHarvesters,
-						refineryCount * Math.Max(1, Info.HarvestersPerRefinery));
+						refineryCount * Math.Max(1, PerRefineryNow()));
+
+					if (Info.MaximumHarvesters > 0)
+						wanted = Math.Min(wanted, Info.MaximumHarvesters);
 
 					var harvCountTooLow = harvsNum < wanted;
 					if (harvCountTooLow)
@@ -203,6 +221,31 @@ namespace OpenRA.Mods.Common.Traits
 				if (resourceMapModule != null)
 					FindAndOrderLowEffectHarvesterOnResourceMap(bot);
 			}
+		}
+
+		/// <summary>
+		/// <para>
+		/// How many harvesters per refinery to want right now, ramped from the opening figure to the
+		/// maximum over <see cref="HarvesterBotModuleInfo.HarvestersPerRefineryRampTicks"/>.
+		/// </para>
+		/// <para>
+		/// The fleet is grown rather than bought outright, because the two scarcest things in a
+		/// match are not the same thing at the same time. Early credits are scarce and every one
+		/// spent on a harvester is one not spent on the army that has to survive the first attack;
+		/// later, credits are plentiful and what is scarce is ore arriving fast enough to spend
+		/// them. A single fixed ratio has to be wrong at one end or the other.
+		/// </para>
+		/// </summary>
+		int PerRefineryNow()
+		{
+			var start = Math.Max(1, Info.HarvestersPerRefinery);
+			var max = Math.Max(start, Info.HarvestersPerRefineryMaximum);
+			if (max == start)
+				return start;
+
+			var ramp = Math.Max(1, Info.HarvestersPerRefineryRampTicks);
+			var elapsed = Math.Clamp(world.WorldTick, 0, ramp);
+			return start + ((max - start) * elapsed / ramp);
 		}
 
 		void FindAndOrderLowEffectHarvesterOnResourceMap(IBot bot)
