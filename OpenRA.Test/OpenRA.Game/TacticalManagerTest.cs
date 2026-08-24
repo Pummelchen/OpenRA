@@ -121,16 +121,45 @@ namespace OpenRA.Test
 			Assert.That(directive.Rationale, Does.Contain("45"));
 		}
 
-		[TestCase(TestName = "It will not wait forever.")]
+		[TestCase(TestName = "It will not wait forever - but it must actually wait first.")]
 		public void CommitsRatherThanDriftingForever()
 		{
-			// A commander that waits for perfect readiness never attacks at all.
-			var directive = Run(Snapshot(),
-				new ManagerReport { Manager = "unit-production", Readiness = Readiness.Strained, ReadyInSeconds = 600 },
-				new ManagerReport { Manager = "tactical-analysis", Readiness = Readiness.Healthy, RegionOfInterest = 5 });
+			// Two properties in one, and an earlier version of this test asserted the wrong half.
+			// A commander that waits for perfect readiness never attacks; but a LONG ESTIMATE is not
+			// a long wait. The first live run had the chief announce it had "waited 352s" five
+			// seconds into a match, because it read "I need 352 seconds" as "I have spent them".
+			var staff = new CommanderStaff { ThinkInParallel = false };
+			staff.Add(new StubManager
+			{
+				Name = "unit-production",
+				Report = new ManagerReport
+				{
+					Manager = "unit-production",
+					Readiness = Readiness.Strained,
+					ReadyInSeconds = 600,
+				},
+			});
 
-			Assert.That(directive.Stance, Is.EqualTo(Stance.Assault));
-			Assert.That(directive.Rationale, Does.Contain("rather than drifting"));
+			staff.Add(new StubManager
+			{
+				Name = "tactical-analysis",
+				Report = new ManagerReport { Manager = "tactical-analysis", RegionOfInterest = 5 },
+			});
+
+			staff.Add(new TacticalManager { DirectiveTicks = 250, MaximumWaitSeconds = 90 });
+
+			// Straight away it holds: it has been told it needs ten minutes, and has waited nothing.
+			staff.Think(Snapshot(1000));
+			Assert.That(staff.Directive.Stance, Is.EqualTo(Stance.Pressure),
+				$"committed on an estimate rather than a wait: {staff.Directive.Rationale}");
+
+			// Now let real time pass. Past the limit it goes anyway, rather than drifting for the
+			// full ten minutes it was quoted.
+			for (var tick = 1250; tick <= 5000; tick += 250)
+				staff.Think(Snapshot(tick));
+
+			Assert.That(staff.Directive.Stance, Is.EqualTo(Stance.Assault));
+			Assert.That(staff.Directive.Rationale, Does.Contain("rather than drifting"));
 		}
 
 		[TestCase(TestName = "A surplus is treated as a fault, not a comfort.")]

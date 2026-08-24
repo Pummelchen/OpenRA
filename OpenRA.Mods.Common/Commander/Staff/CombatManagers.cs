@@ -256,10 +256,11 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var operative = Operatives.FirstOrDefault(o => snapshot.Units.GetValueOrDefault(o) > 0);
 			if (operative == null)
 			{
-				context.Add(new ProduceUnitIntent
+				context.Request(new ProductionRequest
 				{
-					Unit = Operatives[0],
-					Count = 1,
+					Requester = Name,
+					Item = Operatives[0],
+					Priority = RequestPriority.Wanted,
 					Reason = "authorised for infiltration with nobody to send",
 				});
 
@@ -327,14 +328,17 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					value += state.Self.ForceValue(region, extra);
 			}
 
+			// An arm that does not exist is not an arm that is failing. A commander with no navy on
+			// a landlocked map is in no trouble whatsoever, and reporting otherwise pinned the chief
+			// in Recover for entire matches.
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
-				Readiness = value <= 0f ? Readiness.Critical : Readiness.Healthy,
+				Readiness = value <= 0f ? Readiness.NotApplicable : Readiness.Healthy,
 				Headline = value <= 0f
-					? "this arm does not exist"
+					? "this arm is not fielded"
 					: $"{value:F0} credits under command",
-				ForceValue = value,
+				ForceValue = value > 0f ? value : null,
 			});
 		}
 	}

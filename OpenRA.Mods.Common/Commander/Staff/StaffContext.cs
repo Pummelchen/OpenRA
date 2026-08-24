@@ -23,12 +23,42 @@ namespace OpenRA.Mods.Common.Commander.Staff
 	{
 		readonly List<IManagerIntent> intents;
 		readonly List<ManagerReport> reports;
+		readonly List<ProductionRequest> outgoing;
 
-		public StaffContext(Directive directive, List<IManagerIntent> intents, List<ManagerReport> reports)
+		public StaffContext(Directive directive, List<IManagerIntent> intents, List<ManagerReport> reports,
+			IReadOnlyList<ProductionRequest> standing = null, List<ProductionRequest> outgoing = null)
 		{
 			Directive = directive ?? Directive.Initial;
 			this.intents = intents ?? [];
 			this.reports = reports ?? [];
+			this.outgoing = outgoing ?? [];
+			Requests = standing ?? [];
+		}
+
+		/// <summary>
+		/// <para>
+		/// Production asked for by the rest of the staff, filed on the previous cycle.
+		/// </para>
+		/// <para>
+		/// Production is one domain and needs one owner. An audit of this staff found SIX managers
+		/// queueing items independently - economy, building-production, unit-production,
+		/// intelligence, scouting and special-operations - which is the same "nobody is responsible"
+		/// failure the staff was created to end. Specialists now describe what they need and the
+		/// production managers decide what is actually built.
+		/// </para>
+		/// <para>
+		/// Requests are consumed a cycle after they are filed, for the same reason directives are:
+		/// managers think in parallel, so anything one manager writes cannot be safely read by
+		/// another in the same cycle.
+		/// </para>
+		/// </summary>
+		public IReadOnlyList<ProductionRequest> Requests { get; }
+
+		/// <summary>Ask the production managers for something. They decide whether it is built.</summary>
+		public void Request(ProductionRequest request)
+		{
+			if (request != null)
+				outgoing.Add(request);
 		}
 
 		/// <summary>
@@ -74,16 +104,30 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public bool AnyCritical => reports.Any(r => r.Readiness == Readiness.Critical);
 
 		/// <summary>
-		/// The longest wait any domain reports before it can support a commitment. An assault is
-		/// ready when the slowest necessary part of it is, not when the fastest is.
+		/// <para>
+		/// The longest wait among the domains an assault actually depends on.
+		/// </para>
+		/// <para>
+		/// Deliberately not the maximum over every report. Special operations answering "forty-five
+		/// seconds to build a spy" would otherwise delay a committed assault for an infiltrator
+		/// nobody asked for, and a naval arm on a landlocked map would delay it forever. An assault
+		/// waits for the slowest part <i>of itself</i>.
+		/// </para>
 		/// </summary>
 		public int? LongestWait
 		{
 			get
 			{
-				var waits = reports.Where(r => r.ReadyInSeconds.HasValue).Select(r => r.ReadyInSeconds.Value).ToArray();
+				var waits = reports
+					.Where(r => AssaultCritical.Contains(r.Manager) && r.ReadyInSeconds.HasValue)
+					.Select(r => r.ReadyInSeconds.Value)
+					.ToArray();
+
 				return waits.Length == 0 ? null : waits.Max();
 			}
 		}
+
+		/// <summary>The domains without which an assault is not an assault.</summary>
+		static readonly string[] AssaultCritical = ["unit-production", "economy", "building-production"];
 	}
 }

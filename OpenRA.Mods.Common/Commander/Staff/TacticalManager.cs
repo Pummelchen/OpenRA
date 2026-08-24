@@ -70,6 +70,9 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Opponent-model confidence above which deception and infiltration are worth funding.</summary>
 		public float DeceptionConfidence { get; init; } = 0.25f;
 
+		/// <summary>Tick the chief first wanted to move and could not. -1 when nothing is pending.</summary>
+		int waitingSince = -1;
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			// A standing directive is not reconsidered until it expires. This is the rule that stops
@@ -152,12 +155,27 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				};
 			}
 
-			// 4. The timing. Everyone who reported a wait is waited for - an assault is ready when
-			//    its slowest necessary part is - but not indefinitely, because a commander that
-			//    waits for perfect readiness never attacks at all.
+			// 4. The timing. The assault waits for the slowest domain it depends on - but not
+			//    indefinitely, because a commander that waits for perfect readiness never attacks.
+			//
+			//    Note the distinction between how long a domain says it NEEDS and how long we have
+			//    actually been waiting. An earlier version conflated them: a production manager
+			//    reporting "352 seconds" was read as "we have waited 352 seconds", so five seconds
+			//    into a match the chief announced it was "committing rather than drifting" and threw
+			//    a non-existent army at the enemy. A long estimate is a reason to wait, not to go.
 			var wait = context.LongestWait ?? 0;
 			var ready = wait <= 0;
-			var waitedTooLong = wait > MaximumWaitSeconds;
+
+			if (!ready && waitingSince < 0)
+				waitingSince = snapshot.Tick;
+			else if (ready)
+				waitingSince = -1;
+
+			var waitedSeconds = waitingSince < 0
+				? 0
+				: (snapshot.Tick - waitingSince) / AbstractState.TicksPerSecond;
+
+			var waitedTooLong = waitedSeconds > MaximumWaitSeconds;
 
 			// A surplus is a fault, not a comfort. If the economy has more than production can
 			// absorb, the extra should be in the field rather than in the bank.
@@ -165,6 +183,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			if (ready || waitedTooLong || (surplus && production?.Readiness != Readiness.Critical))
 			{
+				// The clock is deliberately NOT reset here. It measures how long the chief has
+				// wanted to move and could not, and committing out of impatience does not make the
+				// army ready - so resetting it made the chief commit for exactly one directive
+				// period, start the ninety-second clock again, and fall back to pressuring. It
+				// oscillated between assaulting and waiting for the rest of the match. The clock
+				// stops when the domain actually becomes ready, and not before.
+
 				var confident = (intel?.Confidence ?? 0f) >= DeceptionConfidence;
 
 				return new Directive
@@ -185,7 +210,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					Rationale = ready
 						? $"army ready, objective R{target}"
 						: waitedTooLong
-							? $"waited {wait}s for readiness; committing rather than drifting"
+							? $"waited {waitedSeconds}s for readiness; committing rather than drifting"
 							: $"economy surplus with nothing to spend it on - commit to R{target}",
 				};
 			}

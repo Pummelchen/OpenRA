@@ -41,6 +41,11 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Harvesters below which the economy is the priority whatever else is happening.</summary>
 		public int MinimumHarvesters { get; init; } = 4;
 
+		/// <summary>
+		/// Seconds during which a domain that does not exist yet is an opening rather than a crisis.
+		/// </summary>
+		public float OpeningSeconds { get; init; } = 180f;
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var harvesters = snapshot.Units.GetValueOrDefault("harv");
@@ -50,16 +55,25 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// rather than separately.
 			if (refineries == 0)
 			{
-				context.Add(new ConstructIntent { Structure = "proc", Reason = "no refinery: income is zero" });
+				context.Request(new ProductionRequest
+				{
+					Requester = Name,
+					Item = "proc",
+					Priority = RequestPriority.Urgent,
+					Reason = "no refinery: income is zero",
+				});
+
 				return;
 			}
 
 			if (harvesters < MinimumHarvesters)
 			{
-				context.Add(new ProduceUnitIntent
+				context.Request(new ProductionRequest
 				{
-					Unit = "harv",
+					Requester = Name,
+					Item = "harv",
 					Count = MinimumHarvesters - harvesters,
+					Priority = harvesters == 0 ? RequestPriority.Urgent : RequestPriority.Needed,
 					Reason = $"only {harvesters} harvesters",
 				});
 			}
@@ -80,11 +94,17 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// Expanding is only worth it while the income can still be spent. Past that point another
 			// refinery buys nothing, which is exactly the trap this commander fell into with thirty
 			// per cent of its base given over to economy.
-			if (snapshot.BankedFraction < SurplusThreshold && harvesters >= refineries * 2)
+			// Expanding while the army is committed is how a staff of specialists loses a won
+			// position: the chief's stance governs, not this manager's local optimum.
+			var expanding = context.Directive.Stance is Stance.Build or Stance.Probe or Stance.Pressure;
+
+			if (expanding && snapshot.BankedFraction < SurplusThreshold && harvesters >= refineries * 2)
 			{
-				context.Add(new ConstructIntent
+				context.Request(new ProductionRequest
 				{
-					Structure = "proc",
+					Requester = Name,
+					Item = "proc",
+					Priority = RequestPriority.Wanted,
 					Reason = $"{harvesters} harvesters on {refineries} refineries and the income is being spent",
 				});
 			}
@@ -99,8 +119,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// The chief needs to know whether money is a reason to wait, a reason to move, or not a
 			// factor. Surplus is deliberately reported as a *fault* rather than as strength: credits
 			// in the bank have never won anything.
+			// Before the opening is finished, an empty domain is an opening rather than an emergency.
+			var opening = snapshot.Seconds < OpeningSeconds;
+
 			var readiness =
-				refineries == 0 || harvesters == 0 ? Readiness.Critical
+				(refineries == 0 || harvesters == 0) && !opening ? Readiness.Critical
+				: refineries == 0 || harvesters == 0 ? Readiness.Strained
 				: banked > SurplusThreshold ? Readiness.Surplus
 				: harvesters < MinimumHarvesters ? Readiness.Strained
 				: Readiness.Healthy;
@@ -149,6 +173,37 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Power headroom below which production slows and everything suffers at once.</summary>
 		public int MinimumPowerPlants { get; init; } = 2;
 
+		/// <summary>
+		/// Serves the structures the rest of the staff has asked for, arbitrating rather than simply
+		/// obeying - and the chief's stance decides the arbitration. Somebody has to weigh scouting's
+		/// dogs against intelligence's anti-air, and it cannot be either of them.
+		/// </summary>
+		void ServeRequests(CommanderSnapshot snapshot, StaffContext context)
+		{
+			// Under assault everything that is not the assault waits. Expanding the economy while
+			// the army is committed is how a staff of specialists loses a won position.
+			var committed = context.Directive.Stance == Stance.Assault;
+
+			foreach (var request in context.Requests.OrderByDescending(r => r.Priority))
+			{
+				if (!IsStructure(request.Item))
+					continue;
+
+				if (committed && request.Priority < RequestPriority.Urgent)
+					continue;
+
+				context.Add(new ConstructIntent
+				{
+					Structure = request.Item,
+					Reason = $"{request.Requester}: {request.Reason}",
+				});
+			}
+		}
+
+		static bool IsStructure(string item) => item is "proc" or "powr" or "apwr" or "weap" or "barr"
+			or "tent" or "kenn" or "dome" or "agun" or "sam" or "pbox" or "gun" or "ftur" or "tsla"
+			or "atek" or "stek" or "fix" or "hpad" or "afld" or "spen" or "syrd" or "silo";
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var power = snapshot.Structures.GetValueOrDefault("powr") + snapshot.Structures.GetValueOrDefault("apwr");
@@ -174,13 +229,17 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				});
 			}
 
+			ServeRequests(snapshot, context);
+
 			var total = snapshot.Structures.Values.Sum();
+			var opening = snapshot.Seconds < 180f;
+
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
 				Readiness =
-					power == 0 ? Readiness.Critical
-					: factories == 0 ? Readiness.Strained
+					power == 0 && !opening ? Readiness.Critical
+					: power == 0 || factories == 0 ? Readiness.Strained
 					: factories >= 4 ? Readiness.Healthy
 					: Readiness.Strained,
 				Headline = $"{total} structures, {factories} war factories, {power} power plants",
@@ -217,9 +276,39 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Cash above which cheap units are skipped entirely in favour of waiting for heavy ones.</summary>
 		public int HeavyOnlyCashThreshold { get; init; } = 15000;
 
+		static bool IsStructureItem(string item) => item is "proc" or "powr" or "apwr" or "weap"
+			or "barr" or "tent" or "kenn" or "dome" or "agun" or "sam" or "pbox" or "gun" or "ftur"
+			or "tsla" or "atek" or "stek" or "fix" or "hpad" or "afld" or "spen" or "syrd" or "silo";
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var idle = snapshot.Queues.Where(q => q.IsIdle).ToArray();
+
+			// The rest of the staff's requests come before this manager's own preference: a scouting
+			// manager reporting that the commander is blind outranks another tank.
+			//
+			// Urgent is served unconditionally. Anything less is served while there is capacity to
+			// serve it - an earlier version dropped everything below Urgent outright, which meant a
+			// request for the scouts that find the enemy simply vanished, and arbitration that
+			// silently discards information is not arbitration.
+			var served = 0;
+			foreach (var request in context.Requests
+				.Where(r => !IsStructureItem(r.Item))
+				.OrderByDescending(r => r.Priority))
+			{
+				if (request.Priority < RequestPriority.Urgent && served >= Math.Max(1, idle.Length))
+					break;
+
+				context.Add(new ProduceUnitIntent
+				{
+					Unit = request.Item,
+					Count = request.Count,
+					Reason = $"{request.Requester} ({request.Priority.ToString().ToLowerInvariant()}): {request.Reason}",
+				});
+
+				served++;
+			}
+
 			if (idle.Length == 0)
 				return;
 
@@ -258,11 +347,15 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var rate = snapshot.Seconds > 0f ? Math.Max(1f, snapshot.Spent / snapshot.Seconds) : 1f;
 			var readyIn = shortfall <= 0f ? 0 : (int)(shortfall / rate);
 
+			// An army that has not been built yet is not an army that has been lost.
+			var opening = snapshot.Seconds < 180f;
+
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
 				Readiness =
-					army <= 0f ? Readiness.Critical
+					army <= 0f && !opening ? Readiness.Critical
+					: army <= 0f ? Readiness.Strained
 					: army >= target ? Readiness.Surplus
 					: army >= target * 0.5f ? Readiness.Healthy
 					: Readiness.Strained,

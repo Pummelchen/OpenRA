@@ -943,6 +943,11 @@ Player:
 	ToolApiBotModule:
 		RequiresCondition: enable-ai
 		ToolApiPort: 8766
+	CommanderStaffBotModule:
+		RequiresCondition: enable-ai
+		# Computes and logs without acting, so it can be measured against the commander it would
+		# replace before it is allowed to replace it.
+		Enabled: false
 	CommanderPlanBotModule:
 		RequiresCondition: enable-ai
 		# Measured regression: mirror decisiveness fell from 9/24 to 5/24 with this driving. The

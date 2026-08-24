@@ -14,7 +14,18 @@ namespace OpenRA.Mods.Common.Commander.Staff
 	/// <summary>How well a manager's domain is doing, in terms its chief can act on.</summary>
 	public enum Readiness
 	{
-		/// <summary>Failing. Something in this domain will lose the match if left alone.</summary>
+		/// <summary>
+		/// <para>
+		/// Failing. Something in this domain will lose the match if left alone.
+		/// </para>
+		/// <para>
+		/// Reserved for genuine emergencies, and the distinction is not pedantry. The first time this
+		/// staff was run for real, every specialist reported Critical within five seconds - no air
+		/// force, no war factory, no army - because each was describing a domain that did not exist
+		/// yet rather than one that was failing. The chief, which drops everything for a critical
+		/// report, sat in Recover for the whole match. <b>"Not yet" is not "broken".</b>
+		/// </para>
+		/// </summary>
 		Critical,
 
 		/// <summary>Coping, but not able to support anything ambitious.</summary>
@@ -25,6 +36,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 		/// <summary>Has more capacity than it is being asked for - spare that could be committed.</summary>
 		Surplus,
+
+		/// <summary>
+		/// This domain does not apply. A naval arm on a map with no water is not a problem to be
+		/// solved, and a chief that treats it as one will never do anything else.
+		/// </summary>
+		NotApplicable,
 	}
 
 	/// <summary>

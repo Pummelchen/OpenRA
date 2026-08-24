@@ -45,6 +45,8 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		readonly List<ICommanderManager> managers = [];
 		readonly List<IManagerIntent> intents = [];
 		readonly List<ManagerReport> reports = [];
+		readonly List<ProductionRequest> outgoingRequests = [];
+		IReadOnlyList<ProductionRequest> standingRequests = [];
 		readonly Dictionary<string, int> lastRunTick = [];
 
 		/// <summary>
@@ -96,6 +98,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			intents.Clear();
 			reports.Clear();
 
+			// Requests filed last cycle become this cycle's input, for the same reason the directive
+			// does: managers think in parallel, so nothing one writes can be read by another in the
+			// same cycle.
+			standingRequests = outgoingRequests.ToList();
+			outgoingRequests.Clear();
+
 			var due = new List<ICommanderManager>();
 			foreach (var manager in managers)
 			{
@@ -118,10 +126,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// and no lock is needed on the hot path.
 			var specialistIntents = new List<IManagerIntent>[specialists.Count];
 			var specialistReports = new List<ManagerReport>[specialists.Count];
+			var specialistRequests = new List<ProductionRequest>[specialists.Count];
 			for (var i = 0; i < specialists.Count; i++)
 			{
 				specialistIntents[i] = [];
 				specialistReports[i] = [];
+				specialistRequests[i] = [];
 			}
 
 			var parallelCandidates = specialists.Count(m => m.CanThinkInParallel);
@@ -132,17 +142,17 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				System.Threading.Tasks.Parallel.For(0, specialists.Count, i =>
 				{
 					if (specialists[i].CanThinkInParallel)
-						specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i]));
+						specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i], standingRequests, specialistRequests[i]));
 				});
 
 				for (var i = 0; i < specialists.Count; i++)
 					if (!specialists[i].CanThinkInParallel)
-						specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i]));
+						specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i], standingRequests, specialistRequests[i]));
 			}
 			else
 			{
 				for (var i = 0; i < specialists.Count; i++)
-					specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i]));
+					specialists[i].Think(snapshot, new StaffContext(Directive, specialistIntents[i], specialistReports[i], standingRequests, specialistRequests[i]));
 			}
 
 			// Collected strictly by manager order, never by completion order. This is the line that
@@ -151,12 +161,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			{
 				intents.AddRange(specialistIntents[i]);
 				reports.AddRange(specialistReports[i]);
+				outgoingRequests.AddRange(specialistRequests[i]);
 			}
 
 			// Now the chief, reading everything the staff filed this cycle.
 			foreach (var chief in chiefs)
 			{
-				var context = new StaffContext(Directive, intents, reports);
+				var context = new StaffContext(Directive, intents, reports, standingRequests, outgoingRequests);
 				chief.Think(snapshot, context);
 
 				if (context.IssuedDirective != null)
@@ -172,11 +183,16 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Reports filed during the most recent cycle.</summary>
 		public IReadOnlyList<ManagerReport> LastReports => reports;
 
+		/// <summary>Production the staff has asked for, awaiting the production managers' judgement.</summary>
+		public IReadOnlyList<ProductionRequest> PendingRequests => outgoingRequests;
+
 		/// <summary>Resets the cadence, so a new match does not inherit the previous one's timings.</summary>
 		public void Reset()
 		{
 			lastRunTick.Clear();
 			Directive = Directive.Initial;
+			outgoingRequests.Clear();
+			standingRequests = [];
 		}
 	}
 }

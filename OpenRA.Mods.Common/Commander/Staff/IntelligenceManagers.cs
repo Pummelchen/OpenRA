@@ -143,18 +143,32 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// build, so waiting for the first sighting means waiting until it is overhead.
 			if (strategy == OpponentStrategy.Air)
 			{
-				context.Add(new ProduceUnitIntent
+				context.Request(new ProductionRequest
 				{
-					Unit = "mig",
+					Requester = Name,
+					Item = "mig",
 					Count = 2,
+					Priority = RequestPriority.Needed,
 					Reason = $"air expected at {probability:P0} before it is seen",
 				});
 
-				context.Add(new ConstructIntent { Structure = "agun", Reason = "air expected" });
+				context.Request(new ProductionRequest
+				{
+					Requester = Name,
+					Item = "agun",
+					Priority = RequestPriority.Needed,
+					Reason = "air expected",
+				});
 			}
 
 			if (strategy == OpponentStrategy.Rush)
-				context.Add(new ConstructIntent { Structure = "pbox", Reason = "rush expected: hold the early push" });
+				context.Request(new ProductionRequest
+				{
+					Requester = Name,
+					Item = "pbox",
+					Priority = RequestPriority.Needed,
+					Reason = "rush expected: hold the early push",
+				});
 		}
 	}
 
@@ -204,10 +218,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var scouts = snapshot.Units.GetValueOrDefault(ScoutUnit);
 			if (scouts < ConcurrentScouts)
 			{
-				context.Add(new ProduceUnitIntent
+				context.Request(new ProductionRequest
 				{
-					Unit = ScoutUnit,
+					Requester = Name,
+					Item = ScoutUnit,
 					Count = ConcurrentScouts - scouts,
+					Priority = scouts == 0 ? RequestPriority.Urgent : RequestPriority.Needed,
 					Reason = $"only {scouts} scouts out",
 				});
 			}
@@ -217,7 +233,9 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
-				Readiness = scouts == 0 ? Readiness.Critical : Readiness.Healthy,
+				Readiness = scouts == 0 && snapshot.Seconds > 180f ? Readiness.Critical
+					: scouts == 0 ? Readiness.Strained
+					: Readiness.Healthy,
 				Headline = scouts == 0
 					? "blind: no scouts in the field"
 					: $"{scouts} scouts out, looking at R{target}",
