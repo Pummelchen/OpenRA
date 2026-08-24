@@ -181,7 +181,7 @@ seeds against Rush on shattered-mountain.
 
 | Phase | Gate | Status |
 |---|---|---|
-| A — Spend | Banked cash below a third of earnings | **Not met.** 74.3% → 67.6%. Real progress, gate missed. |
+| A — Spend | Banked cash below a third of earnings | **Not met.** 74.3% → 67.6%. Diagnosed to the queue level: the infantry queue idles, the vehicle queue builds cheap units, and Red Alert has one queue per type. |
 | B — Objective accounting | Success rate not 100%; destroyed credits recorded | **Met.** Assaults now require holding the ground; ground-truth structure/cash reporting added to the harness. |
 | C — Find | Enemy base located in most matches | **Instrumented, not yet passing.** Scouting is belief-directed and probes the interior rather than map edges, and the located-base rate is now counted directly instead of inferred from a telemetry line that never existed. |
 | D — Destroy | Enemy structures destroyed, measured outside the fog | **Met.** 41 destroyed against 37 lost over six seeds - the building trade is now favourable, where it was 41 against 58. The bot's own economic-damage metric read zero throughout, because it only counts enemy economy it has *observed*. |
@@ -255,6 +255,35 @@ buying the thing the commander is worst at.
 **Single-seed inspection is how both of these nearly shipped.** Every configuration change in this
 phase moved at least one seed in the flattering direction. The six-seed measurement disagreed with
 the inspected seed three times out of four.
+
+### Where the money actually goes
+
+Instrumenting every production queue across a match finally answered the question the whole of
+Phase A had been circling:
+
+```
+QDIAG cash=25253  earned=25500  spent=5247   | Building=weap Defense=IDLE Infantry=IDLE
+QDIAG cash=107456 earned=148500 spent=46044  | Building=weap Defense=mslo Vehicle=ftrk Infantry=IDLE
+QDIAG cash=217325 earned=315150 spent=102825 | Building=barr Defense=IDLE Vehicle=ftrk Infantry=IDLE
+```
+
+Three facts, none of which any configuration knob reaches:
+
+1. **The infantry queue is idle in seven samples out of eight**, held by the screen-full rule. It is
+   the queue with the most spare capacity and it spends nothing.
+2. **The vehicle queue - the only consistent spender - builds flak trucks**, not tanks. Support
+   promotion puts anti-air at the head of the pick order, so 600-credit vehicles are produced where
+   2,000-credit ones would both spend more and fight better.
+3. Red Alert has **one production queue per player per type**. There is no fourth queue to open;
+   throughput is bounded by what those few queues choose to build.
+
+Spending runs at 86 credits a second against an income of 263. The gap is not idleness that can be
+scheduled away - it is that the queues are working steadily on cheap things.
+
+Turning support promotion off was measured across all four opponents: exchange 1.24 to 1.31, and
+notably better against turtle (0.85 to 1.11). Over eight games that is inside the noise, and it
+would undo a change made to fix a measured absence of artillery and anti-air, so it is recorded
+rather than shipped.
 
 ### The constraint behind Phase A
 
