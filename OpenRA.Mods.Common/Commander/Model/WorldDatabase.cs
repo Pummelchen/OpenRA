@@ -277,6 +277,10 @@ namespace OpenRA.Mods.Common.Commander.Model
 			return entry.IsStructure ? entry.HealthFraction < 1f : entry.LastAttendedTick < 0;
 		}
 
+		/// <summary>How many of ours, of one type, are standing. The economy is counted, not assumed.</summary>
+		public int CountOf(string type) =>
+			Standing(Allegiance.Self).Count(e => e.Type == type);
+
 		/// <summary>Ours that are damaged and still standing, worst first. Repair is cheap and buildings are not.</summary>
 		public IEnumerable<DatabaseEntry> Damaged(float below = 1f) =>
 			Standing(Allegiance.Self)
@@ -360,7 +364,8 @@ namespace OpenRA.Mods.Common.Commander.Model
 			var damaged = Damaged().Count();
 			var neglected = Neglected(60f).Count();
 
-			return $"database: {Count} tracked, mine {mine}, enemy {enemy} ({enemyStructures} structures), " +
+			return $"database: {Count} tracked, mine {mine} ({CountOf("harv")} harv / {CountOf("proc")} proc), " +
+				$"enemy {enemy} ({enemyStructures} structures), " +
 				$"enemy destroyed {destroyed}, rebuilt {EnemyRebuilds}, stale {stale}, " +
 				$"damaged {damaged}, unattended>60s {neglected}";
 		}

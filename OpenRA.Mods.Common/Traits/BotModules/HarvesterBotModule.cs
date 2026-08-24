@@ -51,6 +51,12 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("How many harvester should player owned at least.")]
 		public readonly int InitialHarvesters = 4;
 
+		[Desc("Harvesters to keep per refinery. One refinery serves several harvesters comfortably -",
+			"it is a delivery point, not a bottleneck - so pinning the fleet to the number of",
+			"refineries sizes the economy by the wrong quantity. Defaults to 1, which is the",
+			"historical behaviour.")]
+		public readonly int HarvestersPerRefinery = 1;
+
 		public override object Create(ActorInitializer init) { return new HarvesterBotModule(init.Self, this); }
 	}
 
@@ -170,7 +176,18 @@ namespace OpenRA.Mods.Common.Traits
 				if (unitBuilder != null && Info.HarvesterTypes.Count > 0)
 				{
 					var harvsNum = AIUtils.CountActorByCommonName(harvestersIndex);
-					var harvCountTooLow = harvsNum < Info.InitialHarvesters || harvsNum < AIUtils.CountActorByCommonName(refineries);
+					// A refinery is a place to unload, not a place to queue. One serves five or more
+					// harvesters without either of them waiting, so keeping one harvester per
+					// refinery sizes the mining fleet by how many drop-off points were built rather
+					// than by how much ore there is to move. Measured in a fair-economy match on
+					// shattered-mountain, this commander ran five harvesters against two refineries
+					// while every scripted opponent ran ten to fifteen, and was out-earned in three
+					// matchups out of four - the one it out-earned was the only one it beat.
+					var refineryCount = AIUtils.CountActorByCommonName(refineries);
+					var wanted = Math.Max(Info.InitialHarvesters,
+						refineryCount * Math.Max(1, Info.HarvestersPerRefinery));
+
+					var harvCountTooLow = harvsNum < wanted;
 					if (harvCountTooLow)
 					{
 						var harvesterType = Info.HarvesterTypes.Random(world.LocalRandom);

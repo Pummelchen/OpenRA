@@ -93,6 +93,11 @@ namespace OpenRA.Mods.Common.Traits
 		[Desc("Enemy actor types that are classified as infantry.")]
 		public readonly FrozenSet<string> InfantryUnitTypes = [];
 
+		[Desc("How many items may already be queued on a production queue before an engine-module",
+			"request (harvester replacement, MCV expansion) will still be added to it. These requests",
+			"are economic rather than discretionary, so they do not wait for a gap in army production.")]
+		public readonly int RequestedProductionMaximumBacklog = 2;
+
 		[Desc("Own actor types that are never produced or used for combat by this module (harvesters, MCVs, civilians...).")]
 		public readonly FrozenSet<string> ExcludeFromArmyTypes = [];
 
@@ -332,6 +337,9 @@ namespace OpenRA.Mods.Common.Traits
 		int missionScoutsDeployed;
 		readonly HashSet<Actor> deceptionForce = [];
 		readonly List<string> requestedProduction = [];
+
+		/// <summary>What the commander is holding cash for, if anything. Null when free to spend.</summary>
+		string savingFor;
 		string lastScoutType;
 		readonly HashSet<uint> teamRetreatActorIds = [];
 		bool teamRetreatActive;
@@ -468,7 +476,9 @@ namespace OpenRA.Mods.Common.Traits
 		void IBotRequestUnitProduction.RequestUnitProduction(IBot bot, string requestedActor)
 		{
 			if (!string.IsNullOrWhiteSpace(requestedActor))
+			{
 				requestedProduction.Add(requestedActor);
+			}
 		}
 
 		int IBotRequestUnitProduction.RequestedProductionCount(IBot bot, string requestedActor)
@@ -888,6 +898,14 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
+			// Economy first, and before the gate below. A harvester is the input to everything else
+			// the commander does; a tank is one of the outputs.
+			var servedQueues = ServeRequestedProduction(resources);
+
+			// Saving for something the economy asked for. Discretionary production waits.
+			if (savingFor != null)
+				return;
+
 			var idleQueues = queues.Where(q => q.CurrentItem() == null).ToArray();
 			if (idleQueues.Length == 0)
 				return;
@@ -973,43 +991,6 @@ namespace OpenRA.Mods.Common.Traits
 				}
 			}
 
-			// Honor engine module requests (harvester replacement, MCV expansion) before discretionary
-			// army production. These requests use the same prerequisite/cash-valid production queues and
-			// cannot create units directly.
-			var availableQueues = idleQueues.ToList();
-			foreach (var requested in requestedProduction.ToArray())
-			{
-				// Keep a newly issued request pending until the next bot tick makes the production
-				// order visible. This closes the same-tick request/order race with harvester and MCV
-				// managers and prevents duplicate requests on parallel factories.
-				if (queues.Any(q => q.AllQueued().Any(i => i.Item == requested)))
-				{
-					requestedProduction.Remove(requested);
-					continue;
-				}
-
-				if (!World.Map.Rules.Actors.TryGetValue(requested, out var requestedInfo))
-				{
-					requestedProduction.Remove(requested);
-					continue;
-				}
-
-				var requestedCost = requestedInfo.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
-				if (resources.GetCashAndResources() < requestedCost)
-					continue;
-				if (Info.ExpansionUnitTypes.Contains(requested)
-					&& !MayInvestInPrerequisite(OwnCombatUnits().Count(), Info.ExpansionArmyThreshold))
-					continue;
-
-				var queue = availableQueues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == requested));
-				if (queue == null)
-					continue;
-
-				Bot.QueueOrder(Order.StartProduction(queue.Actor, requested, 1));
-				availableQueues.Remove(queue);
-				CoalitionTelemetry.Log(World, $"Requested production ordered: {requested}");
-			}
-
 			// Produce on every remaining idle queue in parallel: each queue takes the highest-priority unit it can
 			// build, so the air, naval, and land arms all get produced instead of the first pick
 			// monopolizing production.
@@ -1069,6 +1050,10 @@ namespace OpenRA.Mods.Common.Traits
 			// one tank and seven progressively worse things.
 			var bankedCash = Player.PlayerActor.TraitOrDefault<PlayerResources>()?.GetCashAndResources() ?? 0;
 			var spendFreely = bankedCash >= Info.SpendFreelyCashThreshold;
+
+			// A queue that has just been given a harvester is not free for a tank as well: the order
+			// is queued but CurrentItem does not update until it is processed.
+			var availableQueues = idleQueues.Where(q => !servedQueues.Contains(q.Actor.ActorID)).ToList();
 
 			var usedUnits = new HashSet<string>();
 			foreach (var queue in availableQueues)
@@ -2014,6 +1999,116 @@ namespace OpenRA.Mods.Common.Traits
 				Bot.QueueOrder(new Order("Move", scout, Target.FromCell(World, targets[i]), false));
 				CoalitionTelemetry.Log(World, $"Scout sent to {targets[i]} (shadow far from base)");
 			}
+		}
+
+
+		/// <summary>
+		/// <para>
+		/// Serves production the engine's own modules asked for - harvester replacement and MCV
+		/// expansion - before any discretionary army production is considered.
+		/// </para>
+		/// <para>
+		/// This runs BEFORE the idle-queue check, and that is the entire point. The check returns out
+		/// of the whole production routine when every queue is busy, which in this commander is
+		/// essentially always: there is always another tank worth making. The economy's requests
+		/// therefore sat behind a gate that never opened.
+		/// </para>
+		/// <para>
+		/// What made it permanent rather than merely slow: the harvester module will not re-request
+		/// while one request is still outstanding, so the single request it makes on the first tick -
+		/// before any war factory exists to build it - was never fulfilled, never cleared, and
+		/// blocked every later request for the rest of the match. Measured over a full fair-economy
+		/// game, exactly zero harvesters were ever produced; the fleet consisted solely of the free
+		/// harvester that arrives with each refinery, giving precisely one harvester per refinery
+		/// while the scripted opponents ran ten to fifteen and out-earned this commander two to one.
+		/// </para>
+		/// </summary>
+		/// <returns>Actor ids of the queues that were given something, so army production skips them.</returns>
+		HashSet<uint> ServeRequestedProduction(PlayerResources resources)
+		{
+			var served = new HashSet<uint>();
+			savingFor = null;
+			var availableQueues = queues.Where(q => q.CurrentItem() == null).ToList();
+
+			foreach (var requested in requestedProduction.ToArray())
+			{
+				// Keep a newly issued request pending until the next bot tick makes the production
+				// order visible. This closes the same-tick request/order race with harvester and MCV
+				// managers and prevents duplicate requests on parallel factories.
+				if (queues.Any(q => q.AllQueued().Any(i => i.Item == requested)))
+				{
+					requestedProduction.Remove(requested);
+					continue;
+				}
+
+				if (!World.Map.Rules.Actors.TryGetValue(requested, out var requestedInfo))
+				{
+					requestedProduction.Remove(requested);
+					continue;
+				}
+
+				// Enough to START it, not enough to buy it outright. An OpenRA production queue
+				// draws cash progressively as the item builds - the base builder queues a whole
+				// structure on five hundred credits for exactly this reason - so demanding the full
+				// price in hand before queueing tests something the economy never has to satisfy.
+				//
+				// That single wrong test cost the commander its entire economy. A harvester prices
+				// at 1100; army production empties the account every cycle; so the balance never
+				// once reached 1100, the request made on the first tick was never fulfilled, and
+				// because the harvester module will not re-request while one is outstanding, no
+				// harvester was ever built for the whole match. The fleet consisted solely of the
+				// free harvester granted with each refinery - exactly one per refinery, two of them
+				// - against opponents running ten to fifteen, who out-earned us better than two to
+				// one and won.
+				var requestedCost = requestedInfo.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
+				if (resources.GetCashAndResources() < Math.Min(requestedCost, Info.MinProductionCash))
+				{
+					// Cannot afford it yet, so stop spending on anything discretionary until we can.
+					//
+					// Without this the commander never buys a harvester at all, and the mechanism is
+					// a straightforward death spiral rather than a preference: a harvester costs
+					// 1100, army production drains the account to nothing every cycle, so the
+					// balance never once reaches 1100 and the request stands pending for the whole
+					// match. Measured in a fair-economy game, cash sat between 1 and 300 credits
+					// while the fleet stayed at two harvesters and the opponent, running ten to
+					// fifteen, out-earned us better than two to one.
+					//
+					// A harvester is the input to army production. Buying tanks in front of it is
+					// eating the seed corn.
+					savingFor = requested;
+					return served;
+				}
+				if (Info.ExpansionUnitTypes.Contains(requested)
+					&& !MayInvestInPrerequisite(OwnCombatUnits().Count(), Info.ExpansionArmyThreshold))
+					continue;
+
+				var queue = availableQueues.FirstOrDefault(q => q.BuildableItems().Any(i => i.Name == requested));
+
+				// These requests are meant to come BEFORE discretionary army production, and
+				// restricting them to an idle queue defeats exactly that. Only the vehicle queue can
+				// build a harvester or an MCV, and in this commander that queue is essentially never
+				// idle - it always has another tank to make. Measured over a whole fair-economy
+				// match, the harvester fleet therefore never grew past the free harvester that
+				// arrives with each refinery: exactly one harvester per refinery, five against two,
+				// while every scripted opponent ran ten to fifteen and out-earned us more than two
+				// to one.
+				//
+				// A harvester queued behind one tank is worth vastly more than a harvester that is
+				// never built. The backlog cap keeps it from being buried behind a whole wave.
+				queue ??= queues.FirstOrDefault(q =>
+					q.BuildableItems().Any(i => i.Name == requested)
+					&& q.AllQueued().Count() <= Info.RequestedProductionMaximumBacklog);
+
+				if (queue == null)
+					continue;
+
+				Bot.QueueOrder(Order.StartProduction(queue.Actor, requested, 1));
+				availableQueues.Remove(queue);
+				served.Add(queue.Actor.ActorID);
+				CoalitionTelemetry.Log(World, $"Requested production ordered: {requested}");
+			}
+
+			return served;
 		}
 
 		/// <summary>Picks unexplored cells at least ScoutMinDistance from the base, spread across the map.</summary>

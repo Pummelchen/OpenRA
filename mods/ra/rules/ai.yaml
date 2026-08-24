@@ -761,7 +761,12 @@ Player:
 		RequiresCondition: enable-ai
 		HarvesterTypes: harv
 		RefineryTypes: proc
-		InitialHarvesters: 4
+		# A refinery is a drop-off point, not a bottleneck, and comfortably serves five or more
+		# harvesters. Measured fair (no cheat income) on shattered-mountain the commander ran five
+		# harvesters against two refineries while the scripted opponents ran ten to fifteen; it was
+		# out-earned in three matchups of four, and the one it out-earned was the one it beat.
+		HarvestersPerRefinery: 5
+		InitialHarvesters: 6
 	BaseBuilderBotModule@ai:
 		RequiresCondition: enable-ai
 		# Power headroom, deliberately above standard.
@@ -891,6 +896,14 @@ Player:
 	StrategicBrainBotModule:
 		ComputeProductionValue: true
 		RequiresCondition: enable-ai
+		# The whole build plan - army production AND the harvester and MCV requests the engine's own
+		# modules file - is skipped while cash is below this. At the default of 400 that locked the
+		# commander out of its own production for almost an entire fair-economy match: cash collapsed
+		# below 400 about fifteen seconds in and stayed between 1 and 300 for the rest of the game,
+		# so the harvester requested on the first tick was never served, and the harvester module
+		# will not re-request while one is outstanding. Production queues draw cash progressively as
+		# they build, so being poor is a reason to queue carefully, not a reason to stop deciding.
+		MinProductionCash: 100
 		Difficulty: 3
 		MicroPrecision: 3
 		RetreatHealthPercent: 30

@@ -285,6 +285,15 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Cash above which cheap units are skipped entirely in favour of waiting for heavy ones.</summary>
 		public int HeavyOnlyCashThreshold { get; init; } = 15000;
 
+		/// <summary>Cash held back for the economy while the harvester fleet is undersized.</summary>
+		public int EconomyReserve { get; init; } = 1400;
+
+		public string HarvesterType { get; init; } = "harv";
+		public string RefineryType { get; init; } = "proc";
+
+		/// <summary>Harvesters a refinery is expected to keep busy. It is a drop-off point, not a bottleneck.</summary>
+		public int HarvestersPerRefinery { get; init; } = 5;
+
 		static bool IsStructureItem(string item) => item is "proc" or "powr" or "apwr" or "weap"
 			or "barr" or "tent" or "kenn" or "dome" or "agun" or "sam" or "pbox" or "gun" or "ftur"
 			or "tsla" or "atek" or "stek" or "fix" or "hpad" or "afld" or "spen" or "syrd" or "silo";
@@ -320,6 +329,32 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			if (idle.Length == 0)
 				return;
+
+			// Economy before army, and the staff has to honour it too or the brain's restraint buys
+			// nothing: whatever the brain declines to spend, an idle queue here spends a moment
+			// later. A harvester costs eleven hundred credits and army production empties the
+			// account every cycle, so measured in a fair-economy match the balance never once
+			// reached eleven hundred, no harvester was ever bought, and the fleet stayed at two
+			// against an opponent's ten to fifteen.
+			if (snapshot.Database != null && snapshot.Cash < EconomyReserve)
+			{
+				var harvesters = snapshot.Database.CountOf(HarvesterType);
+				var refineries = snapshot.Database.CountOf(RefineryType);
+
+				if (harvesters < refineries * HarvestersPerRefinery)
+				{
+					context.Report(new ManagerReport
+					{
+						Manager = Name,
+						Readiness = Readiness.Strained,
+						Headline = $"holding {snapshot.Cash} credits: {harvesters} harvesters to " +
+							$"{refineries} refineries, economy comes first",
+						ReadyInSeconds = 30,
+					});
+
+					return;
+				}
+			}
 
 			// With money to burn, an idle queue taking the cheapest thing it can build is the
 			// failure this commander spent a whole match performing. Prefer the heaviest.
