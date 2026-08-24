@@ -1194,10 +1194,25 @@ namespace OpenRA.Mods.Common.Traits
 					!used.Contains(u) && queue.BuildableItems().Any(i => i.Name == u));
 
 				if (pick == null)
+				{
+					// An idle air or naval queue that can build nothing the valuation wants is worth
+					// recording: it distinguishes "the arm was never raised" from "the arm was never
+					// buildable", which are very different diagnoses. The list-based path logged
+					// this and the computed path must too - a replacement that is less observable
+					// than what it replaces trades one blind spot for another.
+					if (queue.Info.Type is "Aircraft" or "Ship")
+						CoalitionTelemetry.Log(World,
+							$"Arm production: {queue.Info.Type} idle, nothing in the valuation it can build "
+							+ $"(buildable: {string.Join(",", queue.BuildableItems().Select(i => i.Name))})");
+
 					continue;
+				}
 
 				used.Add(pick);
 				Bot.QueueOrder(Order.StartProduction(queue.Actor, pick, 1));
+
+				if (queue.Info.Type is "Aircraft" or "Ship")
+					CoalitionTelemetry.Log(World, $"Arm production: {queue.Info.Type} queued {pick}");
 			}
 		}
 
