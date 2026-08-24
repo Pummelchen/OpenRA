@@ -101,6 +101,22 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// Requests filed last cycle become this cycle's input, for the same reason the directive
 			// does: managers think in parallel, so nothing one writes can be read by another in the
 			// same cycle.
+			//
+			// KNOWN DEFECT, measured and deliberately left in place. A request survives exactly one
+			// cycle while managers run on their own intervals - a hundred ticks for production, two
+			// and a half thousand for map analysis - and the staff cycles more often than any of
+			// them, so a request is almost always cleared before its consumer is next due. Across a
+			// whole match, not one request filed by any manager reached the manager meant to serve
+			// it; the only construction that happens comes from the building manager's own directly
+			// issued intents.
+			//
+			// Holding requests open until their consumer can see them was implemented and measured,
+			// and it is worse than the bug. Delivering everything cost the exchange ratio 1.74 -> 0.43
+			// across twelve matches, worse in all four matchups, by re-creating the several-managers-
+			// producing-at-once failure this staff exists to end. Delivering only structure requests
+			// still cost 1.74 -> 1.23. The delivery mechanism is not what is missing: the building
+			// manager's arbitration is not yet able to weigh requests against what the base actually
+			// needs, and until it can, delivering them reliably makes the commander worse.
 			standingRequests = outgoingRequests.ToList();
 			outgoingRequests.Clear();
 

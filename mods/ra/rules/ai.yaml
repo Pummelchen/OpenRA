@@ -838,13 +838,20 @@ Player:
 			tent: 6
 			barr: 6
 			kenn: 1
-			dome: 1
+			# Radar at 1% was radar the commander effectively never built, and the air arm is
+			# gated behind it: HPAD and AFLD both require a DOME. The consequence was measured in
+			# a four-bot match - the air manager reported "this arm is not fielded" on every review
+			# for the whole match while the economy reported sixty-three per cent of income going
+			# unspent and the base reached forty-three structures, thirteen of them power plants.
+			# An arm that is unreachable by construction cannot be commanded however good the
+			# manager commanding it.
+			dome: 4
 			weap: 12
-			hpad: 1
+			hpad: 3
 			spen: 1
 			syrd: 1
-			afld: 1
-			afld.ukraine: 1
+			afld: 3
+			afld.ukraine: 3
 			pbox: 7
 			gun: 7
 			ftur: 7
@@ -861,7 +868,10 @@ Player:
 			# coalition hold an early rush with armor instead of being overrun as infantry.
 			barr: 2000
 			tent: 2000
-			dome: 6000
+			# Radar gates the entire air arm - both HPAD and AFLD require a DOME - so this is not
+			# only a delay on radar. At 6000 the first airfield appeared at 776s of an 800s match,
+			# which is an air force that exists on paper and never flies.
+			dome: 3000
 			fix: 3000
 			pbox: 1500
 			gun: 2000
@@ -950,9 +960,14 @@ Player:
 		ToolApiPort: 8766
 	CommanderStaffBotModule:
 		RequiresCondition: enable-ai
-		# Computes and logs without acting, so it can be measured against the commander it would
-		# replace before it is allowed to replace it.
-		Enabled: false
+		# Driving. Measured over twelve matches against four opponents: exchange ratio 0.38 with
+		# the staff off against 1.76 with it on, losses 167 against 72, and the enemy base located
+		# in 11 of 12 matches against 5. The staff was never the weak part - two of the inputs its
+		# chief reasons from were broken. The tactical analyst compared our army against a global
+		# believed enemy total that is anchored to our own peak strength, so the force ratio it
+		# reported was exactly 1.00 on every review of every match and could never cross either of
+		# the chief's thresholds; and reconnaissance never found anyone to attack.
+		Enabled: true
 	CommanderPlanBotModule:
 		RequiresCondition: enable-ai
 		# Measured regression: mirror decisiveness fell from 9/24 to 5/24 with this driving. The

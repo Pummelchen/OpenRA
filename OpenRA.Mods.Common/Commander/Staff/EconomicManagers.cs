@@ -233,6 +233,10 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			var total = snapshot.Structures.Values.Sum();
 			var opening = snapshot.Seconds < 180f;
+			var radar = snapshot.Structures.GetValueOrDefault("dome");
+			var airfields = snapshot.Structures.GetValueOrDefault("hpad")
+				+ snapshot.Structures.GetValueOrDefault("afld")
+				+ snapshot.Structures.GetValueOrDefault("afld.ukraine");
 
 			context.Report(new ManagerReport
 			{
@@ -242,7 +246,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					: power == 0 || factories == 0 ? Readiness.Strained
 					: factories >= 4 ? Readiness.Healthy
 					: Readiness.Strained,
-				Headline = $"{total} structures, {factories} war factories, {power} power plants",
+				// Radar and airfields are named explicitly because their absence is invisible in a
+				// structure count. An air arm is gated behind a DOME and reports only "this arm is
+				// not fielded" when it has none, which reads as irrelevance rather than as the
+				// blockage it is.
+				Headline = $"{total} structures, {factories} war factories, {power} power plants, " +
+					$"{radar} radar, {airfields} airfields",
 
 				// What the chief actually wants from this domain: can the base support a push.
 				ReadyInSeconds = factories >= 2 ? 0 : 60,
