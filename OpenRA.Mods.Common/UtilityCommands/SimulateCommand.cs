@@ -107,6 +107,21 @@ namespace OpenRA.Mods.Common.UtilityCommands
 					value += actor.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
 				}
 
+				// What the base actually turned out to be, as opposed to what the fractions asked
+				// for. A target of twelve per cent war factories means nothing if the builder never
+				// gets round to them.
+				if (p.IsBot)
+				{
+					var byType = new Dictionary<string, int>();
+					foreach (var actor in p.World.ActorsHavingTrait<Building>())
+						if (actor.Owner == p && !actor.IsDead && actor.IsInWorld)
+							byType[actor.Info.Name] = byType.GetValueOrDefault(actor.Info.Name) + 1;
+
+					Console.WriteLine($"  base {p.InternalName}: " + string.Join(" ", byType
+						.OrderByDescending(kv => kv.Value)
+						.Select(kv => $"{kv.Key}={kv.Value}")));
+				}
+
 				var resources = p.PlayerActor.TraitOrDefault<PlayerResources>();
 				var stats = p.PlayerActor.TraitOrDefault<PlayerStatistics>();
 				return (count, value, resources?.GetCashAndResources() ?? 0, resources?.Earned ?? 0,

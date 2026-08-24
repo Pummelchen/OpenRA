@@ -183,7 +183,7 @@ seeds against Rush on shattered-mountain.
 |---|---|---|
 | A — Spend | Banked cash below a third of earnings | **Not met.** 74.3% → 67.6%. Real progress, gate missed. |
 | B — Objective accounting | Success rate not 100%; destroyed credits recorded | **Met.** Assaults now require holding the ground; ground-truth structure/cash reporting added to the harness. |
-| C — Find | Enemy base located in most matches | **Partially.** Scouting is belief-directed and now probes the interior instead of map edges; the located-base rate is still not counted directly. |
+| C — Find | Enemy base located in most matches | **Instrumented, not yet passing.** Scouting is belief-directed and probes the interior rather than map edges, and the located-base rate is now counted directly instead of inferred from a telemetry line that never existed. |
 | D — Destroy | Enemy structures destroyed, measured outside the fog | **Met.** 41 destroyed against 37 lost over six seeds - the building trade is now favourable, where it was 41 against 58. The bot's own economic-damage metric read zero throughout, because it only counts enemy economy it has *observed*. |
 | E — Choose | Mirror decisiveness beats 9 of 24 | **Not met.** 7 of 24 with the searched planner, 8 of 24 without it. The planner ships disabled. |
 | F — Adapt | Each component wired or deleted | **Done.** `StrategyPosterior` wired to counter-production; `RegretMatching` and `BuildOrderSearch` deleted at 6bcef9f. |
@@ -213,6 +213,22 @@ The lesson is that the construction yard is the best target only *if it can actu
 Ranking it first sends the army into the most heavily defended point of the base, where it dies -
 which is what `SiegeTargeting.RequiredLocalSuperiority` exists to prevent and what a target list
 alone cannot express. The right fix is conditional on local superiority, not a constant.
+
+### Two more measured rejections
+
+Both sounded right and both were wrong, which is why they are recorded rather than quietly dropped.
+
+**Kennel spam turned out to be reconnaissance.** With `BuildingLimits` gone the commander built six
+dog kennels, which looked like obvious waste - a kennel makes scout dogs, not army. Removing `kenn`
+from `ProductionTypes` cleaned the base up handsomely (six kennels to one, three war factories to
+four) and improved the exchange ratio on the seed it was inspected on, 1.81 to 2.49. Over six seeds
+it was clearly worse: enemy buildings destroyed fell from 41 to 20 and the exchange ratio to 1.54.
+The spare kennels were funding the dog scouting that finds bases to attack, and the "waste" was
+buying the thing the commander is worst at.
+
+**Single-seed inspection is how both of these nearly shipped.** Every configuration change in this
+phase moved at least one seed in the flattering direction. The six-seed measurement disagreed with
+the inspected seed three times out of four.
 
 ### The constraint behind Phase A
 

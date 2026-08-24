@@ -75,6 +75,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		EnemyBelief belief;
 		StrategyPosterior posterior;
 		readonly HashSet<string> reportedStructures = [];
+		bool enemyBaseFound;
 		RegionGraph graph;
 		Map map;
 
@@ -289,6 +290,27 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// </summary>
 		void ObserveOpponentTells(Player self, int tick)
 		{
+			// Phase C's gate, counted directly rather than inferred. "Did reconnaissance find the
+			// enemy base" was previously answered by looking for a telemetry line that did not
+			// exist, which is not an answer.
+			if (!enemyBaseFound)
+			{
+				foreach (var actor in self.World.ActorsHavingTrait<Building>())
+				{
+					if (actor.Owner == null || actor.IsDead || !actor.IsInWorld
+						|| actor.Owner == self || actor.Owner.IsAlliedWith(self) || actor.Owner.NonCombatant)
+						continue;
+
+					if (actor.Info.Name != "fact" || !self.Shroud.IsVisible(actor.Location))
+						continue;
+
+					enemyBaseFound = true;
+					CoalitionTelemetry.Log(self.World,
+						$"ENEMY BASE LOCATED at {actor.Location} after {tick / 25}s");
+					break;
+				}
+			}
+
 			foreach (var actor in self.World.ActorsHavingTrait<Building>())
 			{
 				if (actor.Owner == null || actor.IsDead || !actor.IsInWorld
