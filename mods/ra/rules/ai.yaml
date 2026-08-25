@@ -1082,6 +1082,7 @@ Player:
 	CommanderCalibrationBotModule:
 		RequiresCondition: enable-ai
 		TrainingLog: commander-training.csv
+		StateLog: commander-states.jsonl
 	CoalitionCheatsBotModule:
 		RequiresCondition: enable-ai
 		InstantBuild: true

@@ -47,6 +47,11 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"disables logging.")]
 		public readonly string TrainingLog = "";
 
+		[Desc("File to append the full position to, as JSON lines: every actor on record, every",
+			"region, and the globals. Unlike TrainingLog's nine scalars this is close to raw, so a",
+			"model can learn its own features instead of inheriting somebody's. Empty disables it.")]
+		public readonly string StateLog = "";
+
 		public override object Create(ActorInitializer init) { return new CommanderCalibrationBotModule(this); }
 	}
 
@@ -68,6 +73,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		readonly List<(int Tick, float[] Features)> trainingSamples = [];
 		WinProbabilityModel evaluator;
 		Player owner;
+		CommanderStaffBotModule staff;
+		readonly List<StateExport.Sample> stateSamples = [];
 		bool logged;
 		bool subscribed;
 		float armyGrowth;
@@ -209,6 +216,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			if (!string.IsNullOrEmpty(info.TrainingLog))
 				trainingSamples.Add((world.WorldTick, StateFeatures.Extract(state, model)));
 
+			// The same position, exported whole. Sampled on the same clock and labelled by the same
+			// result, so the two logs are directly comparable - which is the point: the question
+			// stage one has to answer is whether the full position predicts better than the nine
+			// scalars, and that is only a fair question if nothing else differs.
+			if (!string.IsNullOrEmpty(info.StateLog))
+			{
+				staff ??= owner.PlayerActor.TraitsImplementing<CommanderStaffBotModule>()
+					.FirstOrDefault(m => !m.IsTraitDisabled);
+
+				var database = staff?.Database;
+				if (database != null)
+				{
+					var purse = owner.PlayerActor.TraitOrDefault<PlayerResources>();
+					var idle = owner.PlayerActor.TraitsImplementing<ProductionQueue>()
+						.Count(q => q.Enabled && q.CurrentItem() == null);
+
+					stateSamples.Add(StateExport.Capture(
+						database, state, database.Catalogue, world.WorldTick,
+						purse?.GetCashAndResources() ?? 0,
+						purse?.Earned ?? 0,
+						purse?.Spent ?? 0,
+						idle));
+				}
+			}
+
 			// Predict the horizon under the plan both sides are most likely to be following:
 			// keep producing, hold ground. A forward model that is only accurate when told the
 			// future is not a forward model.
@@ -291,6 +323,29 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			try
 			{
 				SelfPlayLog.Append(path, trainingSamples, won);
+
+				if (!string.IsNullOrEmpty(info.StateLog) && stateSamples.Count > 0)
+				{
+					// A match id that is stable for this match and distinct between matches, so the
+					// Python side can hold out whole games. Splitting by row instead would put
+					// samples from one game on both sides of the split and score memorisation.
+					var matchId = owner.World.WorldTick + owner.InternalName.GetHashCode(StringComparison.Ordinal);
+
+					// How far ahead we finished, in structures, normalised to -1..1. Structures are
+					// the win condition, so this is the graded version of the result rather than a
+					// proxy for it.
+					var ours = owner.World.ActorsHavingTrait<Building>()
+						.Count(a => !a.IsDead && a.IsInWorld && a.Owner == owner);
+					var theirs = owner.World.ActorsHavingTrait<Building>()
+						.Count(a => !a.IsDead && a.IsInWorld && a.Owner != null
+							&& !a.Owner.NonCombatant && !a.Owner.IsAlliedWith(owner));
+
+					var margin = ours + theirs <= 0 ? 0f : (ours - theirs) / (float)(ours + theirs);
+
+					StateExport.Append(Platform.ResolvePath(info.StateLog), stateSamples, won, margin, matchId);
+					CoalitionTelemetry.Log(owner.World,
+						$"State log: {stateSamples.Count} positions, margin {margin:F2} -> {info.StateLog}");
+				}
 				CoalitionTelemetry.Log(owner.World,
 					$"Training log: {trainingSamples.Count} samples labelled {(won ? "won" : "lost")} -> {path}");
 			}

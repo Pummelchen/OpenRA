@@ -61,3 +61,6 @@ __pycache__/
 /ai/mlx-vlm.log
 /ai/brain-server.log
 /ai/brain.log
+commander-states.jsonl
+commander-training.csv
+ml/*.log
