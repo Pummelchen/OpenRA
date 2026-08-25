@@ -971,7 +971,23 @@ Player:
 		AssetDefenseScanRadius: 18
 		DefenseUnitsPerAttacker: 8
 		TacticalEngagementScanRadius: 16
+		# These clocks look like artificial latency and are load-bearing. Dropping them so the
+		# commander reacted in near-real-time was measured over twelve fair-economy matches and cost
+		# almost everything: exchange ratio 0.88 -> 0.25.
+		#
+		# The reason is that they throttle ORDERS, not perception. Re-reading the world costs
+		# nothing; re-issuing orders to units that have not finished carrying out the last set makes
+		# them oscillate instead of fight. Every one of these values was restored after measurement
+		# and each is written out explicitly so the next person can see it was tested rather than
+		# defaulted.
+		#
+		# Fresh state and stable orders are separable, and that is where the real gain is: let the
+		# database update continuously, and keep the cadence on which orders are ISSUED. Nothing
+		# here does that split yet.
 		TacticalOrderRefreshTicks: 75
+		IntelUpdateInterval: 25
+		BuildPlanInterval: 40
+		TacticInterval: 20
 		TacticalAirDangerRadius: 8
 		CounterPursuitCells: 30
 		# Every faction and every unlocked unit, ordered by what it is worth rather than by
@@ -1024,6 +1040,8 @@ Player:
 		RequiresCondition: enable-ai
 		Difficulty: 3
 		ExternalBrainUrl: http://127.0.0.1:8765
+		# Measured at 0 (consult as fast as replies return) and it changed nothing, because no model
+		# server is listening on the port in these benchmarks. Left at 15 until one is.
 		ExternalBrainBreakSeconds: 15
 		ExternalBrainTimeout: 120000
 	RadarCaptureBotModule:
@@ -1034,6 +1052,16 @@ Player:
 		ToolApiPort: 8766
 	CommanderStaffBotModule:
 		RequiresCondition: enable-ai
+		# The single most load-bearing interval in the commander, and the one that surprised me.
+		# Lowering it to 25 - so the staff re-reads the world and re-decides five times as often -
+		# cost the exchange ratio 0.88 -> 0.27 on its own.
+		#
+		# The managers hold PER-CYCLE action budgets: repairs ordered, units relocated out of the
+		# base, escorts assigned, stances corrected. Running the cycle five times as often issues
+		# five times as many orders, and the army spends the match being re-tasked instead of
+		# fighting. The budgets are per cycle, so the cycle length is really an order-rate limit
+		# wearing an interval's clothing.
+		CycleInterval: 125
 		# Driving. Measured over twelve matches against four opponents: exchange ratio 0.38 with
 		# the staff off against 1.76 with it on, losses 167 against 72, and the enemy base located
 		# in 11 of 12 matches against 5. The staff was never the weak part - two of the inputs its
@@ -1044,6 +1072,8 @@ Player:
 		Enabled: true
 	CommanderPlanBotModule:
 		RequiresCondition: enable-ai
+		# Also measured: 50 was no better. Same reason as the staff cycle above.
+		ReviewInterval: 375
 		# Measured regression: mirror decisiveness fell from 9/24 to 5/24 with this driving. The
 		# cause is a gap in the forward model rather than the plan logic - it never altered base
 		# integrity, so an attack was all cost and no possible benefit and the search was right to
