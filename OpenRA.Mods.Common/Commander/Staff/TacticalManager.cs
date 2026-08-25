@@ -70,6 +70,31 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Opponent-model confidence above which deception and infiltration are worth funding.</summary>
 		public float DeceptionConfidence { get; init; } = 0.25f;
 
+		/// <summary>
+		/// Optional perturbation applied to the chosen stance, for generating training data that
+		/// contains counterfactuals.
+		/// </summary>
+		/// <remarks>
+		/// <para>
+		/// Null in normal play, and it must stay null: this deliberately makes the commander play
+		/// worse in order to produce a dataset worth learning from.
+		/// </para>
+		/// <para>
+		/// The reason it exists is measured. A dynamics model trained on this chief's own games
+		/// learned to ignore the action entirely - action sensitivity came out at 0.74% of signal -
+		/// because the chief is near-deterministic given a position, only four of six stances ever
+		/// occur, and no position is ever seen with two different actions. Nothing in such a dataset
+		/// says what a DIFFERENT choice would have done, so search over it has nothing to compare
+		/// and falls back to the prior on every position.
+		/// </para>
+		/// <para>
+		/// This is the same failure that sank three attempts to rank production by its own results
+		/// (0.88 -> 0.74 -> 0.62 exchange ratio). A policy cannot learn to improve on itself from
+		/// data it generated deterministically.
+		/// </para>
+		/// </remarks>
+		public Func<Stance, Stance> Perturb { get; set; }
+
 		/// <summary>Tick the chief first wanted to move and could not. -1 when nothing is pending.</summary>
 		int waitingSince = -1;
 
@@ -81,6 +106,24 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				return;
 
 			var directive = Decide(snapshot, context);
+
+			if (Perturb != null)
+			{
+				var explored = Perturb(directive.Stance);
+				if (explored != directive.Stance)
+					directive = new Directive
+					{
+						Stance = explored,
+						MainEffortRegion = directive.MainEffortRegion,
+						FeintRegion = directive.FeintRegion,
+						AuthoriseSpecialOperations = directive.AuthoriseSpecialOperations,
+						ReserveFraction = directive.ReserveFraction,
+						IssuedTick = directive.IssuedTick,
+						ValidUntilTick = directive.ValidUntilTick,
+						Rationale = $"exploration: {explored} instead of {directive.Stance} ({directive.Rationale})",
+					};
+			}
+
 			context.Issue(directive);
 
 			context.Add(new AssessmentIntent

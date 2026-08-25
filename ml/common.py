@@ -81,10 +81,19 @@ def add_targets(matches):
             # a few hundred matches is the difference between learning and flailing.
             action = row.get("action") or [-1.0, -1.0, -1.0]
             row["y_stance"] = int(action[0]) if 0 <= int(action[0]) < N_STANCES else -1
-            # The genuinely next position in this match, for the dynamics head. Pairing has to
-            # happen here, while the match sequence is still intact: batches are shuffled across
-            # matches later, so "the next row in the batch" is an unrelated game.
-            row["next"] = rows[min(i + 1, n - 1)]
+            # The position ONE DIRECTIVE LATER, not one sample later, for the dynamics head.
+            #
+            # Pairing has to happen here while the match sequence is intact - batches are shuffled
+            # across matches later, so "the next row in the batch" is an unrelated game. But the
+            # horizon matters as much as the pairing, and getting it wrong was measured: with the
+            # immediately-next sample (10 s) the dynamics head learned to ignore the action
+            # entirely, because over ten seconds the state's own drift dwarfs anything a change of
+            # stance does. Action sensitivity came out at 0.3-0.8% of signal and search never left
+            # the prior on 48 of 48 positions.
+            #
+            # A stance is held for 1500 ticks. Predicting that far ahead is asking the question the
+            # action actually answers.
+            row["next"] = rows[min(i + HORIZON_STEPS, n - 1)]
             row["y_aux"] = [
                 future[G_ENEMYARMY] / 40000.0,
                 future[G_OURARMY] / 40000.0,

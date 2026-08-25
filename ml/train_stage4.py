@@ -194,22 +194,42 @@ def main():
 
     torch.save({"state_dict": model.state_dict(), "holdout_brier": brier}, args.save)
 
-    # Does search move off the prior? If it never disagrees, it is decoration.
+    # Does search move off the prior for a REASON? Measured with root noise switched off
+    # and over a large enough sample to mean something.
+    #
+    # The first version of this test used 24 positions with noise on and reported "search is
+    # active" twice. Both were false: with noise off and 96 positions the answer was 0/96
+    # both times. Dirichlet noise tipping ties between six actions whose values differ by
+    # 0.0009 is not search disagreeing with its prior, it is a coin landing on its edge.
     model.eval()
     ents, mask, regs, glob, yv, ya, ys = hb[0][:7]
-    changed, total = 0, min(24, len(yv))
+    total = min(96, len(yv))
+    changed = 0
     for i in range(total):
         h = model.encode(ents[i:i + 1], mask[i:i + 1], regs[i:i + 1], glob[i:i + 1])
-        counts, values = puct_search(model, h)
+        counts, _ = puct_search(model, h, root_noise=0.0)
         greedy = int(torch.softmax(model.policy(h), -1).argmax().item())
         if int(counts.argmax().item()) != greedy:
             changed += 1
 
+    # And how much the action changes the predicted next latent at all - the quantity that
+    # decides whether search CAN discriminate, independent of whether it happened to.
+    with torch.no_grad():
+        h0 = model.encode(ents[:1], mask[:1], regs[:1], glob[:1])
+        rolled = torch.cat([
+            model.dynamics(torch.cat([h0, model.action_embed(torch.tensor([a], device=h0.device))], dim=-1))
+            for a in range(common.N_STANCES)], 0)
+        sensitivity = ((rolled.max(0).values - rolled.min(0).values).mean()
+                       / rolled.abs().mean().clamp(min=1e-9)).item() * 100
+
+    print(f"action sensitivity of the dynamics head: {sensitivity:.2f}% of signal")
+
     print("\n" + "=" * 64)
     print(f"holdout brier {brier:.4f}  acc {acc:.3f}  policy agreement {agree:.3f}  (epoch {ep + 1})")
-    print(f"search changed the chosen action on {changed}/{total} sampled positions")
-    print("VERDICT:", "search is active - it disagrees with its own prior"
-          if changed else "search is inert - it never leaves the prior")
+    print(f"search changed the chosen action on {changed}/{total} positions (noise off)")
+    print("VERDICT:", "search is active - it disagrees with its prior on merit"
+          if changed > total * 0.05 else
+          "search is inert - the dynamics head cannot tell the actions apart")
     print(f"saved: {args.save}")
     print("=" * 64)
 

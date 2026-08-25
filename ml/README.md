@@ -163,3 +163,72 @@ search choice. `NeuralChiefBotModule` posts the position and applies the returne
 stance. **Off unless a URL is configured**: without a server the scripted chief
 keeps command, which is deliberate — every claim the network makes is measured
 against it, so it has to stay a working opponent.
+
+---
+
+# Exploration: the blocker addressed, and what it did not fix
+
+Stage 4 diagnosed the problem as absent counterfactuals — the chief is
+near-deterministic, so no position is ever seen with two different actions. That
+diagnosis was acted on.
+
+`CommanderStaffBotModule.ExplorationRate` perturbs the chief's stance with a given
+probability, drawn from `world.LocalRandom` so the match stays deterministic in
+lockstep. At 0.3 it changes the data exactly as intended:
+
+| | stances present | distribution |
+|---|---|---|
+| before | 4 of 6 | 2:12.9% 3:45.0% 4:39.7% 5:2.5% |
+| after | **6 of 6** | 0:5.0% 1:5.3% 2:13.2% 3:43.8% 4:25.1% 5:7.5% |
+
+**And search is still inert.** Verified properly this time:
+
+| model | action sensitivity | value spread | changed (noise on) | changed (noise OFF) |
+|---|---|---|---|---|
+| deterministic data | 0.82% | 0.0008 | — | — |
+| exploratory data, 10s horizon | 0.40% | 0.0007 | 8/96 | **0/96** |
+| exploratory data, 60s horizon | 0.33% | 0.0009 | 6/96 | **0/96** |
+
+A second hypothesis was tested and also failed: that the dynamics horizon was
+wrong. Predicting the latent ten seconds ahead asks what a stance does in ten
+seconds, when a directive is held for sixty — so the target was moved to match the
+directive's own lifetime. It made no difference.
+
+## Two false positives, and the test that now prevents them
+
+The verdict function originally sampled 24 positions with Dirichlet root noise on.
+It printed **"search is active"** twice. Both were wrong: with noise off and 96
+positions the answer was 0/96 each time. Noise tipping ties between six actions
+whose values differ by 0.0009 is a coin landing on its edge, not search
+disagreeing with its prior.
+
+`train_stage4.py` now tests with noise off, over 96 positions, requires >5% of
+positions to change, and reports the action sensitivity directly so the mechanism
+is visible rather than inferred.
+
+## What is actually blocking search
+
+Not the mechanism — exploration, the pairing bug, PUCT's first-play urgency, and
+the horizon have all now been fixed or ruled out. What remains is **volume**.
+
+A directive lasts 1500 ticks, so a 30,000-tick match holds about 20 decisions, of
+which 30% explore: roughly 6 counterfactual decisions per match, ~450 across 76
+matches. That is nowhere near enough to learn how six actions differ in their
+effect on a 288-dimensional latent. The league loop exists to accumulate exactly
+this, over many generations.
+
+The honest summary: the diagnosis was right and acting on it was necessary, but one
+generation of exploration is not enough, and the volume needed is measured in
+thousands of matches rather than dozens.
+
+## Building on this machine
+
+The repository sits inside a Dropbox-synced folder, and Dropbox races MSBuild's
+delete-then-create when it copies into `bin/`. Compilation is fine; the copy fails
+with "Access to the path ... is denied" and the destination is left missing.
+
+`ml/build.sh` compiles each project with `--no-dependencies` and stages the outputs
+with plain `cp`, which Dropbox does not interfere with. **`dotnet test` cannot be
+worked around the same way** — the test runner needs its adapters alongside the
+assembly in `bin/`, so the suite cannot run until the folder is excluded from
+Dropbox sync (or the repository is moved outside it).
