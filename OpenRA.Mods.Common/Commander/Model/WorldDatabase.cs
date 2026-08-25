@@ -630,7 +630,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			return $"database: {Count} tracked, mine {mine} ({CountOf("harv")} harv / {CountOf("proc")} proc), " +
 				$"enemy {enemy} ({enemyStructures} structures), " +
 				$"enemy destroyed {destroyed}, rebuilt {EnemyRebuilds}, stale {stale}, " +
-				$"damaged {damaged}, unattended>60s {neglected}, not-attacking {passive}";
+				$"damaged {damaged}, unattended>60s {neglected}, not-attacking {passive}, ";
 		}
 	}
 }

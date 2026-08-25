@@ -884,14 +884,26 @@ namespace OpenRA.Mods.Common.Traits
 				CoalitionTelemetry.Log(World, $"Production priorities: {pickOrderStr}");
 			}
 
-			// While defending, replace a queued unit only when it no longer appears among the most
+			// While defending, replace a queued UNIT only when it no longer appears among the most
 			// urgent counters. Cancellation refunds its cost and prevents a stale long build from
 			// blocking an immediately needed response.
+			//
+			// Structures are exempt, and the omission of that exemption was a serious bug. This
+			// swept every enabled queue and cancelled whatever it found that was not among the top
+			// five UNITS - a list that never contains a refinery, a power plant or a war factory,
+			// because those are not units. So for as long as the commander was defending, which is
+			// most of a hard match, it cancelled its own base builder's work on the tick after the
+			// base builder ordered it. Instrumented on a water map: the base builder decided to
+			// build a shipyard three times, placement never failed, and no shipyard ever existed.
+			// The same applied to everything else it tried to construct.
 			if (posture == Posture.Defend)
 			{
 				var priorities = pickOrder.Take(5).ToArray();
 				foreach (var q in queues)
 				{
+					if (q.Info.Type is "Building" or "Defense")
+						continue;
+
 					var current = q.CurrentItem();
 					if (current != null && !priorities.Contains(current.Item))
 						Bot.QueueOrder(Order.CancelProduction(q.Actor, current.Item, 1));

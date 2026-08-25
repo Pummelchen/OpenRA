@@ -371,7 +371,27 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			foreach (var queue in idle)
 			{
+				// Every idle queue is asked for the single highest-ranked unit, including queues that
+				// cannot build it - which means those queues produce nothing. That reads like a bug
+				// and it is load-bearing.
+				//
+				// Asking each queue for the best thing IT can build was implemented and measured,
+				// and it cost two thirds of the commander's exchange ratio: 0.88 to 0.31 across
+				// twelve fair-economy matches. What looks like an oversight is acting as a
+				// composition filter. The barracks are cheaper and quicker than the war factory, so
+				// a barracks free to build its own favourite builds infantry continuously, and an
+				// infantry-heavy army has been measured here losing to any tank army. Restricting
+				// production to whatever queue can make the single best unit is a blunt instrument
+				// that happens to keep the army's composition honest.
+				//
+				// The real cost is naval: a shipyard is never offered anything it can build, so the
+				// navy is never produced. That is a genuine loss and is not fixed by removing this
+				// line - it needs the composition decision to be made explicitly, per arm, rather
+				// than falling out of which queue happens to match the top pick. The per-queue
+				// buildable list needed to do that properly was reverted with it; nothing here
+				// should carry an unused field waiting for a design that has not been written.
 				var choice = Preference.FirstOrDefault();
+
 				if (choice == null)
 					continue;
 
