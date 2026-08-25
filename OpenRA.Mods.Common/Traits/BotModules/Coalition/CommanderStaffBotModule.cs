@@ -65,6 +65,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>The shared record, for the parts of the commander that are not on this staff.</summary>
 		public WorldDatabase Database => database;
+
+		/// <summary>What the chief has currently ordered. This is the commander's macro-action.</summary>
+		public Directive CurrentDirective => staff?.Directive;
 		readonly HashSet<uint> seenThisSweep = [];
 		CombatRecordRegistry registry;
 		RegionGraph graph;
@@ -347,7 +350,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 				// What ours killed.
 				if (outcome.HasKiller && outcome.KillerOwner == player)
-					database.RecordKill(outcome.KillerActorId, outcome.KillerType, victimValue);
+					database.RecordKill(outcome.KillerActorId, outcome.KillerType, victimValue,
+						outcome.VictimType);
 
 				// And what it cost us when we were the ones dying, which is the other half of any
 				// exchange worth the name.

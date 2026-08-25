@@ -67,6 +67,18 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public sealed class Sample
 		{
 			public int Tick { get; init; }
+
+			/// <summary>
+			/// The macro-action in force when this position was recorded: stance, main effort
+			/// region, reserve fraction.
+			/// </summary>
+			/// <remarks>
+			/// Logged so a policy head can be trained to imitate the scripted chief before it is
+			/// ever asked to improve on it. Starting a policy from random choices spends the
+			/// scarcest resource here - matches - on flailing, when a competent starting point is
+			/// already playing every game.
+			/// </remarks>
+			public float[] Action { get; init; } = [];
 			public IReadOnlyList<float[]> Entities { get; init; } = [];
 			public IReadOnlyList<float[]> Regions { get; init; } = [];
 			public float[] Globals { get; init; } = [];
@@ -77,7 +89,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// </summary>
 		public static Sample Capture(
 			WorldDatabase database, AbstractState state, UnitCatalogue catalogue,
-			int tick, int cash, int earned, int spent, int queuesIdle)
+			int tick, int cash, int earned, int spent, int queuesIdle, float[] action = null)
 		{
 			ArgumentNullException.ThrowIfNull(database);
 			ArgumentNullException.ThrowIfNull(state);
@@ -140,7 +152,14 @@ namespace OpenRA.Mods.Common.Commander.Model
 				queuesIdle,
 			};
 
-			return new Sample { Tick = tick, Entities = entities, Regions = regions, Globals = globals };
+			return new Sample
+			{
+				Tick = tick,
+				Entities = entities,
+				Regions = regions,
+				Globals = globals,
+				Action = action ?? [-1f, -1f, -1f],
+			};
 		}
 
 		/// <summary>
@@ -179,6 +198,14 @@ namespace OpenRA.Mods.Common.Commander.Model
 			if (string.IsNullOrEmpty(path))
 				return;
 
+			// One file per process. Generating a useful dataset means running many matches at once,
+			// and several processes appending ten-kilobyte JSON lines to one file interleave them
+			// into garbage that only shows up as a parse error hours later. The reader globs.
+			var pid = Environment.ProcessId;
+			path = Path.Combine(
+				Path.GetDirectoryName(path) ?? "",
+				$"{Path.GetFileNameWithoutExtension(path)}.{pid}{Path.GetExtension(path)}");
+
 			var directory = Path.GetDirectoryName(path);
 			if (!string.IsNullOrEmpty(directory))
 				Directory.CreateDirectory(directory);
@@ -209,6 +236,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 			builder.Append(",\"globals\":");
 			AppendVector(builder, sample.Globals);
+
+			builder.Append(",\"action\":");
+			AppendVector(builder, sample.Action);
+
+			builder.Append(",\"action\":");
+			AppendVector(builder, sample.Action);
 
 			builder.Append('}');
 			return builder.ToString();

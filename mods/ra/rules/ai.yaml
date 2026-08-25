@@ -1079,6 +1079,14 @@ Player:
 		# integrity, so an attack was all cost and no possible benefit and the search was right to
 		# refuse one. Kept, computed and logged; not driving until the model can represent winning.
 		Enabled: false
+	NeuralChiefBotModule:
+		RequiresCondition: enable-ai
+		# Off unless a model server is answering. The scripted chief keeps command otherwise,
+		# and has to remain a working opponent regardless - every claim the network makes is
+		# measured against it.
+		Url: ""
+		Interval: 250
+		TimeoutMilliseconds: 2000
 	CommanderCalibrationBotModule:
 		RequiresCondition: enable-ai
 		TrainingLog: commander-training.csv

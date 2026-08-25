@@ -74,6 +74,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		WinProbabilityModel evaluator;
 		Player owner;
 		CommanderStaffBotModule staff;
+
+		/// <summary>The most recent abstract state, for anything that needs the position as the
+		/// calibrator saw it rather than rebuilding one of its own.</summary>
+		public AbstractState LatestState { get; private set; }
 		readonly List<StateExport.Sample> stateSamples = [];
 		bool logged;
 		bool subscribed;
@@ -185,6 +189,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			var enemies = Enemies(bot.Player).ToArray();
 			var state = extractor.Extract(bot.Player, enemies);
+			LatestState = state;
 
 			// Net army growth: the one army quantity that is actually measurable under fog.
 			// Production alone is not - total spending includes refineries and harvesters that never
@@ -232,12 +237,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					var idle = owner.PlayerActor.TraitsImplementing<ProductionQueue>()
 						.Count(q => q.Enabled && q.CurrentItem() == null);
 
+					// The chief's standing order at this moment - the macro-action a policy head
+					// will be trained to imitate first and improve on later.
+					var directive = staff.CurrentDirective;
+					var action = directive == null
+						? new[] { -1f, -1f, -1f }
+						: new[]
+						{
+							(float)(int)directive.Stance,
+							directive.MainEffortRegion ?? -1,
+							directive.ReserveFraction,
+						};
+
 					stateSamples.Add(StateExport.Capture(
 						database, state, database.Catalogue, world.WorldTick,
 						purse?.GetCashAndResources() ?? 0,
 						purse?.Earned ?? 0,
 						purse?.Spent ?? 0,
-						idle));
+						idle, action));
 				}
 			}
 

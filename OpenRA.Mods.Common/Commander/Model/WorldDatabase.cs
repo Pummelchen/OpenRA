@@ -297,6 +297,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 			razedByType.Clear();
 			replacedByType.Clear();
 			lossesByType.Clear();
+			pairs.Clear();
 			EnemyRebuilds = 0;
 			Tick = 0;
 		}
@@ -458,8 +459,33 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// different questions: the type tells production what to build, the individual tells the
 		/// army which of its units are actually doing the work.
 		/// </remarks>
-		public void RecordKill(uint killerActorId, string killerType, int victimValue)
+		/// <summary>
+		/// What each attacker type has traded at against each victim type, in credits.
+		/// </summary>
+		/// <remarks>
+		/// The input to target selection, and the one part of micro that can be learned from data
+		/// the commander already gathers. "Shoot the nearest" and "shoot the weakest" are both
+		/// guesses; which target a given unit actually trades well against is a measured quantity,
+		/// and it varies by opponent and by what they brought.
+		/// </remarks>
+		readonly Dictionary<(string Killer, string Victim), (int Kills, int Value)> pairs = [];
+
+		/// <summary>Observed trades, attacker against victim, ordered so readers are deterministic.</summary>
+		public IEnumerable<(string Killer, string Victim, int Kills, int Value)> KillPairs() =>
+			pairs.OrderBy(p => p.Key.Killer, StringComparer.Ordinal)
+				.ThenBy(p => p.Key.Victim, StringComparer.Ordinal)
+				.Select(p => (p.Key.Killer, p.Key.Victim, p.Value.Kills, p.Value.Value));
+
+		public void RecordKill(uint killerActorId, string killerType, int victimValue,
+			string victimType = null)
 		{
+			if (!string.IsNullOrEmpty(killerType) && !string.IsNullOrEmpty(victimType))
+			{
+				var key = (killerType, victimType);
+				var seen = pairs.GetValueOrDefault(key);
+				pairs[key] = (seen.Kills + 1, seen.Value + Math.Max(0, victimValue));
+			}
+
 			if (!string.IsNullOrEmpty(killerType))
 			{
 				var record = LossesFor(killerType, false);
