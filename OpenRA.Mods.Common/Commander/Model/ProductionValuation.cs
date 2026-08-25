@@ -65,8 +65,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public static IReadOnlyList<Valuation> Rank(
 			IEnumerable<UnitCombatProfile> candidates,
 			IReadOnlyDictionary<string, float> enemyComposition,
-			float urgency = 0f,
-			IReadOnlyDictionary<string, float> observedLifetimes = null)
+			float urgency = 0f)
 		{
 			ArgumentNullException.ThrowIfNull(candidates);
 			ArgumentNullException.ThrowIfNull(enemyComposition);
@@ -118,29 +117,19 @@ namespace OpenRA.Mods.Common.Commander.Model
 					rationale += $", discounted for {profile.Cost} credits at urgency {urgency:F2}";
 				}
 
-				// What the commander has actually watched happen to this unit type, if it has seen
-				// enough of them die to say anything. A unit that survives twice as long fires for
-				// twice as long, so its value per credit is roughly twice what a snapshot of its
-				// statistics suggests - and which unit that is cannot be known in advance. It
-				// depends on the map, on the opponent, and on what the opponent is fielding today.
+				// What this type has actually traded at, in credits destroyed per credit lost, once
+				// enough of them have fought to say. Everything above this line is arithmetic over
+				// the mod's own tables - what a unit should be worth against a given armour class.
+				// This is the correction for what it turned out to be worth against this opponent,
+				// on this map, given what they actually brought.
 				//
-				// This is deliberately observation and not a list. The obvious list - infantry die,
-				// mammoths do not - is usually right and is exactly the kind of "usually right"
-				// this project has repeatedly had to measure and reverse. Bounded either side so a
-				// run of bad luck cannot eliminate a unit type outright, and so a lucky survivor
-				// cannot monopolise production.
-				if (observedLifetimes != null && observedLifetimes.Count > 1
-					&& observedLifetimes.TryGetValue(profile.Type, out var lifetime) && lifetime > 0f)
-				{
-					var average = observedLifetimes.Values.Where(v => v > 0f).Average();
-					if (average > 0f)
-					{
-						var factor = Math.Clamp(lifetime / average, 0.5f, 2f);
-						score *= factor;
-						rationale += $", observed life {lifetime:F0}s vs {average:F0}s average (x{factor:F2})";
-					}
-				}
-
+				// Deliberately value exchange and not survival time. Survival time was tried first
+				// and is a trap: the longest-lived unit is usually the one that never fights, and
+				// weighting production by it pushed credits into infantry standing in the base as a
+				// screen. Credits destroyed per credit lost cannot be earned by hiding.
+				//
+				// Bounded either side so a run of bad luck cannot eliminate a unit type outright,
+				// and one lucky performer cannot monopolise production while the sample is small.
 				results.Add(new Valuation(profile.Type, score, rationale));
 			}
 
