@@ -81,6 +81,9 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// while nobody repairs it, and by every visibility measure it is perfectly well attended.
 		/// </remarks>
 		public int LastAttendedTick { get; set; } = -1;
+
+		/// <summary>When this was seen to die, or -1. Separate from LastSeenTick, which a survivor also has.</summary>
+		public int DestroyedTick { get; set; } = -1;
 		public string AttendedBy { get; set; } = "";
 
 		/// <summary>
@@ -165,6 +168,42 @@ namespace OpenRA.Mods.Common.Commander.Model
 		readonly Dictionary<string, int> razedByType = [];
 		readonly Dictionary<string, int> replacedByType = [];
 
+		/// <summary>
+		/// What became of everything of ours, by type: how many were lost and how long they lasted.
+		/// </summary>
+		/// <remarks>
+		/// The commander's only honest source of "what actually survives here". Which unit lasts
+		/// longest is a question with a real answer that varies by map, by opponent and by what the
+		/// enemy happens to be fielding, and any list written in advance is somebody's opinion about
+		/// a different match. Rifles die quickly and heavy armour does not, but the commander should
+		/// arrive at that by watching its own losses rather than by being told.
+		/// </remarks>
+		readonly Dictionary<string, LossRecord> lossesByType = [];
+
+		/// <summary>What happened to one type of ours over the match.</summary>
+		public sealed class LossRecord
+		{
+			public string Type { get; init; } = "";
+			public bool IsStructure { get; init; }
+
+			/// <summary>How many of this type have been seen at all, and how many were lost.</summary>
+			public int EverSeen { get; set; }
+			public int Lost { get; set; }
+
+			/// <summary>Ticks lived, summed over those that died. Nothing is assumed about survivors.</summary>
+			public long LifetimeTicks { get; set; }
+
+			/// <summary>Seconds the average one lasted before dying. Zero when none have died yet.</summary>
+			public float MeanLifetimeSeconds =>
+				Lost <= 0 ? 0f : LifetimeTicks / (float)Lost / AbstractState.TicksPerSecond;
+
+			/// <summary>Share of those ever seen that are now gone. The blunter measure, and the one that needs no clock.</summary>
+			public float LossRate => EverSeen <= 0 ? 0f : Lost / (float)EverSeen;
+
+			public override string ToString() =>
+				$"{Type}: {Lost}/{EverSeen} lost, mean life {MeanLifetimeSeconds:F0}s";
+		}
+
 		/// <summary>Tick of the most recent update, so readers can age entries without a World.</summary>
 		public int Tick { get; private set; }
 
@@ -173,8 +212,35 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		public int Count => entries.Count;
 
-		/// <summary>Every entry, ordered by actor id so that iteration order never depends on hashing.</summary>
-		public IEnumerable<DatabaseEntry> All => entries.Values.OrderBy(e => e.ActorId);
+		/// <summary>
+		/// Every entry, ordered by actor id so that iteration order never depends on hashing.
+		/// </summary>
+		/// <remarks>
+		/// Cached, and rebuilt only when an entry is added. Sorting on every read looks harmless and
+		/// is not: a dozen managers ask this several times each per cycle, over hundreds of tracked
+		/// actors, and the repeated sort was enough on its own to push the slowest tick of an
+		/// eight-bot match past its budget - 1333ms against 500. The ORDER is not negotiable, since
+		/// a lockstep simulation whose decisions follow hash layout desyncs; the repeated sorting
+		/// is.
+		/// </remarks>
+		public IReadOnlyList<DatabaseEntry> All
+		{
+			get
+			{
+				if (ordered == null)
+				{
+					ordered = new List<DatabaseEntry>(entries.Values);
+					ordered.Sort((a, b) => a.ActorId.CompareTo(b.ActorId));
+				}
+
+				return ordered;
+			}
+		}
+
+		List<DatabaseEntry> ordered;
+
+		/// <summary>Standing counts of ours by type, kept in step with the entries above.</summary>
+		readonly Dictionary<string, int> standingByType = [];
 
 		public DatabaseEntry Find(uint actorId) => entries.GetValueOrDefault(actorId);
 
@@ -182,8 +248,11 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public void Clear()
 		{
 			entries.Clear();
+			ordered = null;
+			standingByType.Clear();
 			razedByType.Clear();
 			replacedByType.Clear();
+			lossesByType.Clear();
 			EnemyRebuilds = 0;
 			Tick = 0;
 		}
@@ -210,6 +279,13 @@ namespace OpenRA.Mods.Common.Commander.Model
 				};
 
 				entries[actorId] = entry;
+				ordered = null;
+
+				if (side == Allegiance.Self)
+				{
+					LossesFor(entry.Type, isStructure).EverSeen++;
+					standingByType[entry.Type] = standingByType.GetValueOrDefault(entry.Type) + 1;
+				}
 
 				// A structure standing where one was destroyed is the opponent replacing what it
 				// lost. Counting that is the difference between "we are winning the siege" and "we
@@ -312,9 +388,16 @@ namespace OpenRA.Mods.Common.Commander.Model
 			entry.Stance = stance ?? "";
 		}
 
-		/// <summary>How many of ours, of one type, are standing. The economy is counted, not assumed.</summary>
-		public int CountOf(string type) =>
-			Standing(Allegiance.Self).Count(e => e.Type == type);
+		/// <summary>
+		/// How many of ours, of one type, are standing. The economy is counted, not assumed.
+		/// </summary>
+		/// <remarks>
+		/// Maintained incrementally rather than counted on demand. Several managers ask this for
+		/// several types every cycle - the naval manager alone asks five times - and each answer
+		/// used to be a filtered walk of every actor on record. Measured on an eight-bot match that
+		/// accounted for most of a nineteen per cent rise in the slowest tick.
+		/// </remarks>
+		public int CountOf(string type) => standingByType.GetValueOrDefault(type);
 
 		/// <summary>Ours that are damaged and still standing, worst first. Repair is cheap and buildings are not.</summary>
 		public IEnumerable<DatabaseEntry> Damaged(float below = 1f) =>
@@ -332,6 +415,17 @@ namespace OpenRA.Mods.Common.Commander.Model
 			entry.Status = RecordStatus.Destroyed;
 			entry.LastSeenTick = tick;
 			entry.HealthFraction = 0f;
+			entry.DestroyedTick = tick;
+
+			if (entry.Side == Allegiance.Self)
+			{
+				var record = LossesFor(entry.Type, entry.IsStructure);
+				record.Lost++;
+				record.LifetimeTicks += Math.Max(0, tick - entry.FirstSeenTick);
+
+				var standing = standingByType.GetValueOrDefault(entry.Type) - 1;
+				standingByType[entry.Type] = Math.Max(0, standing);
+			}
 
 			if (entry.IsStructure && entry.Side == Allegiance.Enemy)
 				razedByType[entry.Type] = razedByType.GetValueOrDefault(entry.Type) + 1;
@@ -355,6 +449,41 @@ namespace OpenRA.Mods.Common.Commander.Model
 			entry.OrderedBy = orderedBy;
 			entry.OrderedTick = tick;
 		}
+
+		LossRecord LossesFor(string type, bool isStructure)
+		{
+			if (!lossesByType.TryGetValue(type, out var record))
+				lossesByType[type] = record = new LossRecord { Type = type, IsStructure = isStructure };
+
+			return record;
+		}
+
+		/// <summary>What has become of each of our types, ordered by name so readers are deterministic.</summary>
+		public IEnumerable<LossRecord> Losses(bool structures) =>
+			lossesByType.Values.Where(r => r.IsStructure == structures).OrderBy(r => r.Type, StringComparer.Ordinal);
+
+		/// <summary>
+		/// How long one of ours of this type lasts, in seconds, once enough have died to say.
+		/// Returns null while the sample is too small to be worth acting on.
+		/// </summary>
+		/// <remarks>
+		/// The minimum sample matters. Acting on one dead tank teaches the commander that tanks are
+		/// fatal; this project has already had to reverse several confident conclusions drawn from
+		/// exactly that kind of evidence.
+		/// </remarks>
+		public float? MeanLifetimeSeconds(string type, int minimumSample = 3)
+		{
+			if (!lossesByType.TryGetValue(type, out var record) || record.Lost < minimumSample)
+				return null;
+
+			return record.MeanLifetimeSeconds;
+		}
+
+		/// <summary>Our structures known to be destroyed, most recent first. What needs replacing.</summary>
+		public IEnumerable<DatabaseEntry> LostStructures() =>
+			All.Where(e => e.Side == Allegiance.Self && e.IsStructure && e.Status == RecordStatus.Destroyed)
+				.OrderByDescending(e => e.DestroyedTick)
+				.ThenBy(e => e.ActorId);
 
 		/// <summary>Entries on one side, live or merely unseen, never ones known to be dead.</summary>
 		public IEnumerable<DatabaseEntry> Standing(Allegiance side) =>

@@ -46,6 +46,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		[Desc("Ticks between one-line summaries of the shared database. 2500 is roughly every 100 seconds.")]
 		public readonly int DatabaseReportInterval = 2500;
 
+
 		public override object Create(ActorInitializer init) { return new CommanderStaffBotModule(this); }
 	}
 
@@ -61,6 +62,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>Shared per-match memory. Written here on the game thread, read by managers while they think.</summary>
 		readonly WorldDatabase database = new();
+
+		/// <summary>The shared record, for the parts of the commander that are not on this staff.</summary>
+		public WorldDatabase Database => database;
 		readonly HashSet<uint> seenThisSweep = [];
 		RegionGraph graph;
 		Map map;
@@ -186,6 +190,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			staff.Add(new BuildingProductionManager());
 			staff.Add(new RecordsManager());
 			staff.Add(new UpkeepManager());
+			staff.Add(new EscortManager());
+			staff.Add(new NavalManager());
 			staff.Add(new UnitProductionManager());
 			staff.Add(new TacticalAnalysisManager());
 			staff.Add(new DefenceManager());
@@ -420,6 +426,24 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						SetAttackMode(bot, attackMode);
 						break;
 
+					case EscortIntent escort:
+						Escort(bot, escort);
+						break;
+
+					case CovertTransitIntent covert:
+						CovertTransit(bot, covert);
+						break;
+
+					// The chief's overview, and the arbitration notes beneath it. Recorded rather than
+					// acted on: this is the commander explaining itself, which is what makes a wrong
+					// decision diagnosable after the fact instead of merely regrettable.
+					// Not rate-limited here on purpose: the chief only produces an overview when it
+					// issues a directive, which is once a minute, and gating that again on a tick
+					// interval means the two almost never coincide.
+					case AssessmentIntent assessment when assessment.Topic == "overview":
+						CoalitionTelemetry.Log(bot.Player.World, $"CEO: {assessment.Finding}");
+						break;
+
 					case ConstructIntent:
 						break;
 				}
@@ -498,6 +522,88 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			database.RecordOrder(intent.ActorId, "SetUnitStance AttackAnything", "upkeep",
 				bot.Player.World.WorldTick);
+		}
+
+		/// <summary>Sets one of our units to follow and defend a harvester for as long as both live.</summary>
+		void Escort(IBot bot, EscortIntent intent)
+		{
+			var world = bot.Player.World;
+			var escort = world.GetActorById(intent.EscortId);
+			var harvester = world.GetActorById(intent.HarvesterId);
+
+			if (escort == null || escort.IsDead || !escort.IsInWorld || escort.Owner != bot.Player)
+				return;
+
+			if (harvester == null || harvester.IsDead || !harvester.IsInWorld || harvester.Owner != bot.Player)
+				return;
+
+			if (escort.TraitOrDefault<Guard>() == null || harvester.TraitOrDefault<Guardable>() == null)
+				return;
+
+			bot.QueueOrder(new Order("Guard", escort, Target.FromActor(harvester), false));
+
+			// The pairing is recorded on the escort rather than held in the manager, so it survives
+			// across cycles and goes stale automatically when either actor dies.
+			database.MarkAttended(intent.EscortId, EscortManager.Attendant, world.WorldTick);
+			database.RecordOrder(intent.EscortId, $"Guard {intent.HarvesterId}",
+				EscortManager.Attendant, world.WorldTick);
+		}
+
+		/// <summary>
+		/// Silences operatives for the duration of an infiltration, and releases them afterwards.
+		/// </summary>
+		/// <remarks>
+		/// Marking them attended by the covert attendant is what keeps the upkeep manager from
+		/// helpfully putting them straight back into attack mode; releasing the mark is what lets it
+		/// do so again once the operation is over.
+		/// </remarks>
+		void CovertTransit(IBot bot, CovertTransitIntent intent)
+		{
+			if (string.IsNullOrEmpty(intent.OperativeType))
+				return;
+
+			var world = bot.Player.World;
+			var tick = world.WorldTick;
+
+			// Driven off the record rather than by scanning every actor in the world. The scan is
+			// the obvious way to write this and costs a full world walk per operative type per
+			// cycle, for the sake of finding the handful of actors the record already indexes.
+			foreach (var entry in database.Standing(Allegiance.Self))
+			{
+				if (entry.Type != intent.OperativeType)
+					continue;
+
+				var actor = world.GetActorById(entry.ActorId);
+				if (actor == null || actor.IsDead || !actor.IsInWorld || actor.Owner != bot.Player)
+					continue;
+
+				var autoTarget = actor.TraitOrDefault<AutoTarget>();
+				if (autoTarget == null)
+					continue;
+
+				var alreadyCovert = entry.AttendedBy == UpkeepManager.CovertAttendant;
+
+				if (intent.InTransit)
+				{
+					if (alreadyCovert)
+						continue;
+
+					bot.QueueOrder(new Order("SetUnitStance", actor, false)
+					{
+						ExtraData = (uint)UnitStance.HoldFire,
+					});
+
+					database.MarkAttended(actor.ActorID, UpkeepManager.CovertAttendant, tick);
+					database.RecordOrder(actor.ActorID, "SetUnitStance HoldFire",
+						UpkeepManager.CovertAttendant, tick);
+				}
+				else if (alreadyCovert)
+				{
+					// Released. The upkeep manager restores attack mode on its next cycle, which
+					// keeps one manager responsible for stance rather than two.
+					database.MarkAttended(actor.ActorID, "", tick);
+				}
+			}
 		}
 
 		void QueueItem(IBot bot, ProductionQueue[] queues, string item, int count)

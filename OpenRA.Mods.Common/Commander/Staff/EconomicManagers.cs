@@ -140,6 +140,15 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
+				Assessment = new Assessment
+				{
+					Present = $"{snapshot.Cash} in hand, {snapshot.BankedFraction:P0} of everything earned unspent",
+					Target = snapshot.BankedFraction > 0.35f
+						? "convert the surplus into something that fights or something that mines"
+						: "keep income ahead of what production can absorb",
+					Action = "reporting; the production managers decide what the money buys",
+					Progress = Math.Clamp(1f - snapshot.BankedFraction, 0f, 1f),
+				},
 				Readiness = readiness,
 				Headline = headline,
 				NetCreditsPerSecond = snapshot.Seconds > 0 ? snapshot.Earned / snapshot.Seconds : 0f,
@@ -394,9 +403,22 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// An army that has not been built yet is not an army that has been lost.
 			var opening = snapshot.Seconds < 180f;
 
+			var harvesters = snapshot.Database?.CountOf(HarvesterType) ?? 0;
+			var refineries = snapshot.Database?.CountOf(RefineryType) ?? 0;
+
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
+				Assessment = new Assessment
+				{
+					Present = $"{army:F0} credits of army, {idleQueues} queues idle, " +
+						$"{harvesters} harvesters to {refineries} refineries",
+					Target = army >= target
+						? "spend the army rather than accumulate it"
+						: $"{target:F0} credits of army before the next commitment",
+					Action = idleQueues > 0 ? $"filling {idleQueues} idle queues" : "queues busy",
+					Progress = target <= 0f ? null : Math.Clamp(army / target, 0f, 1f),
+				},
 				Readiness =
 					army <= 0f && !opening ? Readiness.Critical
 					: army <= 0f ? Readiness.Strained

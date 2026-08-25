@@ -65,7 +65,8 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public static IReadOnlyList<Valuation> Rank(
 			IEnumerable<UnitCombatProfile> candidates,
 			IReadOnlyDictionary<string, float> enemyComposition,
-			float urgency = 0f)
+			float urgency = 0f,
+			IReadOnlyDictionary<string, float> observedLifetimes = null)
 		{
 			ArgumentNullException.ThrowIfNull(candidates);
 			ArgumentNullException.ThrowIfNull(enemyComposition);
@@ -115,6 +116,29 @@ namespace OpenRA.Mods.Common.Commander.Model
 					var relativeCost = profile.Cost / 1000f;
 					score /= 1f + (urgency * relativeCost);
 					rationale += $", discounted for {profile.Cost} credits at urgency {urgency:F2}";
+				}
+
+				// What the commander has actually watched happen to this unit type, if it has seen
+				// enough of them die to say anything. A unit that survives twice as long fires for
+				// twice as long, so its value per credit is roughly twice what a snapshot of its
+				// statistics suggests - and which unit that is cannot be known in advance. It
+				// depends on the map, on the opponent, and on what the opponent is fielding today.
+				//
+				// This is deliberately observation and not a list. The obvious list - infantry die,
+				// mammoths do not - is usually right and is exactly the kind of "usually right"
+				// this project has repeatedly had to measure and reverse. Bounded either side so a
+				// run of bad luck cannot eliminate a unit type outright, and so a lucky survivor
+				// cannot monopolise production.
+				if (observedLifetimes != null && observedLifetimes.Count > 1
+					&& observedLifetimes.TryGetValue(profile.Type, out var lifetime) && lifetime > 0f)
+				{
+					var average = observedLifetimes.Values.Where(v => v > 0f).Average();
+					if (average > 0f)
+					{
+						var factor = Math.Clamp(lifetime / average, 0.5f, 2f);
+						score *= factor;
+						rationale += $", observed life {lifetime:F0}s vs {average:F0}s average (x{factor:F2})";
+					}
 				}
 
 				results.Add(new Valuation(profile.Type, score, rationale));

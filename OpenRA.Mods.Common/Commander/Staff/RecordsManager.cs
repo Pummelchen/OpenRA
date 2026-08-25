@@ -48,6 +48,9 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Seconds after which the picture of a remembered enemy structure is called old.</summary>
 		public float StaleSeconds { get; init; } = 90f;
 
+		/// <summary>Losses of a type before its average lifetime is worth reporting. One dead tank proves nothing.</summary>
+		public int MinimumLossSample { get; init; } = 3;
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var database = snapshot.Database;
@@ -78,9 +81,44 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var blind = standing.Length > 0 && oldestSeconds >= StaleSeconds
 				&& standing.All(e => e.Status != RecordStatus.Live);
 
+			// What the record says about our own losses, which is the only honest answer to "what
+			// survives here" and is deliberately not a list written in advance.
+			var unitLosses = database.Losses(structures: false)
+				.Where(r => r.Lost >= MinimumLossSample)
+				.OrderByDescending(r => r.MeanLifetimeSeconds)
+				.ToArray();
+
+			var lostStructures = database.LostStructures().ToArray();
+
+			var past = unitLosses.Length switch
+			{
+				0 => lostStructures.Length == 0 ? "" : $"{lostStructures.Length} of our structures destroyed so far",
+				_ => $"longest-lived of ours is {unitLosses[0].Type} at {unitLosses[0].MeanLifetimeSeconds:F0}s, " +
+					$"shortest {unitLosses[^1].Type} at {unitLosses[^1].MeanLifetimeSeconds:F0}s " +
+					$"({unitLosses.Length} types with enough losses to judge)",
+			};
+
+			var target = outpaced
+				? "stop trading structure for structure: their replacement rate is the thing to beat"
+				: standing.Length == 0
+					? "find something of theirs worth destroying"
+					: blind
+						? "re-establish contact before committing to the objective on record"
+						: $"reduce the {standing.Length} enemy structures on record";
+
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
+				Assessment = new Assessment
+				{
+					Past = past,
+					Present = $"{standing.Length} enemy structures on record, {destroyed} destroyed, {rebuilt} replaced",
+					Target = target,
+					Action = "reporting only; this manager keeps the books rather than spending from them",
+					Progress = destroyed + standing.Length <= 0
+						? null
+						: destroyed / (float)(destroyed + standing.Length),
+				},
 
 				// Being outpaced is a strained position however good the raw kill count looks, and
 				// saying so is this manager's entire reason for existing. It is never Critical:

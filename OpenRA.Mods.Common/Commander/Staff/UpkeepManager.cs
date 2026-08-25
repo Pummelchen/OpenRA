@@ -68,6 +68,9 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Attendant marking a unit as on covert business, and therefore exempt from attack mode.</summary>
 		public const string CovertAttendant = "special-ops";
 
+		/// <summary>Seconds within which a destroyed structure counts as "just lost" and wants replacing elsewhere.</summary>
+		public float RecentLossSeconds { get; init; } = 120f;
+
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var database = snapshot.Database;
@@ -126,9 +129,33 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var mine = database.Standing(Allegiance.Self).Count();
 			var worst = damaged.Length == 0 ? 1f : damaged[0].HealthFraction;
 
+			var lostStructures = database.LostStructures().ToArray();
+			var recentlyLost = lostStructures
+				.Where(e => (snapshot.Tick - e.DestroyedTick) / (float)AbstractState.TicksPerSecond <= RecentLossSeconds)
+				.ToArray();
+
 			context.Report(new ManagerReport
 			{
 				Manager = Name,
+				Assessment = new Assessment
+				{
+					Past = lostStructures.Length == 0
+						? "nothing of ours destroyed yet"
+						: $"{lostStructures.Length} of our structures destroyed" +
+							(recentlyLost.Length == 0
+								? ""
+								: $", {recentlyLost.Length} in the last {RecentLossSeconds:F0}s " +
+									$"({string.Join(",", recentlyLost.Take(4).Select(e => e.Type))})"),
+					Present = $"{mine} of ours standing, {damaged.Length} damaged, {neglected} unattended",
+					Target = recentlyLost.Length > 0
+						? $"replace what was just lost somewhere the same attack cannot reach"
+						: damaged.Length > 0
+							? "everything of ours back to full health"
+							: "keep the base clear and everything in repair",
+					Action = $"{repaired} repairs ordered, {loitering} moved out of the base, " +
+						$"{passive} put into attack mode",
+					Progress = mine <= 0 ? null : 1f - (damaged.Length / (float)mine),
+				},
 
 				// Damage to our own base is a strained position, not a crisis: it is Critical only
 				// when there is nothing left to look after.

@@ -62,6 +62,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 	/// </summary>
 	public sealed class ManagerReport
 	{
+		/// <summary>
+		/// What this manager worked out, in four parts: what happened, what is true now, what it
+		/// wants true shortly, and what it ordered. Optional - a manager with nothing to add leaves
+		/// it null and the chief reads only the headline.
+		/// </summary>
+		public Assessment Assessment { get; init; }
+
 		/// <summary>Which specialist is speaking.</summary>
 		public string Manager { get; init; } = "";
 

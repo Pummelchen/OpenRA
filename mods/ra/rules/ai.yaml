@@ -415,7 +415,9 @@ Player:
 			gap: 2
 			fix: 1
 			agun: 5
-			sam: 1
+			# Matched to agun so whichever faction the commander plays gets the same anti-air
+			# cover around each cluster. At 1 the Soviet side had almost none.
+			sam: 5
 			atek: 1
 			stek: 1
 			mslo: 1
@@ -578,12 +580,20 @@ Player:
 		ConstructionYardTypes: fact
 		McvFactoryTypes: weap
 		MoveOldConyardFirst: true
-		MinimumConstructionYardCount: 2
+		MinimumConstructionYardCount: 3
 	McvExpansionManagerBotModule@normal:
 		RequiresCondition: enable-normal-ai
 		McvTypes: mcv
 		ConstructionYardTypes: fact
 		McvFactoryTypes: weap
+		# Three separate base clusters rather than one block. The base builder already places
+		# ordinary structures around a randomly chosen construction yard and defences around
+		# whichever yard the attacks are coming at, so raising the yard count is what turns one
+		# base into three defended ones - each with its own production, defensive ring and
+		# anti-air - without any placement code of its own.
+		#
+		# It is also the only cheap answer to losing a construction yard, which this commander does:
+		# with one yard that is the match, with three it is a setback.
 		MinimumConstructionYardCount: 2
 	McvExpansionManagerBotModule@turtle:
 		RequiresCondition: enable-turtle-ai
@@ -926,6 +936,16 @@ Player:
 		McvTypes: mcv
 		ConstructionYardTypes: fact
 		McvFactoryTypes: weap
+		# Three base clusters were asked for and measured worse: 0.93 -> 0.88 over twelve
+		# fair-economy matches. The limit is budget, not the idea. Across those matches the
+		# commander finished holding ZERO construction yards in seven of twelve and one in the
+		# rest, so a target of three asks it to buy something it cannot presently afford - an MCV
+		# costs more than its entire bank balance for most of a fair match.
+		#
+		# The placement side needs no work when the money exists: the base builder already puts
+		# ordinary structures around a randomly chosen construction yard and defences around
+		# whichever yard is being attacked, so more yards would produce defended clusters on their
+		# own. Worth raising the moment income supports a second and third.
 		MinimumConstructionYardCount: 2
 	StrategicBrainBotModule:
 		ComputeProductionValue: true

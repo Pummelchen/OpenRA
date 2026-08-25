@@ -88,6 +88,24 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				Topic = "directive",
 				Finding = directive.ToString(),
 			});
+
+			// The chief's own overview, assembled from what the staff worked out rather than from
+			// the world directly. This is the one place in the commander where past, present,
+			// intent and action are visible side by side for every domain at once - which is the
+			// whole justification for a chief existing, and the thing no specialist can produce
+			// because none of them can see the others.
+			var assessed = context.Reports
+				.Where(r => r.Assessment != null && !r.Assessment.IsEmpty)
+				.OrderBy(r => r.Manager, StringComparer.Ordinal)
+				.ToArray();
+
+			if (assessed.Length > 0)
+				context.Add(new AssessmentIntent
+				{
+					Topic = "overview",
+					Finding = $"{directive.Stance} | " + string.Join(" || ",
+						assessed.Select(r => $"[{r.Manager}] {r.Assessment}")),
+				});
 		}
 
 		/// <summary>

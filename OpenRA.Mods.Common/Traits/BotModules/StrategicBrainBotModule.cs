@@ -1168,6 +1168,21 @@ namespace OpenRA.Mods.Common.Traits
 				? 0f
 				: 1f - (ownValue / (float)Math.Max(1, Info.EmergencyArmyValue));
 
+			// Observed survivability is deliberately NOT fed into this ranking, and the reason is
+			// worth stating because the idea is a good one and the measurement disagreed.
+			//
+			// How long a unit lasts is recorded per type (see WorldDatabase) and reported to the
+			// chief, because "what actually survives here" varies by map and opponent and should be
+			// learned rather than listed. But lifetime alone is a biased signal for what to BUILD:
+			// the longest-lived unit is frequently the one that never fights. Measured on this
+			// commander, the longest-lived type was e1 - rifle infantry standing in the base as a
+			// screen - at 246 seconds, against an MCV at 23. Weighting production by that pushes
+			// credits toward infantry, and an infantry-heavy army has already been measured losing
+			// to any tank army. Twelve matches with the term in: 0.46 exchange against 0.42 without,
+			// inside a batch that was worse overall.
+			//
+			// Making this work needs value delivered per life, not life alone - damage dealt or kills
+			// attributed - which the commander does not yet record.
 			return ProductionValuation.Rank(candidates.Values, composition, urgency)
 				.Where(v => v.Score > 0f)
 				.Select(v => v.Unit)

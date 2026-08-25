@@ -118,6 +118,43 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public string Describe() => $"attack mode for #{ActorId} (was {CurrentStance})";
 	}
 
+	/// <summary>
+	/// Put one of our units onto a harvester as a permanent escort.
+	/// </summary>
+	/// <remarks>
+	/// Harvesters are the only units on the field whose loss compounds: every one killed slows
+	/// everything the commander builds afterwards, and they spend the whole match alone, in the
+	/// open, at the edge of the base, on a predictable route. They are the cheapest thing an
+	/// opponent can profitably raid.
+	/// </remarks>
+	public sealed class EscortIntent : IManagerIntent
+	{
+		public uint EscortId { get; init; }
+		public uint HarvesterId { get; init; }
+		public string Reason { get; init; } = "";
+
+		public string Describe() => $"escort #{EscortId} guards harvester #{HarvesterId}: {Reason}";
+	}
+
+	/// <summary>
+	/// Put operatives into, or take them out of, covert transit.
+	/// </summary>
+	/// <remarks>
+	/// A unit crossing hostile ground to reach somewhere unnoticed must not shoot at what it passes.
+	/// Firing gives away both its position and the fact that something is coming, and an infiltrator
+	/// that has been noticed is simply an expensive infantryman a long way from home. While in
+	/// transit it holds fire; when the operation ends it goes back to engaging like everything else.
+	/// </remarks>
+	public sealed class CovertTransitIntent : IManagerIntent
+	{
+		public string OperativeType { get; init; } = "";
+		public bool InTransit { get; init; }
+		public string Reason { get; init; } = "";
+
+		public string Describe() =>
+			$"{OperativeType} {(InTransit ? "into" : "out of")} covert transit: {Reason}";
+	}
+
 	public sealed class AssessmentIntent : IManagerIntent
 	{
 		public string Topic { get; init; } = "";

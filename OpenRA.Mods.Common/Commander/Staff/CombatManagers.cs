@@ -264,6 +264,16 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var directive = context.Directive;
 			if (!directive.AuthoriseSpecialOperations)
 			{
+				// Standing down returns the operatives to normal behaviour. Without this they would
+				// hold fire for the rest of the match, having been told to be quiet once.
+				foreach (var type in Operatives)
+					context.Add(new CovertTransitIntent
+					{
+						OperativeType = type,
+						InTransit = false,
+						Reason = "operation not authorised",
+					});
+
 				context.Report(new ManagerReport
 				{
 					Manager = Name,
@@ -298,6 +308,15 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			if (directive.MainEffortRegion.HasValue)
 			{
+				// Quiet first, then sent. A unit that shoots on the way announces both its position
+				// and that something is coming.
+				context.Add(new CovertTransitIntent
+				{
+					OperativeType = operative,
+					InTransit = true,
+					Reason = $"infiltrating region {directive.MainEffortRegion.Value}",
+				});
+
 				context.Add(new AttackIntent
 				{
 					Region = directive.MainEffortRegion.Value,
