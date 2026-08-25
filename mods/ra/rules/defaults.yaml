@@ -245,6 +245,7 @@
 	OwnerLostAction:
 		Action: Kill
 	UpdatesPlayerStatistics:
+	RecordsCombatOutcome:
 	Mobile:
 		PauseOnCondition: being-captured
 		Locomotor: wheeled
@@ -445,6 +446,7 @@
 ^Soldier:
 	Inherits: ^Infantry
 	UpdatesPlayerStatistics:
+	RecordsCombatOutcome:
 	MustBeDestroyed:
 	ProximityCaptor:
 		Types: Infantry
@@ -512,6 +514,7 @@
 	OwnerLostAction:
 		Action: Kill
 	UpdatesPlayerStatistics:
+	RecordsCombatOutcome:
 	Mobile:
 		Locomotor: naval
 	Selectable:
@@ -590,6 +593,7 @@
 	Armor:
 		Type: Light
 	UpdatesPlayerStatistics:
+	RecordsCombatOutcome:
 	AppearsOnRadar:
 		UseLocation: true
 	Selectable:
@@ -732,6 +736,7 @@
 	OwnerLostAction:
 		Action: Kill
 	UpdatesPlayerStatistics:
+	RecordsCombatOutcome:
 	GivesBuildableArea:
 		AreaTypes: building, fake
 	RepairableBuilding:

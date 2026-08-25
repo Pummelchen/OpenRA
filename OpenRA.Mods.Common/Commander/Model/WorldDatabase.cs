@@ -84,6 +84,10 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		/// <summary>When this was seen to die, or -1. Separate from LastSeenTick, which a survivor also has.</summary>
 		public int DestroyedTick { get; set; } = -1;
+
+		/// <summary>How many of the enemy's this individual actor has killed, and what it cost them.</summary>
+		public int Kills { get; set; }
+		public int KillsValue { get; set; }
 		public string AttendedBy { get; set; } = "";
 
 		/// <summary>
@@ -190,6 +194,39 @@ namespace OpenRA.Mods.Common.Commander.Model
 			public int EverSeen { get; set; }
 			public int Lost { get; set; }
 
+			/// <summary>Kills this type has made, and what those kills were worth in credits.</summary>
+			public int Kills { get; set; }
+			public int KillsValue { get; set; }
+
+			/// <summary>Credits' worth of this type lost. The denominator of an honest exchange.</summary>
+			public int LostValue { get; set; }
+
+			/// <summary>What one of these costs, so a small sample can be smoothed in credits.</summary>
+			public int UnitCost { get; set; }
+
+			/// <summary>
+			/// Kills made per one lost, counting one notional loss that has not happened yet.
+			/// </summary>
+			/// <remarks>
+			/// The smoothing is not cosmetic. Dividing by the actual number lost makes any type that
+			/// has not yet died look infinitely good - and the types that have not yet died are
+			/// mostly the ones that have barely been built. Adding a notional loss means five kills
+			/// and no deaths reads as 2.5 rather than as five times better than everything else,
+			/// and the figure converges on the true ratio as the sample grows.
+			/// </remarks>
+			public float KillDeathRatio => Kills / (float)(Lost + 1);
+
+			/// <summary>
+			/// Credits destroyed per credit lost, smoothed by one notional loss of this type.
+			/// </summary>
+			/// <remarks>
+			/// The measure worth acting on, because it is denominated in the thing production
+			/// actually spends. A rifleman trading one-for-one with a rifleman and a heavy tank
+			/// trading one-for-one with a rifleman have the same kill/death ratio and very different
+			/// worth, and only this number tells them apart.
+			/// </remarks>
+			public float ValueExchange => KillsValue / (float)Math.Max(1, LostValue + Math.Max(1, UnitCost));
+
 			/// <summary>Ticks lived, summed over those that died. Nothing is assumed about survivors.</summary>
 			public long LifetimeTicks { get; set; }
 
@@ -201,8 +238,15 @@ namespace OpenRA.Mods.Common.Commander.Model
 			public float LossRate => EverSeen <= 0 ? 0f : Lost / (float)EverSeen;
 
 			public override string ToString() =>
-				$"{Type}: {Lost}/{EverSeen} lost, mean life {MeanLifetimeSeconds:F0}s";
+				$"{Type}: {Lost}/{EverSeen} lost, {Kills} kills, k/d {KillDeathRatio:F2}, " +
+				$"value {ValueExchange:F2}, mean life {MeanLifetimeSeconds:F0}s";
 		}
+
+		/// <summary>
+		/// Every buildable thing in the mod and its static properties. Set once when the match
+		/// opens; the rest of this class is what then happens to them.
+		/// </summary>
+		public UnitCatalogue Catalogue { get; set; }
 
 		/// <summary>Tick of the most recent update, so readers can age entries without a World.</summary>
 		public int Tick { get; private set; }
@@ -406,6 +450,39 @@ namespace OpenRA.Mods.Common.Commander.Model
 				.OrderBy(e => e.HealthFraction)
 				.ThenBy(e => e.ActorId);
 
+		/// <summary>
+		/// Credits one of ours with a kill, and notes what the victim was worth.
+		/// </summary>
+		/// <remarks>
+		/// Recorded against the individual actor as well as its type, because the two answer
+		/// different questions: the type tells production what to build, the individual tells the
+		/// army which of its units are actually doing the work.
+		/// </remarks>
+		public void RecordKill(uint killerActorId, string killerType, int victimValue)
+		{
+			if (!string.IsNullOrEmpty(killerType))
+			{
+				var record = LossesFor(killerType, false);
+				record.Kills++;
+				record.KillsValue += Math.Max(0, victimValue);
+			}
+
+			if (entries.TryGetValue(killerActorId, out var entry))
+			{
+				entry.Kills++;
+				entry.KillsValue += Math.Max(0, victimValue);
+			}
+		}
+
+		/// <summary>Notes what one of ours was worth when it died, for the value side of the exchange.</summary>
+		public void RecordLossValue(string type, int value)
+		{
+			if (string.IsNullOrEmpty(type))
+				return;
+
+			LossesFor(type, false).LostValue += Math.Max(0, value);
+		}
+
 		/// <summary>Records a death actually witnessed. The only way an entry becomes Destroyed.</summary>
 		public void RecordDestroyed(uint actorId, int tick)
 		{
@@ -453,7 +530,14 @@ namespace OpenRA.Mods.Common.Commander.Model
 		LossRecord LossesFor(string type, bool isStructure)
 		{
 			if (!lossesByType.TryGetValue(type, out var record))
-				lossesByType[type] = record = new LossRecord { Type = type, IsStructure = isStructure };
+			{
+				lossesByType[type] = record = new LossRecord
+				{
+					Type = type,
+					IsStructure = isStructure,
+					UnitCost = Catalogue?.Find(type)?.Cost ?? 0,
+				};
+			}
 
 			return record;
 		}
@@ -461,6 +545,20 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// <summary>What has become of each of our types, ordered by name so readers are deterministic.</summary>
 		public IEnumerable<LossRecord> Losses(bool structures) =>
 			lossesByType.Values.Where(r => r.IsStructure == structures).OrderBy(r => r.Type, StringComparer.Ordinal);
+
+		/// <summary>Every type on record, whatever it is, ordered by name.</summary>
+		public IEnumerable<LossRecord> AllRecords() =>
+			lossesByType.Values.OrderBy(r => r.Type, StringComparer.Ordinal);
+
+		/// <summary>
+		/// What each of our types has traded at, best first, once enough of them have died for the
+		/// figure to mean anything.
+		/// </summary>
+		public IEnumerable<LossRecord> ByExchange(int minimumSample = 3) =>
+			lossesByType.Values
+				.Where(r => r.Lost >= minimumSample || r.Kills >= minimumSample)
+				.OrderByDescending(r => r.ValueExchange)
+				.ThenBy(r => r.Type, StringComparer.Ordinal);
 
 		/// <summary>
 		/// How long one of ours of this type lasts, in seconds, once enough have died to say.

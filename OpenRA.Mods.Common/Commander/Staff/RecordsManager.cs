@@ -90,6 +90,18 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			var lostStructures = database.LostStructures().ToArray();
 
+			// What each of our types has actually traded at, in credits destroyed per credit lost.
+			// This is the number production should eventually be ranked on, and unlike raw lifetime
+			// it cannot be gamed by a unit that survives because it never fights.
+			var traded = database.ByExchange(MinimumLossSample).Take(3).ToArray();
+			var worst = database.ByExchange(MinimumLossSample).LastOrDefault();
+
+			var exchangeLine = traded.Length == 0
+				? ""
+				: "best trades " + string.Join(", ",
+					traded.Select(r => $"{r.Type} {r.ValueExchange:F2} ({r.Kills}k/{r.Lost}d)"))
+					+ (worst != null && worst != traded[0] ? $"; worst {worst.Type} {worst.ValueExchange:F2}" : "");
+
 			var past = unitLosses.Length switch
 			{
 				0 => lostStructures.Length == 0 ? "" : $"{lostStructures.Length} of our structures destroyed so far",
@@ -111,7 +123,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				Manager = Name,
 				Assessment = new Assessment
 				{
-					Past = past,
+					Past = string.IsNullOrEmpty(exchangeLine) ? past : $"{exchangeLine}; {past}",
 					Present = $"{standing.Length} enemy structures on record, {destroyed} destroyed, {rebuilt} replaced",
 					Target = target,
 					Action = "reporting only; this manager keeps the books rather than spending from them",

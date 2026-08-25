@@ -158,6 +158,11 @@
 				Name: resource-minerals
 
 World:
+	# The match's kill log: who killed what, with both types named. The engine already counts
+	# kills per player, which answers "am I winning" and nothing else; which TYPE trades well
+	# against which is the question a commander can actually act on, and it cannot be read from
+	# the rules because it depends on the map and the opponent. Records only.
+	CombatRecordRegistry:
 	Inherits: ^BaseWorld
 	ChatCommands:
 	DevCommands:

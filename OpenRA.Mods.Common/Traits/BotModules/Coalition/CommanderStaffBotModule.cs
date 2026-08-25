@@ -66,6 +66,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// <summary>The shared record, for the parts of the commander that are not on this staff.</summary>
 		public WorldDatabase Database => database;
 		readonly HashSet<uint> seenThisSweep = [];
+		CombatRecordRegistry registry;
 		RegionGraph graph;
 		Map map;
 		Player owner;
@@ -130,6 +131,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				return;
 
 			UpdateDatabase(bot.Player, world);
+			DrainCombatRecord(bot.Player, world);
 
 			var snapshot = BuildSnapshot(bot.Player, world);
 			var intents = staff.Think(snapshot);
@@ -171,6 +173,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			staff.ThinkInParallel = info.ThinkInParallel;
 			BuildStaff();
+
+			database.Catalogue = new UnitCatalogue(world.Map.Rules);
+			CoalitionTelemetry.Log(world, database.Catalogue.Summary());
 
 			CoalitionTelemetry.Log(world,
 				$"Staff assembled: {staff.Managers.Count} managers over {graph.Regions.Length} regions, " +
@@ -312,6 +317,57 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			}
 
 			database.AgeUnseen(tick, seenThisSweep.Contains);
+		}
+
+		/// <summary>
+		/// Folds every kill since the last cycle into the record, crediting the type that made it.
+		/// </summary>
+		/// <remarks>
+		/// <para>
+		/// Both sides are recorded and both are useful. Ours tells production which of its units
+		/// actually trade well here; theirs tells it what is doing the damage. Neither is knowable
+		/// from the rules - a heavy tank is excellent against armour and useless against aircraft,
+		/// so what any unit is "worth" depends entirely on what the opponent brought.
+		/// </para>
+		/// <para>
+		/// Fog is not consulted, and it does not need to be: the commander is being told about
+		/// deaths it caused or suffered, which it would know about either way. It learns nothing
+		/// here about where anything is.
+		/// </para>
+		/// </remarks>
+		void DrainCombatRecord(Player player, World world)
+		{
+			registry ??= world.WorldActor.TraitOrDefault<CombatRecordRegistry>();
+			if (registry == null)
+				return;
+
+			foreach (var outcome in registry.Drain())
+			{
+				var victimValue = ValueOf(world, outcome.VictimType);
+
+				// What ours killed.
+				if (outcome.HasKiller && outcome.KillerOwner == player)
+					database.RecordKill(outcome.KillerActorId, outcome.KillerType, victimValue);
+
+				// And what it cost us when we were the ones dying, which is the other half of any
+				// exchange worth the name.
+				if (outcome.VictimOwner == player)
+					database.RecordLossValue(outcome.VictimType, victimValue);
+			}
+		}
+
+		int ValueOf(World world, string type)
+		{
+			if (string.IsNullOrEmpty(type))
+				return 0;
+
+			var catalogued = database.Catalogue?.Find(type);
+			if (catalogued != null)
+				return catalogued.Cost;
+
+			return world.Map.Rules.Actors.TryGetValue(type, out var actor)
+				? actor.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0
+				: 0;
 		}
 
 		CommanderSnapshot BuildSnapshot(Player player, World world)
