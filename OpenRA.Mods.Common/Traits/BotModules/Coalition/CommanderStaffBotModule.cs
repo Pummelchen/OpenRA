@@ -149,6 +149,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			UpdateDatabase(bot.Player, world);
 			DrainCombatRecord(bot.Player, world);
+			database.Available = SurveyAvailability(bot.Player);
 
 			var snapshot = BuildSnapshot(bot.Player, world);
 			var intents = staff.Think(snapshot);
@@ -157,7 +158,14 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				LogDirective(world);
 
 			if (world.WorldTick % info.DatabaseReportInterval == 0)
+			{
 				CoalitionTelemetry.Log(world, database.Summary());
+				CoalitionTelemetry.Log(world, database.Available.Summary());
+
+				if (info.AuditCapabilities)
+					foreach (var line in CapabilityAudit.Availability(database.Available))
+						CoalitionTelemetry.Log(world, line);
+			}
 
 			if (info.Enabled)
 				Apply(bot, intents);
@@ -422,6 +430,95 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			return world.Map.Rules.Actors.TryGetValue(type, out var actor)
 				? actor.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0
 				: 0;
+		}
+
+		/// <summary>
+		/// Reads what the commander can actually start right now, from the engine rather than from
+		/// assumption: which queues will accept which items, how long each would take including
+		/// anything already queued ahead of it, whether the credits are there, and whether it would
+		/// tip the base into a brownout.
+		/// </summary>
+		Availability SurveyAvailability(Player player)
+		{
+			var registry = database.Capabilities;
+			if (registry == null)
+				return new Availability();
+
+			var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
+			var power = player.PlayerActor.TraitOrDefault<PowerManager>();
+			var cash = resources?.GetCashAndResources() ?? 0;
+			var excess = power?.ExcessPower ?? 0;
+
+			var options = new List<BuildOption>();
+			foreach (var queue in player.PlayerActor.TraitsImplementing<ProductionQueue>())
+			{
+				if (!queue.Enabled)
+					continue;
+
+				// Whatever is already on this queue has to finish first, so the wait for a new item
+				// is the backlog plus its own build time. A commander comparing "cheap now" against
+				// "strong shortly" cannot do it without this number.
+				var backlog = queue.AllQueued().Sum(i => Math.Max(0, i.RemainingTime));
+
+				foreach (var item in queue.BuildableItems())
+				{
+					var capability = registry.Find(item.Name);
+					if (capability == null)
+						continue;
+
+					var ticks = backlog + queue.GetBuildTime(item, item.TraitInfo<BuildableInfo>());
+
+					options.Add(new BuildOption
+					{
+						Capability = capability,
+						Queue = queue.Info.Type,
+						TimeToField = ticks / (float)AbstractState.TicksPerSecond,
+						Affordable = cash >= capability.Cost,
+						CausesBrownout = capability.DrawsPower && excess + capability.Power < 0,
+					});
+				}
+			}
+
+			options.Sort((a, b) => a.TimeToField != b.TimeToField
+				? a.TimeToField.CompareTo(b.TimeToField)
+				: string.CompareOrdinal(a.Type, b.Type));
+
+			var powers = new List<SupportPowerState>();
+			var manager = player.PlayerActor.TraitOrDefault<SupportPowerManager>();
+			if (manager != null)
+			{
+				foreach (var (key, instance) in manager.Powers.OrderBy(p => p.Key, StringComparer.Ordinal))
+				{
+					if (instance.Disabled)
+						continue;
+
+					powers.Add(new SupportPowerState(key, instance.Info.Name ?? key,
+						instance.Ready, instance.RemainingTicks / (float)AbstractState.TicksPerSecond));
+				}
+			}
+
+			// What we own, counted by what it can DO rather than by what it is called.
+			var owned = new Dictionary<string, int>(StringComparer.Ordinal);
+			foreach (var entry in database.Standing(Allegiance.Self))
+			{
+				var capability = registry.Find(entry.Type);
+				if (capability == null)
+					continue;
+
+				foreach (var verb in Availability.VerbsOf(capability))
+					owned[verb] = owned.GetValueOrDefault(verb) + 1;
+			}
+
+			return new Availability
+			{
+				Options = options,
+				SupportPowers = powers,
+				Cash = cash,
+				PowerProvided = power?.PowerProvided ?? 0,
+				PowerDrained = power?.PowerDrained ?? 0,
+				InOutage = (power?.PowerOutageRemainingTicks ?? 0) > 0,
+				OwnedByVerb = owned,
+			};
 		}
 
 		CommanderSnapshot BuildSnapshot(Player player, World world)

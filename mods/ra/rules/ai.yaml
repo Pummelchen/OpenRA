@@ -425,17 +425,14 @@ Player:
 			# A fake war factory costs 200 credits against roughly two thousand for the real one and
 			# an attacker cannot tell them apart, so they look like an obvious buy.
 			#
-			# They are not buildable by this commander with cheats off, and the cause is NOT the
-			# faction token they are gated behind. Instrumenting the base builder: the Defense queue
-			# reports tenf, weaf, domf and facf unbuildable on every check of a match, at a 3% share
-			# and again at 20%. Substituting ~structures.soviet - the very token that lets this
-			# commander build Tesla coils while playing Allies - leaves them unbuildable, so
-			# whatever excludes them is a property of the fake actors themselves rather than of the
-			# prerequisites or of the all-faction unlocks. Not isolated further.
+			# PARTIALLY buildable, and an earlier note here claimed otherwise. The availability
+			# survey lists tenf, spef, syrf, fixf and fapw as buildable on the Defense queue with
+			# cheats OFF, so the blanket claim that fakes are unreachable was wrong. What holds is
+			# narrower: weaf, domf and facf specifically never appear, and why they differ from the
+			# other five has not been isolated.
 			#
-			# They DO appear buildable when the AllTech cheat is on, which bypasses prerequisites
-			# outright, so anyone re-testing this against the shipped configuration will see the
-			# opposite result and should turn cheats off first.
+			# They are still not listed in BuildingFractions, because a share that produces three
+			# of the eight fakes is not the decoy screen it looks like on paper.
 		BuildingDelays:
 			dome: 6000
 			fix: 3000

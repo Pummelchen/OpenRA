@@ -254,6 +254,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// </summary>
 		public CapabilityRegistry Capabilities { get; set; }
 
+		/// <summary>
+		/// What can actually be done right now - buildable items with time to field, support power
+		/// readiness, power headroom, and what we own counted by capability.
+		/// </summary>
+		public Availability Available { get; set; } = new();
+
 		/// <summary>Tick of the most recent update, so readers can age entries without a World.</summary>
 		public int Tick { get; private set; }
 

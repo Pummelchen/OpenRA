@@ -149,6 +149,37 @@ namespace OpenRA.Mods.Common.Commander.Model
 			}
 		}
 
+		/// <summary>
+		/// What the commander could do at this moment, so the live view can be checked the same way
+		/// the static registry was.
+		/// </summary>
+		public static IEnumerable<string> Availability(Availability available, int examples = 8)
+		{
+			ArgumentNullException.ThrowIfNull(available);
+
+			yield return "AVAIL " + available.Summary();
+
+			foreach (var queue in available.Options.Select(o => o.Queue).Distinct().OrderBy(q => q, StringComparer.Ordinal))
+			{
+				var soonest = available.On(queue).Take(examples).ToArray();
+				if (soonest.Length > 0)
+					yield return $"AVAIL {queue}: "
+						+ Join(soonest, o => $"{o.Type} {o.TimeToField:F0}s{(o.Affordable ? "" : "*")}");
+			}
+
+			var owned = Model.Availability.Verbs
+				.Select(v => (Verb: v, Count: available.Owned(v)))
+				.Where(x => x.Count > 0)
+				.ToArray();
+
+			if (owned.Length > 0)
+				yield return "AVAIL owned: " + Join(owned, x => $"{x.Verb} {x.Count}");
+
+			if (available.SupportPowers.Count > 0)
+				yield return "AVAIL powers: " + Join(available.SupportPowers,
+					p => $"{p.Name} {(p.Ready ? "READY" : $"{p.SecondsRemaining:F0}s")}");
+		}
+
 		static string Join<T>(IEnumerable<T> items, Func<T, string> format) =>
 			string.Join(", ", items.Select(format));
 	}
