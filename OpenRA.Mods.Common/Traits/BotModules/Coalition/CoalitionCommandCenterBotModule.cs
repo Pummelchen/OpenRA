@@ -761,6 +761,17 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		}
 
 		/// <summary>
+		/// Turns the chief's "hold back this fraction of the army" into the divisor the brain wants.
+		/// </summary>
+		/// <remarks>
+		/// <see cref="StrategicBrainBotModule"/> holds back <c>count / divisor</c>, so four means a
+		/// quarter and bigger means less. Clamped at both ends: the brain itself clamps to ten, and
+		/// below two the "reserve" would be most of the army.
+		/// </remarks>
+		public static int DivisorFor(float fraction) =>
+			fraction <= 0f ? 0 : Math.Clamp((int)Math.Round(1f / fraction), 2, 10);
+
+		/// <summary>
 		/// The deterministic coalition commander: derives a posture, creates and updates missions from
 		/// the blackboard, merges optional LLM intent, and applies the resulting directives to the
 		/// local strategic brain.
@@ -801,10 +812,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// between its stances real: an earlier wiring mapped Pressure and Assault to the same
 			// executor behaviour, so rebalancing them changed the stance distribution from 9:1 to
 			// 8:7 and produced byte-identical results. A raid that commits as much as an assault is
+
 			// not a raid.
-			// The engine takes a percentage, and the directive carries a fraction.
+			// The engine takes a DIVISOR, not a percentage, and the directive carries a fraction.
+			//
+			// This line said "the engine takes a percentage" and multiplied by a hundred, and the
+			// comment was simply wrong: AvailableArmy holds back list.Length / reserveFraction, so
+			// four means a quarter and a larger number means a SMALLER reserve. The chief asking to
+			// hold back a fifth of the army therefore sent 20, meaning one twentieth - and since
+			// OverrideReserveFraction clamps to ten, every fraction from a tenth upwards arrived as
+			// the same value.
+			//
+			// Which is how it was found. Raising the chief's assault reserve from 0.2 to 0.4 across
+			// twenty-four matches produced a byte-identical result - 119 buildings killed, 193 lost,
+			// both times. A parameter that cannot change the outcome is not a cautious parameter,
+			// it is a disconnected one, and the chief has been unable to decide this all along.
 			var reserveFraction = chiefStaff != null && chiefStaff.Driving
-				? (int)Math.Round(chiefStaff.Directive.ReserveFraction * 100f)
+				? DivisorFor(chiefStaff.Directive.ReserveFraction)
 				: posturePolicy.ReserveFraction;
 
 			brain?.OverrideReserveFraction(reserveFraction);

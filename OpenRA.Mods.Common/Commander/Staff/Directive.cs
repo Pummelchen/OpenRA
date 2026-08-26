@@ -65,7 +65,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public bool AuthoriseSpecialOperations { get; init; }
 
 		/// <summary>Fraction of the army held back rather than committed.</summary>
-		public float ReserveFraction { get; init; } = 0.25f;
+		public float ReserveFraction { get; init; } = 0.1f;
 
 		/// <summary>Tick this directive was issued, and the tick it stops being binding.</summary>
 		public int IssuedTick { get; init; }
