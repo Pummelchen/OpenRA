@@ -223,12 +223,22 @@ thousands of matches rather than dozens.
 
 ## Building on this machine
 
-The repository sits inside a Dropbox-synced folder, and Dropbox races MSBuild's
-delete-then-create when it copies into `bin/`. Compilation is fine; the copy fails
-with "Access to the path ... is denied" and the destination is left missing.
+An earlier revision of this file blamed Dropbox for build failures under `bin/`.
+**That was wrong** and is corrected here so nobody acts on it.
 
-`ml/build.sh` compiles each project with `--no-dependencies` and stages the outputs
-with plain `cp`, which Dropbox does not interfere with. **`dotnet test` cannot be
-worked around the same way** — the test runner needs its adapters alongside the
-assembly in `bin/`, so the suite cannot run until the folder is excluded from
-Dropbox sync (or the repository is moved outside it).
+The symptom was `MSB3021 ... Access to the path ... is denied` on the copy into
+`bin/`, and it later widened until the whole project directory returned
+`Operation not permitted` — `stat` on a path still worked, but listing a
+directory or opening a file did not, and the same happened with the tool sandbox
+switched off. That asymmetry is a macOS access-control denial, not a filesystem
+permission (which reports `EACCES`) and not a syncing client. The Dropbox
+attribute found on `bin/` was a stale xattr on files that had once passed
+through Dropbox, and it was a coincidence.
+
+It cleared on its own once access to the folder was restored, after which a
+plain `dotnet build` and the full `dotnet test` suite both ran normally
+(1207 passed, 0 failed).
+
+`ml/build.sh` remains as a fallback: it compiles each project with
+`--no-dependencies` and stages the outputs with `cp`, which is useful if the
+copy step ever fails again. It is not needed in normal operation.
