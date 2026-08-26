@@ -222,6 +222,58 @@ namespace OpenRA.Test
 			Assert.That(registry.PowerPlants().Select(p => p.Type), Is.EqualTo(new[] { "apwr" }));
 		}
 
+		[TestCase(TestName = "Capabilities are asked for by verb, never by unit name.")]
+		public void QueriedByVerb()
+		{
+			// The whole point of the registry. A manager asks "who can carry passengers" and gets a
+			// correct answer in a mod nobody wrote a list for - where before it asked for "apc" and
+			// got nothing in any mod that spells it differently.
+            var registry = new CapabilityRegistry(new[]
+			{
+				new ActorCapability { Type = "apc", Cost = 800, CargoCapacity = 5, Armour = "Heavy" },
+				new ActorCapability { Type = "e6", Cost = 500, CapturesTypes = ["building"], Armour = "Wood" },
+				new ActorCapability { Type = "ss", Cost = 950, CanHide = true, Armour = "Light" },
+				new ActorCapability { Type = "dd", Cost = 1000, DetectionRange = 6f, Armour = "Light" },
+				new ActorCapability { Type = "e1", Cost = 100, Armour = "Wood" },
+			});
+
+			Assert.That(registry.Transports().Select(c => c.Type), Is.EqualTo(new[] { "apc" }));
+			Assert.That(registry.Capturers().Select(c => c.Type), Is.EqualTo(new[] { "e6" }));
+			Assert.That(registry.Hiders().Select(c => c.Type), Is.EqualTo(new[] { "ss" }));
+			Assert.That(registry.Detectors().Select(c => c.Type), Is.EqualTo(new[] { "dd" }));
+		}
+
+		[TestCase(TestName = "Transports are ranked by how much they actually carry.")]
+		public void TransportsRankedByCapacity()
+		{
+			var registry = new CapabilityRegistry(new[]
+			{
+				new ActorCapability { Type = "jeep", CargoCapacity = 1, Cost = 600 },
+				new ActorCapability { Type = "tran", CargoCapacity = 8, Cost = 1200 },
+				new ActorCapability { Type = "apc", CargoCapacity = 5, Cost = 800 },
+			});
+
+			Assert.That(registry.Transports().Select(c => c.Type),
+				Is.EqualTo(new[] { "tran", "apc", "jeep" }),
+				"A manager moving eight soldiers needs the one that fits them, not the first match.");
+		}
+
+		[TestCase(TestName = "Which building serves a production queue is read, not assumed.")]
+		public void ProducersAreDerived()
+		{
+			var registry = new CapabilityRegistry(new[]
+			{
+				new ActorCapability { Type = "weap", Produces = ["Vehicle"], IsStructure = true },
+				new ActorCapability { Type = "barr", Produces = ["Infantry"], IsStructure = true },
+				new ActorCapability { Type = "tent", Produces = ["Infantry"], IsStructure = true },
+			});
+
+			Assert.That(registry.ProducersOf("Infantry").Select(c => c.Type),
+				Is.EqualTo(new[] { "barr", "tent" }));
+			Assert.That(registry.ProducersOf("Ship"), Is.Empty,
+				"A queue nothing serves is an empty answer, not a wrong one.");
+		}
+
 		[TestCase(TestName = "Reach is the longest weapon, not the average.")]
 		public void ReachIsTheLongestWeapon()
 		{

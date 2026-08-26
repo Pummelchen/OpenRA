@@ -107,6 +107,36 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public bool SuppliesPower => Power > 0;
 		public bool DrawsPower => Power < 0;
 
+		/// <summary>How much this can carry, and which passenger types fit. Zero means it carries nothing.</summary>
+		public int CargoCapacity { get; init; }
+		public IReadOnlyList<string> CarriesTypes { get; init; } = [];
+		public bool Transports => CargoCapacity > 0;
+
+		/// <summary>Which capture types this can take. Empty means it cannot capture.</summary>
+		public IReadOnlyList<string> CapturesTypes { get; init; } = [];
+		public bool Captures => CapturesTypes.Count > 0;
+
+		/// <summary>How far it detects hidden things, in cells. Zero means it cannot.</summary>
+		public float DetectionRange { get; init; }
+		public bool Detects => DetectionRange > 0f;
+
+		/// <summary>Whether it can hide - cloak, submerge, or otherwise go unseen.</summary>
+		public bool CanHide { get; init; }
+
+		/// <summary>Whether it repairs other units brought to it.</summary>
+		public bool Repairs { get; init; }
+
+		/// <summary>Whether it gathers resources.</summary>
+		public bool Harvests { get; init; }
+
+		/// <summary>Production queues this building serves. Empty for anything that builds nothing.</summary>
+		public IReadOnlyList<string> Produces { get; init; } = [];
+		public bool IsProduction => Produces.Count > 0;
+
+		/// <summary>Support powers this grants, with the seconds each takes to charge.</summary>
+		public IReadOnlyList<(string Power, float ChargeSeconds)> SupportPowers { get; init; } = [];
+		public bool GrantsSupportPower => SupportPowers.Count > 0;
+
 		public bool IsArmed => Weapons.Count > 0;
 		public bool CanHitAir => Weapons.Any(w => w.HitsAir);
 		public bool CanHitGround => Weapons.Any(w => w.HitsGround);
@@ -268,6 +298,42 @@ namespace OpenRA.Mods.Common.Commander.Model
 					// default rule rather than an assumption made here.
 					BuildTicks = buildable == null ? 0
 						: buildable.BuildDuration >= 0 ? buildable.BuildDuration : entry.Cost,
+
+					// The six capabilities the staff had never read. Each one is a tactic the
+					// commander could not previously consider, because it had no way to learn that
+					// such a thing existed.
+					CargoCapacity = actor.TraitInfos<CargoInfo>().Sum(c => c.MaxWeight),
+					CarriesTypes = actor.TraitInfos<CargoInfo>()
+						.SelectMany(c => c.Types)
+						.Distinct(StringComparer.Ordinal)
+						.OrderBy(t => t, StringComparer.Ordinal)
+						.ToArray(),
+
+					CapturesTypes = actor.TraitInfos<CapturesInfo>()
+						.SelectMany(c => c.CaptureTypes.Select(t => t))
+						.Distinct(StringComparer.Ordinal)
+						.OrderBy(t => t, StringComparer.Ordinal)
+						.ToArray(),
+
+					DetectionRange = actor.TraitInfos<DetectCloakedInfo>()
+						.Select(d => d.Range.Length / 1024f)
+						.DefaultIfEmpty(0f)
+						.Max(),
+
+					CanHide = actor.TraitInfos<CloakInfo>().Any(),
+					Repairs = actor.TraitInfos<RepairsUnitsInfo>().Any(),
+					Harvests = actor.TraitInfos<HarvesterInfo>().Any(),
+
+					Produces = actor.TraitInfos<ProductionInfo>()
+						.SelectMany(pr => pr.Produces)
+						.Distinct(StringComparer.Ordinal)
+						.OrderBy(t => t, StringComparer.Ordinal)
+						.ToArray(),
+
+					SupportPowers = actor.TraitInfos<SupportPowerInfo>()
+						.Select(sp => (Power: sp.Name ?? entry.Type,
+							ChargeSeconds: sp.ChargeInterval / (float)AbstractState.TicksPerSecond))
+						.ToArray(),
 				};
 			}
 
@@ -366,6 +432,28 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		/// <summary>Everything that can shoot at aircraft. Asked by verb, never by name.</summary>
 		public IEnumerable<ActorCapability> AntiAir() => All.Where(c => c.CanHitAir);
+
+		/// <summary>Everything that can carry passengers.</summary>
+		public IEnumerable<ActorCapability> Transports() =>
+			All.Where(c => c.Transports).OrderByDescending(c => c.CargoCapacity);
+
+		/// <summary>Everything that can take a building rather than destroy it.</summary>
+		public IEnumerable<ActorCapability> Capturers() => All.Where(c => c.Captures);
+
+		/// <summary>Everything that can see hidden units.</summary>
+		public IEnumerable<ActorCapability> Detectors() =>
+			All.Where(c => c.Detects).OrderByDescending(c => c.DetectionRange);
+
+		/// <summary>Everything that can hide.</summary>
+		public IEnumerable<ActorCapability> Hiders() => All.Where(c => c.CanHide);
+
+		/// <summary>Everything that grants a support power.</summary>
+		public IEnumerable<ActorCapability> SupportPowerSources() =>
+			All.Where(c => c.GrantsSupportPower);
+
+		/// <summary>Which buildings serve a given production queue.</summary>
+		public IEnumerable<ActorCapability> ProducersOf(string queue) =>
+			All.Where(c => c.Produces.Contains(queue, StringComparer.Ordinal));
 
 		/// <summary>Everything that supplies more power than it draws.</summary>
 		public IEnumerable<ActorCapability> PowerPlants() =>
@@ -470,9 +558,15 @@ namespace OpenRA.Mods.Common.Commander.Model
 			var aa = All.Count(c => c.CanHitAir);
 			var mobile = All.Count(c => c.CanMove);
 			var plants = All.Count(c => c.SuppliesPower);
-			var unlockers = All.Count(c => c.Unlocks.Count > 0);
+			// Actors granting a token OTHER than their own name. Counting every actor that
+			// "grants a prerequisite" reported 94 of 94, which is true and tells nobody anything.
+			var unlockers = All.Count(c =>
+				c.Unlocks.Any(u => !string.Equals(u, c.Type, StringComparison.Ordinal)));
 			return $"capabilities: {Count} actors, {armed} armed, {aa} anti-air, {mobile} mobile, " +
 				$"{plants} power plants, {unlockers} grant prerequisites, " +
+				$"{All.Count(c => c.Transports)} transports, {All.Count(c => c.Captures)} capturers, " +
+				$"{All.Count(c => c.Detects)} detectors, {All.Count(c => c.CanHide)} can hide, " +
+				$"{All.Count(c => c.GrantsSupportPower)} support powers, " +
 				$"armour classes [{string.Join(" ", ArmourClasses)}]";
 		}
 	}

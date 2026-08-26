@@ -79,6 +79,33 @@ namespace OpenRA.Mods.Common.Commander.Model
 							+ $"{x.Actor.DamageVersus(armour):F0}dps)");
 			}
 
+			// The six that were read zero times. Each line is a tactic that did not exist before.
+			var transports = registry.Transports().ToArray();
+			yield return $"AUDIT transports ({transports.Length}): "
+				+ Join(transports.Take(examples), c => $"{c.Type} holds {c.CargoCapacity}");
+
+			var capturers = registry.Capturers().ToArray();
+			yield return $"AUDIT capturers ({capturers.Length}): "
+				+ Join(capturers.Take(examples), c => $"{c.Type} [{string.Join("/", c.CapturesTypes)}]");
+
+			var detectors = registry.Detectors().ToArray();
+			yield return $"AUDIT detectors ({detectors.Length}): "
+				+ Join(detectors.Take(examples), c => $"{c.Type} {c.DetectionRange:F0}c");
+
+			var hiders = registry.Hiders().ToArray();
+			yield return $"AUDIT can hide ({hiders.Length}): " + Join(hiders.Take(examples), c => c.Type);
+
+			var powers = registry.SupportPowerSources().ToArray();
+			yield return $"AUDIT support powers ({powers.Length}): "
+				+ Join(powers.Take(examples), c => $"{c.Type}:{string.Join("/", c.SupportPowers.Select(sp => $"{sp.Power} {sp.ChargeSeconds:F0}s"))}");
+
+			foreach (var queue in new[] { "Vehicle", "Infantry", "Aircraft", "Ship" })
+			{
+				var producers = registry.ProducersOf(queue).ToArray();
+				if (producers.Length > 0)
+					yield return $"AUDIT builds {queue}: " + Join(producers.Take(examples), c => c.Type);
+			}
+
 			var plants = registry.PowerPlants().ToArray();
 			if (plants.Length > 0)
 				yield return "AUDIT power plants: "
