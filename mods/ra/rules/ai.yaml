@@ -885,6 +885,24 @@ Player:
 		# it. At 7 the building trade flips to 41 against 37 and the unit exchange rises to 1.81.
 		# There is a clear optimum: at 12 it turtles, starves production, and collapses to 23
 		# destroyed against 84 lost with a 1.37 exchange and an outright loss.
+		#
+		# RE-MEASURED WITHOUT THE CHEAT INCOME, because the tuning above was done while the
+		# commander was earning 289,500 credits a match and banking three quarters of it, and a
+		# broke commander weighs a pillbox against a tank very differently. Twenty-four fair-economy
+		# matches per setting, six seeds against each of four scripted opponents:
+		#
+		#     pbox/gun/ftur/tsla at  4   exchange 0.404   (91 killed / 225 lost)
+		#     pbox/gun/ftur/tsla at  7   exchange 0.658   (127 / 193)
+		#     pbox/gun/ftur/tsla at 10   exchange 0.355   (87 / 245)
+		#
+		# Both directions lose, and lose by a lot, so seven survives a test its original measurement
+		# could not have made. The peak is sharp rather than a plateau: do not nudge this number
+		# without twenty-four matches behind the nudge.
+		#
+		# Worth knowing which way the failures go, because they are not the same failure. At 4 the
+		# base is simply overrun - the scripted Normal bot takes 86 buildings and loses 2. At 10 the
+		# commander turtles exactly as the note above describes, and the passive opponent it should
+		# beat comfortably goes from 4.00 to 0.44.
 		BuildingFractions:
 			powr: 40
 			proc: 10
