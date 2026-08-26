@@ -94,6 +94,28 @@ def add_targets(matches):
             # A stance is held for 1500 ticks. Predicting that far ahead is asking the question the
             # action actually answers.
             row["next"] = rows[min(i + HORIZON_STEPS, n - 1)]
+            # A dense, short-horizon reward for the decision actually taken.
+            #
+            # Q was previously fitted to the FINAL match margin, twenty decisions and twenty
+            # minutes away. Almost all of that signal is other decisions and luck, so the
+            # action's own contribution is buried. The stance's measured effect is on the next
+            # sixty seconds - 0.79 standard deviations on army, 0.55 on income, 0.32 on
+            # structures lost - so that is what it should be asked to predict.
+            #
+            # Structures are the win condition, so they lead; army and economy are the means and
+            # are weighted below them.
+            killed = max(0.0, future[G_ENEMYSTRUCT] - g[G_ENEMYSTRUCT])
+            lost = max(0.0, g[G_OURSTRUCT] - future[G_OURSTRUCT])
+            army_swing = (future[G_OURARMY] - g[G_OURARMY]) - (future[G_ENEMYARMY] - g[G_ENEMYARMY])
+            earned = max(0.0, future[G_EARNED] - g[G_EARNED])
+
+            advantage = (killed - lost) / 5.0 + army_swing / 40000.0 + earned / 40000.0
+            row["y_reward"] = min(1.0, max(0.0, 0.5 + advantage))
+
+            # How likely the behaviour policy was to take this action. Uniform under a
+            # randomised trial, and the weight that corrects for it otherwise.
+            row["y_propensity"] = float(action[3]) if len(action) > 3 else 1.0
+
             row["y_aux"] = [
                 future[G_ENEMYARMY] / 40000.0,
                 future[G_OURARMY] / 40000.0,
@@ -124,6 +146,8 @@ def _pack(rows):
     yv = torch.zeros(n)
     ya = torch.zeros(n, len(AUX_NAMES))
     ys = torch.full((n,), -1, dtype=torch.long)
+    yr = torch.zeros(n)
+    yp = torch.ones(n)
 
     for i, row in enumerate(rows):
         e = row["entities"][:MAX_ENTITIES]
@@ -137,9 +161,11 @@ def _pack(rows):
         yv[i] = row["y_value"]
         ya[i] = torch.tensor(row["y_aux"], dtype=torch.float32)
         ys[i] = row.get("y_stance", -1)
+        yr[i] = row.get("y_reward", 0.5)
+        yp[i] = max(1e-3, row.get("y_propensity", 1.0))
 
     e, r, g = normalise(ents, regs, glob)
-    return e, mask, r, g, yv, ya, ys
+    return e, mask, r, g, yv, ya, ys, yr, yp
 
 
 def normalise(ents, regs, glob):

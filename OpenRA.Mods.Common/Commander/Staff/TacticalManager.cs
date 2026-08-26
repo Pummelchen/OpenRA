@@ -96,6 +96,18 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public Func<Stance, Stance> Perturb { get; set; }
 
 		/// <summary>
+		/// The probability the behaviour policy assigned to the stance it actually took.
+		/// </summary>
+		/// <remarks>
+		/// Logged so that learning can correct for how the data was generated. Without it, a value
+		/// fitted to these games learns that Assault precedes good outcomes - which it does,
+		/// because the chief chooses Assault when it is already winning. That is correlation, and
+		/// acting on it made the commander measurably worse (0.88 -> 0.58). Knowing the propensity
+		/// is what turns an observational record into something a policy can be learned from.
+		/// </remarks>
+		public float LastPropensity { get; private set; } = 1f;
+
+		/// <summary>
 		/// An external adviser that may replace the chosen stance. Null when nobody is advising.
 		/// </summary>
 		/// <remarks>
@@ -106,6 +118,12 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// decision rather than of two different commanders.
 		/// </remarks>
 		public Func<Stance?> Advisor { get; set; }
+
+		/// <summary>Exploration rate in force, so the propensity above can be computed.</summary>
+		public float ExplorationRate { get; set; }
+
+		/// <summary>How many stances the perturbation draws from.</summary>
+		public const int StanceCount = (int)Stance.Recover + 1;
 
 		/// <summary>Tick the chief first wanted to move and could not. -1 when nothing is pending.</summary>
 		int waitingSince = -1;
@@ -133,9 +151,19 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					Rationale = $"network: {advised.Value} over {directive.Stance} ({directive.Rationale})",
 				};
 
+			LastPropensity = 1f;
 			if (Perturb != null)
 			{
-				var explored = Perturb(directive.Stance);
+				var intended = directive.Stance;
+				var explored = Perturb(intended);
+
+				// With exploration rate r over n stances, the chief takes its own choice with
+				// probability (1-r) + r/n, and any other with r/n. Recorded per decision because
+				// the correction needs the probability of the action TAKEN, not the rate.
+				LastPropensity = explored == intended
+					? (1f - ExplorationRate) + (ExplorationRate / StanceCount)
+					: ExplorationRate / StanceCount;
+
 				if (explored != directive.Stance)
 					directive = new Directive
 					{

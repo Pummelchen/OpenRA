@@ -241,12 +241,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 					// will be trained to imitate first and improve on later.
 					var directive = staff.CurrentDirective;
 					var action = directive == null
-						? new[] { -1f, -1f, -1f }
+						? new[] { -1f, -1f, -1f, 1f }
 						: new[]
 						{
 							(float)(int)directive.Stance,
 							directive.MainEffortRegion ?? -1,
 							directive.ReserveFraction,
+
+							// How likely the behaviour policy was to take this stance here. The
+							// fourth field, so older logs without it still parse.
+							staff.LastPropensity,
 						};
 
 					stateSamples.Add(StateExport.Capture(

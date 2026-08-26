@@ -248,6 +248,12 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// </summary>
 		public UnitCatalogue Catalogue { get; set; }
 
+		/// <summary>
+		/// What every buildable thing can do, derived from the rules. The half that answers "what is
+		/// this for" rather than "what is this".
+		/// </summary>
+		public CapabilityRegistry Capabilities { get; set; }
+
 		/// <summary>Tick of the most recent update, so readers can age entries without a World.</summary>
 		public int Tick { get; private set; }
 

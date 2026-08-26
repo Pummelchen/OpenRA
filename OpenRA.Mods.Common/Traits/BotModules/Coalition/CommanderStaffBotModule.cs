@@ -50,6 +50,9 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			"over it never leaves the prior.")]
 		public readonly float ExplorationRate = 0f;
 
+		[Desc("Dump the derived capability registry once at match start, for inspection.")]
+		public readonly bool AuditCapabilities = false;
+
 		[Desc("Ticks between one-line summaries of the shared database. 2500 is roughly every 100 seconds.")]
 		public readonly int DatabaseReportInterval = 2500;
 
@@ -69,12 +72,16 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 		/// <summary>Shared per-match memory. Written here on the game thread, read by managers while they think.</summary>
 		readonly WorldDatabase database = new();
+		TacticalManager chief;
 
 		/// <summary>The shared record, for the parts of the commander that are not on this staff.</summary>
 		public WorldDatabase Database => database;
 
 		/// <summary>What the chief has currently ordered. This is the commander's macro-action.</summary>
 		public Directive CurrentDirective => staff?.Directive;
+
+		/// <summary>The probability the behaviour policy gave to the stance it last took.</summary>
+		public float LastPropensity => chief?.LastPropensity ?? 1f;
 		readonly HashSet<uint> seenThisSweep = [];
 		CombatRecordRegistry registry;
 		RegionGraph graph;
@@ -187,6 +194,13 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			database.Catalogue = new UnitCatalogue(world.Map.Rules);
 			CoalitionTelemetry.Log(world, database.Catalogue.Summary());
 
+			database.Capabilities = new CapabilityRegistry(world.Map.Rules, database.Catalogue);
+			CoalitionTelemetry.Log(world, database.Capabilities.Summary());
+
+			if (info.AuditCapabilities)
+				foreach (var line in CapabilityAudit.Report(database.Capabilities))
+					CoalitionTelemetry.Log(world, line);
+
 			CoalitionTelemetry.Log(world,
 				$"Staff assembled: {staff.Managers.Count} managers over {graph.Regions.Length} regions, " +
 				$"parallel={info.ThinkInParallel}, driving={info.Enabled}");
@@ -224,7 +238,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			staff.Add(new ForceArmManager { Name = "air-force", Order = 71, Role = CombatRole.Aircraft });
 			staff.Add(new ForceArmManager { Name = "naval-force", Order = 72, Role = CombatRole.Naval });
 
-			var chief = new TacticalManager();
+			chief = new TacticalManager();
 
 			// Exploration is for generating training data and nothing else. It makes the commander
 			// play worse on purpose, so that the dataset contains what a different choice would
@@ -237,6 +251,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			{
 				var random = world.LocalRandom;
 				var rate = info.ExplorationRate;
+				chief.ExplorationRate = rate;
 				chief.Perturb = stance =>
 					random.NextFloat() < rate
 						? (Stance)random.Next(0, (int)Stance.Recover + 1)

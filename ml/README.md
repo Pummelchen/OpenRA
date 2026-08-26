@@ -321,3 +321,69 @@ frequent enough that the recommendation was almost always fresh anyway.)
 
 `Url:` empty, so the scripted chief keeps command. That is the measured setting, not
 a placeholder.
+
+---
+
+# Deconfounding: the cause is fixed, and it exposes the next one
+
+Q trained on the scripted chief's games learns correlation, not causation — the chief
+chooses Assault when it is already winning. Acting on that made the commander worse
+(0.88 → 0.58). Tuning cannot fix a confounded estimate; only changing how the data is
+generated can.
+
+## What was built
+
+**Propensity logging.** Every decision now records the probability the behaviour
+policy gave to the action it took, as a fourth field on `action`. That is what turns
+an observational record into something a policy can be learned from.
+
+**Randomised trials.** `ExplorationRate: 1.0` draws the stance uniformly, independent
+of the position. Verified: every logged propensity is exactly 0.167 = 1/6.
+
+**A causal, dense reward.** Q was fitted to the final match margin — twenty decisions
+and twenty minutes away, almost all of it other people's decisions. It now fits the
+sixty-second outcome, which is where the stance's effect actually is.
+
+**Temporal difference.** A one-step reward is causal but myopic, and measurably so.
+
+## The causal effects, finally identifiable
+
+Under randomisation these differences are real, not correlations:
+
+| stance | reward over next 60s |
+|---|---|
+| Defend | **0.6730** |
+| Recover | 0.6388 |
+| Build / Pressure | 0.6284 |
+| Assault | 0.6170 |
+
+Spread 0.27 sd. Note that **Defend wins the next minute** — it preserves structures
+and army. A myopic policy learns never to attack, and never attacking never wins a
+match. That is precisely why the one-step reward is bootstrapped.
+
+## And the next problem, which is not confounding
+
+TD-trained Q collapses to **96% "Build"**. The reason is visible in the data it was
+trained on:
+
+    randomised-play matches      129
+    final margin, mean          -0.459
+    finished ahead               25 / 129
+
+The data is unconfounded and it records **incompetent play**. Q learns which stance is
+least bad *when the rest of the match is played at random* — which is not the question.
+Under competent play, Assault late in a winning position is correct; under random play
+it throws an army away.
+
+This is the off-policy evaluation gap, and it has one standard answer: **iterate**.
+Train, play with the trained policy plus controlled exploration, collect, retrain. Each
+generation's data reflects better play, while the logged propensities keep every
+generation unconfounded. That is `league.py`, and it is now the only thing left between
+this and a policy worth shipping.
+
+## What "done" requires, concretely
+
+Not tuning. The pipeline is complete and verified end to end — export, training,
+serving, the bot consulting and acting on the answer. What it needs is generations:
+roughly 500-1000 matches per generation and 10+ generations, which is days of wall
+clock on this machine, not another change to the model.

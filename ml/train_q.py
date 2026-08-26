@@ -33,6 +33,9 @@ import torch.nn as nn
 
 import common
 
+# Discount per sixty-second decision. A match is about twenty of them.
+GAMMA = 0.95
+
 
 def evaluate(model, batches):
     model.eval()
@@ -40,7 +43,7 @@ def evaluate(model, batches):
     changed = 0
     with torch.no_grad():
         for batch in batches:
-            ents, mask, regs, glob, yv, ya, ys = batch[:7]
+            ents, mask, regs, glob, yv, ya, ys, yr, yp = batch[:9]
             h = model.encode(ents, mask, regs, glob)
             v = torch.sigmoid(model.value(h)).squeeze(-1)
             brier += ((v - yv) ** 2).sum().item()
@@ -100,7 +103,8 @@ def main():
         model.train()
         totals = dict(value=0.0, aux=0.0, policy=0.0, q=0.0, outcome=0.0)
         for batch in tb:
-            ents, mask, regs, glob, yv, ya, ys = batch[:7]
+            ents, mask, regs, glob, yv, ya, ys, yr, yp = batch[:9]
+            nents, nmask, nregs, nglob = batch[9:13]
             opt.zero_grad()
             h = model.encode(ents, mask, regs, glob)
 
@@ -127,7 +131,38 @@ def main():
                 q_taken = q_all.gather(1, idx).squeeze(-1)
                 out_taken = out_all.gather(1, idx.unsqueeze(-1).expand(-1, 1, out_all.shape[-1])).squeeze(1)
 
-                lq = bce(q_taken[valid], yv[valid])
+                # Fitted to the sixty-second reward, not the final margin, and weighted by the
+                # inverse propensity so that actions the behaviour policy rarely took are not
+                # under-counted. Under a randomised trial the weights are uniform and this
+                # reduces to a plain fit - which is the point: the correction is there for when
+                # the data is not randomised.
+                w = (1.0 / yp[valid])
+                w = w / w.mean().clamp(min=1e-6)
+                # Temporal difference, not a one-step reward fit.
+                #
+                # The one-step reward is causal here - the stance was randomised - but it is
+                # myopic, and measurably so: under randomisation Defend scores highest over the
+                # next sixty seconds (0.673 against Assault's 0.617), because preserving
+                # structures scores well and losing them scores badly. A policy trained on that
+                # alone learns never to attack, and never attacking never wins a match.
+                #
+                # Bootstrapping restores the horizon while keeping the causal one-step term:
+                # what an action is worth is what it earns now plus what the position it leads to
+                # is worth. Gamma is per sixty-second decision, so 0.95 reaches roughly twenty
+                # decisions - about the length of a match.
+                # Eval mode for the bootstrap: the target should be the model's estimate, not a
+                # dropout-noised sample of it, and Metal has no dropout in the fused attention
+                # path either way.
+                model.eval()
+                with torch.no_grad():
+                    nh = model.encode(nents, nmask, nregs, nglob)
+                    nq, _ = model.q_values(nh)
+                    bootstrap = torch.sigmoid(nq).max(-1).values
+                model.train()
+
+                target = ((yr + GAMMA * bootstrap) / (1.0 + GAMMA)).clamp(0.0, 1.0)
+                lq = (nn.functional.binary_cross_entropy_with_logits(
+                    q_taken[valid], target[valid], reduction="none") * w).mean()
                 lo = smooth(out_taken[valid], ya[valid])
                 loss = loss + lq + lo
                 totals["q"] += lq.item()
@@ -159,6 +194,7 @@ def main():
     print("\n" + "=" * 68)
     print(f"holdout brier {brier:.4f}  acc {acc:.3f}  policy agreement {agree:.3f}  (epoch {ep + 1})")
     print(f"Q separation between best and worst action: {qspread:.4f}")
+    print("Q is fitted to the 60-second reward under logged propensities.")
     print(f"Q prefers a different action than the policy on {changed * 100:.1f}% of positions")
     print("VERDICT:", "GO - Q tells the actions apart and sometimes disagrees with imitation"
           if qspread > 0.02 and changed > 0.05 else
