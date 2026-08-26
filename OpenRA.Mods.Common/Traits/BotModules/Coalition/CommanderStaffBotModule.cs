@@ -243,6 +243,15 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 						: stance;
 			}
 
+			// A trained network, if one is answering. It replaces exactly one decision - the
+			// stance - so that any measured difference is attributable to that decision and not
+			// to two commanders differing in a dozen ways at once.
+			var neural = owner.PlayerActor.TraitsImplementing<NeuralChiefBotModule>()
+				.FirstOrDefault(m => !m.IsTraitDisabled);
+
+			if (neural != null)
+				chief.Advisor = () => neural.Recommendation;
+
 			staff.Add(chief);
 		}
 

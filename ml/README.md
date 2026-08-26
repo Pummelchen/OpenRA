@@ -242,3 +242,82 @@ plain `dotnet build` and the full `dotnet test` suite both ran normally
 `ml/build.sh` remains as a fallback: it compiles each project with
 `--no-dependencies` and stages the outputs with `cp`, which is useful if the
 copy step ever fails again. It is not needed in normal operation.
+
+---
+
+# The network plays: end to end, and it loses
+
+Everything is now connected. `serve.py` loads a trained model, `NeuralChiefBotModule`
+posts the position and receives a stance, and the chief adopts it — replacing exactly
+one decision so any difference is attributable to that decision rather than to two
+commanders differing in a dozen ways.
+
+It works, and the learned chief is worse than the thresholds it replaces:
+
+| chief | destroyed / lost | exchange |
+|---|---|---|
+| scripted | 77 / 88 | **0.88** |
+| network, argmax Q | 60 / 104 | 0.58 |
+| network, support-constrained Q | 54 / 93 | 0.58 |
+| network, expiring recommendations | 54 / 93 | 0.58 |
+
+41 overrides were applied across the twelve matches, so this is the model actually
+deciding, not a wiring failure.
+
+## Why the dynamics model was the wrong instrument
+
+Before this, two attempts at latent dynamics failed and the diagnosis was "the data
+has no counterfactual". **That diagnosis was wrong.** Grouping outcomes by the stance
+in force shows the action is plainly visible in what follows:
+
+| outcome over the next 60s | spread between stances |
+|---|---|
+| own army | 0.79 sd |
+| income | 0.55 sd |
+| enemy army | 0.35 sd |
+| structures lost | 0.32 sd |
+| enemy structures killed | 0.23 sd |
+
+The signal was there; predicting a 288-dimensional next latent simply let the head
+ignore it, because the action's effect is a rounding error against that vector's
+variance. Q(s,a) asks for the part that varies, and it does separate the actions.
+
+## Why Q still loses
+
+Two failures, both textbook, both measured:
+
+**Overestimation on rarely-taken actions.** Q is fitted only on the action that was
+taken, so its estimate for a rare action is barely constrained — and argmax seeks out
+exactly those. Q settled on "Build", present in 5% of the data, which means never
+attacking. Constraining the choice to actions the imitation policy supports (BCQ's
+core idea) fixed the pathology and changed the score by nothing.
+
+**Confounding.** The deeper problem, and the one that support constraints cannot
+touch. The chief chooses Assault when it is already winning, so Assault correlates
+with good outcomes for reasons that have nothing to do with Assault causing them. Q
+learns the correlation. Acting on it degrades play.
+
+Thirty per cent exploration produces 5-13% of samples per off-policy action, which is
+not enough to break that confounding. This is the same finding as the three failed
+attempts to rank production by its own results (0.88 → 0.74 → 0.62), the inert
+search, and the action-insensitive dynamics model — measured now from four
+independent directions.
+
+**On-policy data cannot tell you what a different policy would do**, and the
+exploration needed to fix it is measured in thousands of matches, not dozens.
+
+## Two bugs found on the way
+
+`Url: "http://..."` in OpenRA yaml keeps the quote characters, producing an invalid
+URI whose request fails silently — the module looked disabled rather than
+misconfigured. It now tolerates quotes.
+
+`Recommendation` never expired, so one consultation governed every later decision
+while the telemetry, which logs only on change, reported it as a single override. It
+now expires after two intervals. (Correct, but it changed no score: consultations are
+frequent enough that the recommendation was almost always fresh anyway.)
+
+## Shipped state
+
+`Url:` empty, so the scripted chief keeps command. That is the measured setting, not
+a placeholder.

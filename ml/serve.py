@@ -17,32 +17,24 @@ more often, is the one that would need to be exported and run in-process.
 import argparse
 import pathlib
 
+import json
+import http.server
+
 import torch
-from fastapi import FastAPI
-from pydantic import BaseModel
 
 import common
 import train_stage4
 
-app = FastAPI(title="commander")
-STATE = {"model": None, "device": None, "search": True, "sims": 64}
+STATE = {"model": None, "device": None, "search": True, "sims": 64, "support": 0.3}
 
 
-class Position(BaseModel):
-    entities: list[list[float]] = []
-    regions: list[list[float]] = []
-    globals: list[float] = []
-
-
-@app.get("/health")
 def health():
     return {"ok": STATE["model"] is not None,
             "device": str(STATE["device"]),
             "search": STATE["search"]}
 
 
-@app.post("/evaluate")
-def evaluate(position: Position):
+def evaluate(position):
     """Returns the network's read of one position.
 
     `value` is the predicted graded outcome in 0..1 — above 0.5 means finishing
@@ -55,9 +47,9 @@ def evaluate(position: Position):
         return {"error": "no model loaded"}
 
     row = {
-        "entities": position.entities,
-        "regions": position.regions,
-        "globals": position.globals or [0.0] * common.GLOBAL_FIELDS,
+        "entities": position.get("entities", []),
+        "regions": position.get("regions", []),
+        "globals": position.get("globals") or [0.0] * common.GLOBAL_FIELDS,
         "margin": 0.0,
         "action": [-1, -1, -1],
     }
@@ -72,7 +64,35 @@ def evaluate(position: Position):
         greedy = int(prior.argmax().item())
 
         chosen, searched = greedy, None
-        if STATE["search"] and model.use_dynamics:
+
+        # Q first when the model has it. Predicting the outcome conditioned on the action
+        # is what the latent dynamics model failed to do - it learned to ignore the action,
+        # because against a 288-dimensional vector the action's effect is a rounding error.
+        # Q asks only for the part that varies, and the data says that part is worth
+        # 0.2-0.8 standard deviations depending on the outcome measured.
+        if getattr(model, "use_q", False):
+            q, outcome = model.q_values(h)
+            qv = torch.sigmoid(q).squeeze(0)
+
+            # Only among actions the data actually supports.
+            #
+            # Taking a plain argmax over Q was measured and it plays worse than the scripted
+            # chief it replaces: 0.88 -> 0.58 exchange ratio over twelve matches. The reason is
+            # the standard one for offline value learning. Q is fitted only on the action that
+            # was taken, so its estimate for a rarely-taken action is barely constrained by
+            # anything - and argmax then seeks out exactly those actions, because an
+            # unconstrained estimate is usually an overestimate. Q settled on "Build", which
+            # appears in 5% of the data and means never attacking.
+            #
+            # Restricting the choice to actions the imitation policy gives real probability to
+            # is the core of BCQ, and it is the cheapest correct version of the fix: the network
+            # may still disagree with the scripted chief, but only about actions it has seen
+            # enough of to have an opinion worth acting on.
+            support = prior >= STATE["support"] * prior.max()
+            masked = torch.where(support, qv, torch.full_like(qv, -1.0))
+            chosen = int(masked.argmax().item())
+            searched = [round(v, 4) for v in qv.tolist()]
+        elif STATE["search"] and model.use_dynamics:
             counts, values = train_stage4.puct_search(model, h, simulations=STATE["sims"])
             chosen = int(counts.argmax().item())
             searched = [round(v, 4) for v in values.tolist()]
@@ -87,15 +107,57 @@ def evaluate(position: Position):
     }
 
 
+class Handler(http.server.BaseHTTPRequestHandler):
+    """Plain stdlib HTTP.
+
+    Deliberately no framework: torch lives in one interpreter here and fastapi in
+    another, and the server does two things at a cadence of a few requests a minute.
+    Adding a dependency to bridge two environments would be a worse trade than
+    twenty lines of BaseHTTPRequestHandler.
+    """
+
+    def _send(self, payload, status=200):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.rstrip("/") == "/health":
+            self._send(health())
+        else:
+            self._send({"error": "not found"}, 404)
+
+    def do_POST(self):
+        if self.path.rstrip("/") != "/evaluate":
+            self._send({"error": "not found"}, 404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            position = json.loads(self.rfile.read(length) or b"{}")
+            self._send(evaluate(position))
+        except (ValueError, KeyError, RuntimeError) as e:
+            # A bad request must not take the server down: the bot falls back to its
+            # scripted chief on any failure, and a dead server would make that permanent.
+            self._send({"error": str(e)}, 400)
+
+    def log_message(self, *args):
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="ml/commander_net_full.pt")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--simulations", type=int, default=64)
     ap.add_argument("--no-search", action="store_true")
+    ap.add_argument("--support", type=float, default=0.3,
+                    help="An action is eligible if the policy gives it at least this fraction "
+                         "of the most likely action's probability. Lower trusts Q further out "
+                         "of distribution; 0 restores the plain argmax that measured worse.")
     args = ap.parse_args()
-
-    import uvicorn
 
     device = common.device_of()
     path = pathlib.Path(args.model)
@@ -103,15 +165,21 @@ def main():
         raise SystemExit(f"no model at {path} - train one first")
 
     blob = torch.load(path, map_location=device, weights_only=False)
-    model = common.CommanderNet(use_aux=True, use_policy=True, use_dynamics=True).to(device)
+    # Which heads the checkpoint carries decides how it is built.
+    keys = blob["state_dict"].keys()
+    model = common.CommanderNet(
+        use_aux=True, use_policy=True,
+        use_dynamics=any(k.startswith("dynamics.") for k in keys),
+        use_q=any(k.startswith("q.") for k in keys)).to(device)
     model.load_state_dict(blob["state_dict"])
     model.eval()
 
     STATE.update(model=model, device=device,
-                 search=not args.no_search, sims=args.simulations)
+                 search=not args.no_search, sims=args.simulations, support=args.support)
 
-    print(f"commander network on {device}; search={'on' if STATE['search'] else 'off'}")
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    heads = "Q" if model.use_q else ("search" if model.use_dynamics else "policy")
+    print(f"commander network on {device}; deciding by {heads}; port {args.port}", flush=True)
+    http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

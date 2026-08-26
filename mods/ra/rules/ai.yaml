@@ -1084,7 +1084,14 @@ Player:
 		# Off unless a model server is answering. The scripted chief keeps command otherwise,
 		# and has to remain a working opponent regardless - every claim the network makes is
 		# measured against it.
-		Url: ""
+		# Empty, and that is the measured setting rather than a placeholder. With a model server
+		# answering, the trained chief plays WORSE than the scripted thresholds it replaces:
+		# 0.88 -> 0.58 exchange ratio over twelve fair-economy matches, unchanged across three
+		# variants (plain argmax Q, support-constrained argmax, and expiring recommendations).
+		#
+		# No quotes when setting this: OpenRA's yaml loader keeps them as part of the value, and a
+		# URL wrapped in quote characters is an invalid URI that fails silently.
+		Url:
 		Interval: 250
 		TimeoutMilliseconds: 2000
 	CommanderCalibrationBotModule:

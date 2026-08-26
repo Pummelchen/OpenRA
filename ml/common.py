@@ -209,11 +209,12 @@ class Encoder(nn.Module):
 class CommanderNet(nn.Module):
     """The one network: shared encoder, one head per question asked of it."""
 
-    def __init__(self, use_aux=True, use_policy=False, use_dynamics=False,
+    def __init__(self, use_aux=True, use_policy=False, use_dynamics=False, use_q=False,
                  n_types=128, d=96, **kw):
         super().__init__()
         self.encoder = Encoder(n_types=n_types, d=d, **kw)
-        self.use_aux, self.use_policy, self.use_dynamics = use_aux, use_policy, use_dynamics
+        self.use_aux, self.use_policy = use_aux, use_policy
+        self.use_dynamics, self.use_q = use_dynamics, use_q
         w = d * 3
         self.width = w
 
@@ -228,6 +229,26 @@ class CommanderNet(nn.Module):
             self.policy = nn.Sequential(
                 nn.LayerNorm(w), nn.Linear(w, d), nn.GELU(), nn.Linear(d, N_STANCES))
 
+        if use_q:
+            # Q(s, a): what the outcome looks like if THIS action is taken here.
+            #
+            # This replaces the latent dynamics model, and the replacement is measured rather
+            # than stylistic. Asking a head to predict the next 288-dimensional latent lets it
+            # ignore the action entirely, because the action's real effect is small against the
+            # latent's total variance - sensitivity came out at 0.3-0.8% of signal and search
+            # never left its prior on 96 of 96 positions.
+            #
+            # But the effect is genuinely there in the data: grouping outcomes by the stance in
+            # force, the spread between stances is 0.79 standard deviations on army sixty seconds
+            # later, 0.55 on income, 0.32 on structures lost. A head asked for exactly that -
+            # the outcome, conditioned on the action - is asked for the part that varies instead
+            # of a vector where it is a rounding error.
+            self.q_action = nn.Embedding(N_STANCES, d)
+            self.q = nn.Sequential(
+                nn.LayerNorm(w + d), nn.Linear(w + d, d), nn.GELU(), nn.Linear(d, 1))
+            self.q_outcome = nn.Sequential(
+                nn.LayerNorm(w + d), nn.Linear(w + d, d), nn.GELU(), nn.Linear(d, len(AUX_NAMES)))
+
         if use_dynamics:
             # Given the current latent and a macro-action, predict the NEXT latent. Search then
             # runs in this space rather than over a hand-written forward model - the last one of
@@ -238,6 +259,14 @@ class CommanderNet(nn.Module):
 
     def encode(self, ents, mask, regs, glob):
         return self.encoder(ents, mask, regs, glob)
+
+    def q_values(self, h):
+        """Q and predicted outcome for every action at once, for a batch of states."""
+        n, a = h.shape[0], N_STANCES
+        rep = h.unsqueeze(1).expand(n, a, h.shape[-1])
+        acts = self.q_action(torch.arange(a, device=h.device)).unsqueeze(0).expand(n, a, -1)
+        joint = torch.cat([rep, acts], dim=-1)
+        return self.q(joint).squeeze(-1), self.q_outcome(joint)
 
     def heads(self, h, action=None):
         v = self.value(h).squeeze(-1)

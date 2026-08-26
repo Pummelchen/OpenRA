@@ -78,18 +78,47 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			http.Timeout = TimeSpan.FromMilliseconds(Math.Max(100, info.TimeoutMilliseconds));
 		}
 
-		/// <summary>The stance the network last returned, or null when it has not answered.</summary>
-		public Stance? Recommendation { get; private set; }
+		/// <summary>
+		/// The configured URL with any surrounding quotes stripped.
+		/// </summary>
+		/// <remarks>
+		/// OpenRA's yaml loader does not treat quotes as string delimiters, so `Url: "http://..."`
+		/// arrives with the quote characters still attached and produces an invalid URI. The request
+		/// then throws and is swallowed by the fallback, so the module looks disabled rather than
+		/// misconfigured - which cost a while to find. Tolerating it is cheaper than expecting
+		/// everyone to remember.
+		/// </remarks>
+		string Url => Info.Url?.Trim().Trim('"');
+
+		/// <summary>
+		/// The stance the network last returned, or null when it has not answered recently.
+		/// </summary>
+		/// <remarks>
+		/// Deliberately EXPIRES. Without that, one consultation silently governs every later
+		/// decision - the chief reads this on each cycle, so a single answer becomes the
+		/// permanent stance for the rest of the match. It also hides itself: the telemetry only
+		/// logs when the recommendation CHANGES, so a stale answer applied a hundred times reads
+		/// in the log as one override.
+		/// </remarks>
+		public Stance? Recommendation =>
+			recommendation.HasValue && world != null
+				&& world.WorldTick - recommendedTick <= Info.Interval * 2
+					? recommendation
+					: null;
+
+		Stance? recommendation;
+		int recommendedTick = int.MinValue;
+		World world;
 
 		/// <summary>The network's read of the position, 0-1, above a half meaning ahead.</summary>
 		public float Value { get; private set; } = 0.5f;
 
 		void IBotTick.BotTick(IBot bot)
 		{
-			if (IsTraitDisabled || string.IsNullOrEmpty(Info.Url))
+			if (IsTraitDisabled || string.IsNullOrEmpty(Url))
 				return;
 
-			var world = bot.Player.World;
+			world = bot.Player.World;
 			if (world.WorldTick % Info.Interval != 0 || inFlight)
 				return;
 
@@ -145,7 +174,8 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				if (stance < 0 || stance > (int)Stance.Recover)
 					return;
 
-				Recommendation = (Stance)stance;
+				recommendation = (Stance)stance;
+				recommendedTick = world.WorldTick;
 				if (root.TryGetProperty("value", out var valueElement))
 					Value = (float)valueElement.GetDouble();
 
@@ -157,7 +187,7 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				{
 					lastStance = stance;
 					CoalitionTelemetry.Log(world,
-						$"Neural chief: {Recommendation} at value {Value:F2} " +
+						$"Neural chief: {recommendation} at value {Value:F2} " +
 						$"({consulted} consultations, search differed on {disagreements})");
 				}
 			}

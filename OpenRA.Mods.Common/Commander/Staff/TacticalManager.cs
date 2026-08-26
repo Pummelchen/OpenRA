@@ -95,6 +95,18 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// </remarks>
 		public Func<Stance, Stance> Perturb { get; set; }
 
+		/// <summary>
+		/// An external adviser that may replace the chosen stance. Null when nobody is advising.
+		/// </summary>
+		/// <remarks>
+		/// This is how a trained network takes command: it answers the same question the scripted
+		/// thresholds answer, and when it has an answer, that answer is used. Everything else the
+		/// staff does - who reports what, which region is the main effort, how the reserve is
+		/// split - is unchanged, so the comparison between the two chiefs is a comparison of one
+		/// decision rather than of two different commanders.
+		/// </remarks>
+		public Func<Stance?> Advisor { get; set; }
+
 		/// <summary>Tick the chief first wanted to move and could not. -1 when nothing is pending.</summary>
 		int waitingSince = -1;
 
@@ -106,6 +118,20 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				return;
 
 			var directive = Decide(snapshot, context);
+
+			var advised = Advisor?.Invoke();
+			if (advised.HasValue && advised.Value != directive.Stance)
+				directive = new Directive
+				{
+					Stance = advised.Value,
+					MainEffortRegion = directive.MainEffortRegion,
+					FeintRegion = directive.FeintRegion,
+					AuthoriseSpecialOperations = directive.AuthoriseSpecialOperations,
+					ReserveFraction = directive.ReserveFraction,
+					IssuedTick = directive.IssuedTick,
+					ValidUntilTick = directive.ValidUntilTick,
+					Rationale = $"network: {advised.Value} over {directive.Stance} ({directive.Rationale})",
+				};
 
 			if (Perturb != null)
 			{
