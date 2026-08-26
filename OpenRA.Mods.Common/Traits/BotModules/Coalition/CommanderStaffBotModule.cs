@@ -653,9 +653,33 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 					case ConstructIntent:
 						break;
+
+					// Anything the staff decided that nothing here carries out.
+					//
+					// This branch did not exist, and its absence hid three whole intent types:
+					// AttackIntent, DefendIntent and ScoutIntent are built every cycle by managers
+					// that believe they are ordering an attack, a defence and a scout, and every one
+					// of them was dropped on the floor without a word. Attack behaviour reaches the
+					// game through the Directive instead - Stance and MainEffortRegion, which are
+					// read - so the commander does attack; it just does not attack because of these.
+					//
+					// A switch with no default is how a staff acquires managers that report
+					// confidently and change nothing, which is the failure this whole redesign
+					// exists to remove. Reported once per type per match, because the point is to
+					// notice it, not to fill the log.
+					default:
+						if (unhandledIntents.Add(intent.GetType().Name))
+							CoalitionTelemetry.Log(bot.Player.World,
+								$"Staff intent DROPPED: nothing carries out {intent.GetType().Name} "
+								+ $"({intent.Describe()})");
+
+						break;
 				}
 			}
 		}
+
+		/// <summary>Intent types already reported as having no executor, so each is said once.</summary>
+		readonly HashSet<string> unhandledIntents = [];
 
 		/// <summary>
 		/// Puts a damaged building of ours back into repair, and records that somebody attended to
