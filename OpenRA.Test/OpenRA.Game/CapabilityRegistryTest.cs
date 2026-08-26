@@ -127,6 +127,101 @@ namespace OpenRA.Test
 			Assert.That(harvester.Reach, Is.EqualTo(0f));
 		}
 
+		static ActorCapability Structure(string type, int cost, int power,
+			IReadOnlyList<string> requires, IReadOnlyList<string> unlocks) =>
+			new()
+			{
+				Type = type,
+				Cost = cost,
+				HitPoints = 40000,
+				Armour = "Concrete",
+				IsStructure = true,
+				Power = power,
+				Requires = requires,
+				Unlocks = unlocks.Append(type).Distinct().ToArray(),
+				Queues = ["Building"],
+			};
+
+		[TestCase(TestName = "An actor satisfies a prerequisite equal to its own name.")]
+		public void ActorsProvideTheirOwnName()
+		{
+			// How "requires weap" is met by owning a war factory. Leaving this out made the tech
+			// graph unable to find a route to a Tesla coil, whose real requirement is a war factory.
+			var registry = new CapabilityRegistry(new[]
+			{
+				Structure("weap", 2000, -30, [], []),
+				Structure("tsla", 1200, -80, ["weap"], []),
+			});
+
+			var path = registry.PathTo("tsla", new HashSet<string>());
+			Assert.That(path, Is.EqualTo(new[] { "weap" }));
+		}
+
+		[TestCase(TestName = "The tech path is ordered, and stops once everything is held.")]
+		public void PathIsOrderedAndStops()
+		{
+			var registry = new CapabilityRegistry(new[]
+			{
+				Structure("weap", 2000, -30, [], []),
+				Structure("dome", 1400, -40, ["weap"], []),
+				Structure("atek", 1500, -200, ["dome"], ["techcenter"]),
+				Structure("mslo", 2500, -150, ["techcenter"], []),
+			});
+
+			// Exact order, because the order IS the answer: each step must be buildable when it
+			// is reached. A loose assertion here hid a real defect - the first implementation
+			// returned just "atek", a tech centre that could not yet be built.
+			Assert.That(registry.PathTo("mslo", new HashSet<string>()),
+				Is.EqualTo(new[] { "weap", "dome", "atek" }),
+				"A build order must put each prerequisite before the thing that needs it.");
+
+			Assert.That(registry.PathTo("mslo", new HashSet<string> { "techcenter" }), Is.Empty,
+				"Holding the token already means there is nothing left to build.");
+		}
+
+		[TestCase(TestName = "Tokens nothing can build are treated as held, not as blockers.")]
+		public void ExternalTokensDoNotBlock()
+		{
+			// Faction identity and lobby tech level are granted from outside the build queue. Treating
+			// them as blockers made every path through a faction-gated building report "no route",
+			// which is the opposite of the truth.
+			var registry = new CapabilityRegistry(new[]
+			{
+				Structure("weap", 2000, -30, [], []),
+				Structure("tsla", 1200, -80, ["weap", "~structures.soviet", "~techlevel.medium"], []),
+			});
+
+			Assert.That(registry.PathTo("tsla", new HashSet<string>()), Is.EqualTo(new[] { "weap" }));
+		}
+
+		[TestCase(TestName = "A negated prerequisite is never something to go and build.")]
+		public void NegatedPrerequisitesAreSkipped()
+		{
+			var registry = new CapabilityRegistry(new[]
+			{
+				Structure("weap", 2000, -30, [], []),
+				Structure("special", 900, -20, ["weap", "!disabled"], []),
+			});
+
+			var capability = registry.Find("special");
+			Assert.That(registry.Missing(capability, new HashSet<string> { "weap" }), Is.Empty,
+				"Requiring that something be ABSENT cannot be satisfied by construction.");
+		}
+
+		[TestCase(TestName = "Power is separated into what supplies and what draws.")]
+		public void PowerIsSigned()
+		{
+			var registry = new CapabilityRegistry(new[]
+			{
+				Structure("apwr", 500, 200, [], []),
+				Structure("atek", 1500, -200, [], []),
+			});
+
+			Assert.That(registry.Find("apwr").SuppliesPower, Is.True);
+			Assert.That(registry.Find("atek").DrawsPower, Is.True);
+			Assert.That(registry.PowerPlants().Select(p => p.Type), Is.EqualTo(new[] { "apwr" }));
+		}
+
 		[TestCase(TestName = "Reach is the longest weapon, not the average.")]
 		public void ReachIsTheLongestWeapon()
 		{

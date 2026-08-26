@@ -74,6 +74,39 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		public IReadOnlyList<WeaponCapability> Weapons { get; init; } = [];
 
+		/// <summary>
+		/// Power this actor supplies (positive) or draws (negative).
+		/// </summary>
+		/// <remarks>
+		/// Never read anywhere in the staff before now, which is why the commander could build its
+		/// way into a brownout and then wonder why its defences had stopped firing.
+		/// </remarks>
+		public int Power { get; init; }
+
+		/// <summary>What must already exist before this can be built.</summary>
+		public IReadOnlyList<string> Requires { get; init; } = [];
+
+		/// <summary>
+		/// Prerequisite tokens this actor grants once built - what it UNLOCKS.
+		/// </summary>
+		/// <remarks>
+		/// The tech graph, and the answer to the only question that makes a tech decision
+		/// rational: what does paying for this building buy me access to?
+		/// </remarks>
+		public IReadOnlyList<string> Unlocks { get; init; } = [];
+
+		/// <summary>Ticks to build at nominal speed, before any speed-up from extra factories.</summary>
+		public int BuildTicks { get; init; }
+
+		/// <summary>Seconds to build at nominal speed.</summary>
+		public float BuildSeconds => BuildTicks / (float)AbstractState.TicksPerSecond;
+
+		/// <summary>Which production queue builds this.</summary>
+		public IReadOnlyList<string> Queues { get; init; } = [];
+
+		public bool SuppliesPower => Power > 0;
+		public bool DrawsPower => Power < 0;
+
 		public bool IsArmed => Weapons.Count > 0;
 		public bool CanHitAir => Weapons.Any(w => w.HitsAir);
 		public bool CanHitGround => Weapons.Any(w => w.HitsGround);
@@ -151,6 +184,26 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public ActorCapability Find(string type) =>
 			string.IsNullOrEmpty(type) ? null : byType.GetValueOrDefault(type);
 
+		/// <summary>
+		/// Builds a registry from capabilities directly, for tests and for tooling that has no mod
+		/// loaded. The graph logic is the part worth testing and it does not need a Ruleset to run.
+		/// </summary>
+		public CapabilityRegistry(IEnumerable<ActorCapability> capabilities)
+		{
+			ArgumentNullException.ThrowIfNull(capabilities);
+
+			foreach (var c in capabilities)
+				byType[c.Type] = c;
+
+			All = byType.Values.OrderBy(c => c.Type, StringComparer.Ordinal).ToArray();
+			ArmourClasses = byType.Values
+				.Select(c => c.Armour)
+				.Where(a => !string.IsNullOrEmpty(a))
+				.Distinct(StringComparer.Ordinal)
+				.OrderBy(a => a, StringComparer.Ordinal)
+				.ToArray();
+		}
+
 		public CapabilityRegistry(Ruleset rules, UnitCatalogue catalogue)
 		{
 			ArgumentNullException.ThrowIfNull(rules);
@@ -163,6 +216,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 				if (!rules.Actors.TryGetValue(entry.Type, out var actor))
 					continue;
 
+				var buildable = actor.TraitInfoOrDefault<BuildableInfo>();
 				var mobile = actor.TraitInfoOrDefault<MobileInfo>();
 				var aircraft = actor.TraitInfoOrDefault<AircraftInfo>();
 				var armour = actor.TraitInfoOrDefault<ArmorInfo>()?.Type ?? "";
@@ -189,6 +243,31 @@ namespace OpenRA.Mods.Common.Commander.Model
 						.Max(),
 
 					Weapons = Armaments(actor, rules),
+
+					Power = actor.TraitInfos<PowerInfo>().Sum(p => p.Amount),
+					Requires = buildable?.Prerequisites.ToArray() ?? [],
+					Queues = buildable?.Queue.ToArray() ?? [],
+
+					// Prerequisites this actor grants. Factions are ignored on purpose: the
+					// commander holds every faction's tokens, so a grant that is faction-gated in
+					// the rules is still a grant it will receive.
+					// An actor satisfies a prerequisite equal to its own name simply by existing -
+					// that is how "requires weap" is met by owning a war factory - so its own type
+					// belongs in this list alongside any token it explicitly grants. Leaving it out
+					// made the tech graph unable to find a path to a Tesla coil, whose only real
+					// requirement is a war factory.
+					Unlocks = actor.TraitInfos<ProvidesPrerequisiteInfo>()
+						.Select(p => p.Prerequisite ?? entry.Type)
+						.Where(t => !string.IsNullOrEmpty(t))
+						.Append(entry.Type)
+						.Distinct(StringComparer.Ordinal)
+						.OrderBy(t => t, StringComparer.Ordinal)
+						.ToArray(),
+
+					// BuildDuration of -1 means "however much it costs", which is the mod's own
+					// default rule rather than an assumption made here.
+					BuildTicks = buildable == null ? 0
+						: buildable.BuildDuration >= 0 ? buildable.BuildDuration : entry.Cost,
 				};
 			}
 
@@ -288,13 +367,112 @@ namespace OpenRA.Mods.Common.Commander.Model
 		/// <summary>Everything that can shoot at aircraft. Asked by verb, never by name.</summary>
 		public IEnumerable<ActorCapability> AntiAir() => All.Where(c => c.CanHitAir);
 
+		/// <summary>Everything that supplies more power than it draws.</summary>
+		public IEnumerable<ActorCapability> PowerPlants() =>
+			All.Where(c => c.SuppliesPower).OrderByDescending(c => c.Power);
+
+		/// <summary>
+		/// What must be built, in order, to make a target buildable - the shortest chain of
+		/// structures whose unlocks satisfy its prerequisites.
+		/// </summary>
+		/// <remarks>
+		/// Answers "how do I get to a Tesla coil from here", which the commander could not ask at
+		/// all before. Prerequisites prefixed with "~" are hidden rather than optional, so they are
+		/// matched the same way after stripping the marker; a "!" prefix negates and is skipped,
+		/// since nothing needs to be built to satisfy a requirement that something be absent.
+		/// </remarks>
+		public IReadOnlyList<string> PathTo(string target, IReadOnlySet<string> alreadyHeld)
+		{
+			var goal = Find(target);
+			if (goal == null)
+				return [];
+
+			var held = new HashSet<string>(alreadyHeld ?? new HashSet<string>(), StringComparer.Ordinal);
+			var plan = new List<string>();
+			var visiting = new HashSet<string>(StringComparer.Ordinal);
+
+			// Depth-first over prerequisites, so a provider is only added once ITS OWN requirements
+			// are in the plan ahead of it. Satisfying just the target's direct prerequisites is not
+			// enough and produced plans that could not be executed: a missile silo needs a tech
+			// centre, and the first version answered "build a tech centre" without noticing that the
+			// tech centre needs a war factory and a radar dome first.
+			bool Resolve(ActorCapability capability, int depth)
+			{
+				if (depth > 12)
+					return false;
+
+				foreach (var need in Missing(capability, held))
+				{
+					var provider = All
+						.Where(c => c.Unlocks.Contains(need, StringComparer.Ordinal)
+							&& c.Queues.Count > 0)
+						.OrderBy(c => c.Cost)
+						.ThenBy(c => c.Type, StringComparer.Ordinal)
+						.FirstOrDefault();
+
+					if (provider == null)
+					{
+						// Nothing buildable grants this, so it comes from elsewhere - faction
+						// identity, the lobby's tech level, a map trigger. Those are held or they
+						// are not, and no amount of construction changes it. Treating them as
+						// blockers made every path through a faction-gated building report "no
+						// route", which is the opposite of the truth.
+						held.Add(need);
+						continue;
+					}
+
+					if (plan.Contains(provider.Type, StringComparer.Ordinal))
+						continue;
+
+					// A cycle in the prerequisites would otherwise recurse until the stack gave out.
+					if (!visiting.Add(provider.Type))
+						return false;
+
+					if (!Resolve(provider, depth + 1))
+						return false;
+
+					visiting.Remove(provider.Type);
+
+					plan.Add(provider.Type);
+					foreach (var token in provider.Unlocks)
+						held.Add(token);
+				}
+
+				return true;
+			}
+
+			return Resolve(goal, 0) ? plan : [];
+		}
+
+		/// <summary>Prerequisites of this actor that are not yet satisfied.</summary>
+		public IReadOnlyList<string> Missing(ActorCapability capability, IReadOnlySet<string> held)
+		{
+			ArgumentNullException.ThrowIfNull(capability);
+
+			var missing = new List<string>();
+			foreach (var raw in capability.Requires)
+			{
+				var token = raw.TrimStart('~');
+				if (token.StartsWith('!'))
+					continue;
+
+				if (held == null || !held.Contains(token))
+					missing.Add(token);
+			}
+
+			return missing;
+		}
+
 		/// <summary>A one-line account for telemetry.</summary>
 		public string Summary()
 		{
 			var armed = All.Count(c => c.IsArmed);
 			var aa = All.Count(c => c.CanHitAir);
 			var mobile = All.Count(c => c.CanMove);
+			var plants = All.Count(c => c.SuppliesPower);
+			var unlockers = All.Count(c => c.Unlocks.Count > 0);
 			return $"capabilities: {Count} actors, {armed} armed, {aa} anti-air, {mobile} mobile, " +
+				$"{plants} power plants, {unlockers} grant prerequisites, " +
 				$"armour classes [{string.Join(" ", ArmourClasses)}]";
 		}
 	}

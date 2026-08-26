@@ -79,6 +79,30 @@ namespace OpenRA.Mods.Common.Commander.Model
 							+ $"{x.Actor.DamageVersus(armour):F0}dps)");
 			}
 
+			var plants = registry.PowerPlants().ToArray();
+			if (plants.Length > 0)
+				yield return "AUDIT power plants: "
+					+ Join(plants.Take(examples), c => $"{c.Type} +{c.Power} ({c.Cost}cr)");
+
+			var drains = registry.All.Where(c => c.DrawsPower)
+				.OrderBy(c => c.Power).Take(examples).ToArray();
+			if (drains.Length > 0)
+				yield return "AUDIT hungriest: " + Join(drains, c => $"{c.Type} {c.Power}");
+
+			// The tech graph, asked the way a commander would ask it: what do I have to build to
+			// get to the thing I want? Answered from an empty base, so the whole chain shows.
+			foreach (var goal in new[] { "tsla", "atek", "mslo", "4tnk" })
+			{
+				var path = registry.PathTo(goal, new HashSet<string>(StringComparer.Ordinal));
+				var target = registry.Find(goal);
+				if (target == null)
+					continue;
+
+				yield return $"AUDIT path to {goal}: "
+					+ (path.Count == 0 ? "(none found)" : string.Join(" -> ", path))
+					+ $"  [requires {string.Join(", ", target.Requires)}]";
+			}
+
 			// And a worked example, so the per-unit numbers can be read rather than inferred from a
 			// ranking.
 			foreach (var name in new[] { "4tnk", "jeep", "e1", "arty" })
