@@ -39,8 +39,16 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public int Interval => 250;
 		public bool CanThinkInParallel => true;
 
-		/// <summary>Naval types this commander fields, in the order it prefers to fill a group.</summary>
-		public string[] GroupTypes { get; init; } = ["ss", "msub", "dd", "ca", "pt"];
+		/// <summary>
+		/// Fallback naval types, used only when no capability registry is available.
+		/// </summary>
+		/// <remarks>
+		/// These five names are Red Alert's, and a list of them is not knowledge - it is a
+		/// transcription. What makes a unit naval is that its locomotor crosses water, which the
+		/// registry reads out of the mod's own terrain table, and which is true of hovercraft and
+		/// transports and anything a mod invents without anybody updating a list.
+		/// </remarks>
+		public string[] FallbackGroupTypes { get; init; } = ["ss", "msub", "dd", "ca", "pt"];
 
 		/// <summary>How many of each type make one whole group.</summary>
 		public int PerType { get; init; } = 3;
@@ -51,7 +59,23 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			if (database == null)
 				return;
 
-			var counts = GroupTypes.ToDictionary(t => t, database.CountOf, StringComparer.Ordinal);
+			// What this commander can actually put to sea, asked rather than assumed. Restricted to
+			// what a shipyard will currently accept, so a group is never planned around a hull the
+			// commander has no way to build.
+			var buildable = database.Available?.Options
+				.Select(o => o.Type)
+				.ToHashSet(StringComparer.Ordinal);
+
+			var groupTypes = database.Capabilities?.Naval()
+				.Select(c => c.Type)
+				.Where(t => buildable == null || buildable.Count == 0 || buildable.Contains(t)
+					|| database.CountOf(t) > 0)
+				.ToArray();
+
+			if (groupTypes == null || groupTypes.Length == 0)
+				groupTypes = FallbackGroupTypes;
+
+			var counts = groupTypes.ToDictionary(t => t, database.CountOf, StringComparer.Ordinal);
 			var total = counts.Values.Sum();
 
 			if (total == 0)
@@ -74,7 +98,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			// What the group is short of, worst shortfall first, so the shipyard fills the gap
 			// rather than adding to whatever it already has most of.
-			var shortfalls = GroupTypes
+			var shortfalls = groupTypes
 				.Select(t => (Type: t, Missing: ((groups + 1) * PerType) - counts[t]))
 				.Where(x => x.Missing > 0)
 				.OrderByDescending(x => x.Missing)
@@ -91,7 +115,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					Reason = $"group {groups + 1} is {missing} {type} short of {PerType} of each",
 				});
 
-			var composition = string.Join(" ", GroupTypes.Where(t => counts[t] > 0).Select(t => $"{t}x{counts[t]}"));
+			var composition = string.Join(" ", groupTypes.Where(t => counts[t] > 0).Select(t => $"{t}x{counts[t]}"));
 
 			context.Report(new ManagerReport
 			{

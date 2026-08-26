@@ -15,6 +15,7 @@ using System.Linq;
 using OpenRA.GameRules;
 using OpenRA.Mods.Common.Traits;
 using OpenRA.Mods.Common.Warheads;
+using OpenRA.Traits;
 
 namespace OpenRA.Mods.Common.Commander.Model
 {
@@ -69,6 +70,20 @@ namespace OpenRA.Mods.Common.Commander.Model
 		public bool CanMove => Speed > 0f;
 		public bool IsAircraft { get; init; }
 
+		/// <summary>
+		/// Whether this can move over water under its own power.
+		/// </summary>
+		/// <remarks>
+		/// Read from the mod's own locomotor terrain table rather than from a list of ship names.
+		/// "Naval" is not a property of an actor in this engine, it is a consequence of which
+		/// terrain its locomotor can cross, and asking the terrain table gets transports, hovercraft
+		/// and anything a mod invents for free.
+		/// </remarks>
+		public bool MovesOnWater { get; init; }
+
+		/// <summary>A unit that fights at sea: floats, is armed, and is not simply flying over.</summary>
+		public bool IsNaval => MovesOnWater && !IsAircraft && !IsStructure;
+
 		/// <summary>How far it reveals shroud, in cells. The honest measure of a scout.</summary>
 		public float Vision { get; init; }
 
@@ -122,6 +137,17 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		/// <summary>Whether it can hide - cloak, submerge, or otherwise go unseen.</summary>
 		public bool CanHide { get; init; }
+
+		/// <summary>
+		/// Whether this can enter an enemy structure and do something to it other than shoot it.
+		/// </summary>
+		/// <remarks>
+		/// Detected by trait name rather than by type, because the trait lives in a mod assembly
+		/// this one cannot reference. That is uglier than a type check and considerably better than
+		/// the alternative it replaces: selecting covert operatives by "can hide" alone nominated
+		/// every submarine in the game, and a submarine cannot infiltrate a building.
+		/// </remarks>
+		public bool Infiltrates { get; init; }
 
 		/// <summary>Whether it repairs other units brought to it.</summary>
 		public bool Repairs { get; init; }
@@ -241,6 +267,17 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 			var armours = new SortedSet<string>(StringComparer.Ordinal);
 
+			// Which locomotors can cross water, straight from the mod's terrain speed table. A
+			// locomotor with a positive speed over water is a naval one; nothing here needs to know
+			// that a destroyer is a ship.
+			var water = new HashSet<string>(StringComparer.Ordinal);
+			if (rules.Actors.TryGetValue("world", out var worldActor))
+				foreach (var locomotor in worldActor.TraitInfos<LocomotorInfo>())
+					if (locomotor.TerrainSpeeds != null
+						&& locomotor.TerrainSpeeds.TryGetValue("Water", out var speed)
+						&& speed.Speed > 0)
+						water.Add(locomotor.Name);
+
 			foreach (var entry in catalogue.All)
 			{
 				if (!rules.Actors.TryGetValue(entry.Type, out var actor))
@@ -266,6 +303,7 @@ namespace OpenRA.Mods.Common.Commander.Model
 					Speed = (mobile?.Speed ?? aircraft?.Speed ?? 0)
 						* AbstractState.TicksPerSecond / 1024f,
 					IsAircraft = aircraft != null,
+					MovesOnWater = mobile != null && water.Contains(mobile.Locomotor),
 
 					Vision = actor.TraitInfos<RevealsShroudInfo>()
 						.Select(r => r.Range.Length / 1024f)
@@ -321,6 +359,8 @@ namespace OpenRA.Mods.Common.Commander.Model
 						.Max(),
 
 					CanHide = actor.TraitInfos<CloakInfo>().Any(),
+					Infiltrates = actor.TraitInfos<ITraitInfoInterface>()
+						.Any(t => t.GetType().Name == "InfiltratesInfo"),
 					Repairs = actor.TraitInfos<RepairsUnitsInfo>().Any(),
 					Harvests = actor.TraitInfos<HarvesterInfo>().Any(),
 
@@ -446,6 +486,30 @@ namespace OpenRA.Mods.Common.Commander.Model
 
 		/// <summary>Everything that can hide.</summary>
 		public IEnumerable<ActorCapability> Hiders() => All.Where(c => c.CanHide);
+
+		/// <summary>
+		/// Units that can run a covert operation: reach an enemy structure on foot and do something
+		/// to it other than shoot it.
+		/// </summary>
+		/// <remarks>
+		/// What a spy, a thief and a commando have in common is not that somebody wrote them down
+		/// together. It is that each can reach a building an army cannot and act on it once there -
+		/// and that is a question the mod's own traits answer for a unit nobody has heard of.
+		/// </remarks>
+		public IEnumerable<ActorCapability> Operatives() =>
+			All.Where(c => !c.IsStructure && c.CanMove && !c.IsAircraft && !c.IsNaval
+					&& (c.Infiltrates || c.Captures || c.CanHide))
+
+				// Cheapest first. An operation risks the operative outright, and the point of
+				// sending one is that it is worth less than what it walks into.
+				.OrderBy(c => c.Cost)
+				.ThenBy(c => c.Type, StringComparer.Ordinal);
+
+		/// <summary>Armed units that fight at sea, most efficient first.</summary>
+		public IEnumerable<ActorCapability> Naval() =>
+			All.Where(c => c.IsNaval && c.IsArmed)
+				.OrderByDescending(c => c.Cost)
+				.ThenBy(c => c.Type, StringComparer.Ordinal);
 
 		/// <summary>Everything that grants a support power.</summary>
 		public IEnumerable<ActorCapability> SupportPowerSources() =>

@@ -256,17 +256,27 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public int Interval => 750;
 		public bool CanThinkInParallel => true;
 
-		/// <summary>Infiltrators, in preference order. Every faction, since the commander holds every prerequisite.</summary>
-		public IReadOnlyList<string> Operatives { get; init; } = ["spy", "thf", "e6"];
+		/// <summary>
+		/// Fallback infiltrators, used only when no capability registry is available.
+		/// </summary>
+		public IReadOnlyList<string> FallbackOperatives { get; init; } = ["spy", "thf", "e6"];
+
+		/// <summary>Who can run a covert operation, asked of the registry rather than listed.</summary>
+		static IReadOnlyList<string> OperativesFor(CommanderSnapshot snapshot) =>
+			snapshot.Database?.Capabilities?.Operatives().Select(c => c.Type).ToArray();
 
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
+			var operatives = OperativesFor(snapshot);
+			if (operatives == null || operatives.Count == 0)
+				operatives = FallbackOperatives;
+
 			var directive = context.Directive;
 			if (!directive.AuthoriseSpecialOperations)
 			{
 				// Standing down returns the operatives to normal behaviour. Without this they would
 				// hold fire for the rest of the match, having been told to be quiet once.
-				foreach (var type in Operatives)
+				foreach (var type in operatives)
 					context.Add(new CovertTransitIntent
 					{
 						OperativeType = type,
@@ -284,13 +294,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				return;
 			}
 
-			var operative = Operatives.FirstOrDefault(o => snapshot.Units.GetValueOrDefault(o) > 0);
+			var operative = operatives.FirstOrDefault(o => snapshot.Units.GetValueOrDefault(o) > 0);
 			if (operative == null)
 			{
 				context.Request(new ProductionRequest
 				{
 					Requester = Name,
-					Item = Operatives[0],
+					Item = operatives[0],
 					Priority = RequestPriority.Wanted,
 					Reason = "authorised for infiltration with nobody to send",
 				});

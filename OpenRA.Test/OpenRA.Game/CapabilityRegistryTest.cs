@@ -40,6 +40,17 @@ namespace OpenRA.Test
 				Versus = versus ?? new Dictionary<string, float>(),
 			};
 
+		static ActorCapability Afloat(string type, int cost, params WeaponCapability[] weapons) =>
+			new()
+			{
+				Type = type,
+				Cost = cost,
+				HitPoints = 500,
+				Armour = "Heavy",
+				Weapons = weapons,
+				MovesOnWater = true,
+			};
+
 		static ActorCapability Actor(string type, int cost, int hp, string armour,
 			params WeaponCapability[] weapons) =>
 			new()
@@ -282,6 +293,39 @@ namespace OpenRA.Test
 
 			Assert.That(unit.Reach, Is.EqualTo(20f),
 				"What a unit can reach decides whether it can strike without being struck.");
+		}
+
+		[TestCase(TestName = "Naval means it crosses water under its own power, and fights.")]
+		public void NavalIsWaterMovementNotAName()
+		{
+			var destroyer = Afloat("dd", 1000, Weapon(90f));
+			var tank = Actor("1tnk", 700, 300, "Heavy", Weapon(80f));
+			var transport = Afloat("lst", 700);
+
+			// Nothing here knows what a destroyer is. It knows which actors move over water, which
+			// the real registry reads out of the mod's own locomotor terrain table rather than out
+			// of a list somebody has to maintain.
+			var registry = new CapabilityRegistry(new[] { destroyer, tank, transport });
+			var naval = registry.Naval().Select(c => c.Type).ToArray();
+
+			Assert.That(naval, Is.EqualTo(new[] { "dd" }),
+				"armed and afloat; the tank does not float and the transport does not shoot");
+		}
+
+		[TestCase(TestName = "Aircraft are not naval merely for passing overhead.")]
+		public void AircraftAreNotNaval()
+		{
+			var helicopter = new ActorCapability
+			{
+				Type = "heli",
+				Cost = 1200,
+				Armour = "Light",
+				Weapons = [Weapon(100f)],
+				MovesOnWater = true,
+				IsAircraft = true,
+			};
+
+			Assert.That(new CapabilityRegistry(new[] { helicopter }).Naval(), Is.Empty);
 		}
 	}
 }

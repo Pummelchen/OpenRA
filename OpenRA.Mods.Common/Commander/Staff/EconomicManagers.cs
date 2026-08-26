@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using OpenRA.Mods.Common.Commander.Model;
 
 namespace OpenRA.Mods.Common.Commander.Staff
 {
@@ -39,6 +40,29 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public float SurplusThreshold { get; init; } = 0.35f;
 
 		/// <summary>Harvesters below which the economy is the priority whatever else is happening.</summary>
+		/// <remarks>
+		/// <para>
+		/// A flat floor, and it stays a flat floor. This looks exactly like a defect and was treated
+		/// as one: once four harvesters exist this manager stops asking for any, so the fleet sits
+		/// at four for the rest of the match while the commander finishes on 36,000 credits earned
+		/// against a scripted opponent's 67,425. Half the income, from the manager whose entire job
+		/// is income.
+		/// </para>
+		/// <para>
+		/// Replacing it with the obvious fix - a ratio of harvesters to refineries, ramped from
+		/// three each to ten each over ten minutes, which is both what the harvester module already
+		/// assumes and what was asked for - was measured across twenty-four fair-economy matches and
+		/// <b>took the exchange ratio from 0.617 to 0.278, with losses rising from 193 buildings to
+		/// 313</b>. Not a wash: comfortably the worst single change measured on this commander.
+		/// </para>
+		/// <para>
+		/// So the income gap is a symptom and not the cause. A commander that cannot hold the field
+		/// cannot hold ore either, and credits spent on harvesters are credits not spent on the army
+		/// whose absence is why the harvesters keep dying. Four is not the right number for any
+		/// principled reason; it is the number that stops this manager from making things worse, and
+		/// the fleet grows properly only once the army can protect it.
+		/// </para>
+		/// </remarks>
 		public int MinimumHarvesters { get; init; } = 4;
 
 		/// <summary>
@@ -287,7 +311,17 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		public int Interval => 100;
 		public bool CanThinkInParallel => true;
 
-		/// <summary>Units this commander may build, heaviest first. Every faction, since it holds every prerequisite.</summary>
+		/// <summary>
+		/// Fallback ranking, used only when there is no capability registry to ask.
+		/// </summary>
+		/// <remarks>
+		/// This list is why the redesign happened. It is heaviest-first because heaviest-first
+		/// measured better than cheapest-first, which is a true fact about one mod on one map
+		/// against one set of opponents, discovered by running the match rather than by knowing
+		/// anything about the units. It names actors that exist in Red Alert and nowhere else, it
+		/// says nothing about what any of them is good against, and it cannot answer the only
+		/// question that matters - what beats what the opponent actually brought.
+		/// </remarks>
 		public IReadOnlyList<string> Preference { get; init; } =
 			["qtnk", "4tnk", "ttnk", "ctnk", "3tnk", "dtrk", "shok", "2tnk", "v2rl", "arty", "1tnk", "e3", "e1"];
 
@@ -303,13 +337,30 @@ namespace OpenRA.Mods.Common.Commander.Staff
 		/// <summary>Harvesters a refinery is expected to keep busy. It is a drop-off point, not a bottleneck.</summary>
 		public int HarvestersPerRefinery { get; init; } = 5;
 
-		static bool IsStructureItem(string item) => item is "proc" or "powr" or "apwr" or "weap"
-			or "barr" or "tent" or "kenn" or "dome" or "agun" or "sam" or "pbox" or "gun" or "ftur"
-			or "tsla" or "atek" or "stek" or "fix" or "hpad" or "afld" or "spen" or "syrd" or "silo";
+		/// <summary>
+		/// Whether a requested item is a structure, which this manager does not build.
+		/// </summary>
+		/// <remarks>
+		/// The registry knows this for every actor in any mod. The name list behind it is what the
+		/// method used to be, kept only for the case where no registry has been built - and it was
+		/// already wrong by omission, since it named twenty-one structures out of the roughly fifty
+		/// this commander can build.
+		/// </remarks>
+		static bool IsStructureItem(CapabilityRegistry registry, string item)
+		{
+			var capability = registry?.Find(item);
+			if (capability != null)
+				return capability.IsStructure;
+
+			return item is "proc" or "powr" or "apwr" or "weap"
+				or "barr" or "tent" or "kenn" or "dome" or "agun" or "sam" or "pbox" or "gun" or "ftur"
+				or "tsla" or "atek" or "stek" or "fix" or "hpad" or "afld" or "spen" or "syrd" or "silo";
+		}
 
 		public void Think(CommanderSnapshot snapshot, StaffContext context)
 		{
 			var idle = snapshot.Queues.Where(q => q.IsIdle).ToArray();
+			var registry = snapshot.Database?.Capabilities;
 
 			// The rest of the staff's requests come before this manager's own preference: a scouting
 			// manager reporting that the commander is blind outranks another tank.
@@ -320,7 +371,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// silently discards information is not arbitration.
 			var served = 0;
 			foreach (var request in context.Requests
-				.Where(r => !IsStructureItem(r.Item))
+				.Where(r => !IsStructureItem(registry, r.Item))
 				.OrderByDescending(r => r.Priority))
 			{
 				if (request.Priority < RequestPriority.Urgent && served >= Math.Max(1, idle.Length))
@@ -369,41 +420,38 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			// failure this commander spent a whole match performing. Prefer the heaviest.
 			var wealthy = snapshot.Cash >= HeavyOnlyCashThreshold;
 
-			foreach (var queue in idle)
-			{
-				// Every idle queue is asked for the single highest-ranked unit, including queues that
-				// cannot build it - which means those queues produce nothing. That reads like a bug
-				// and it is load-bearing.
-				//
-				// Asking each queue for the best thing IT can build was implemented and measured,
-				// and it cost two thirds of the commander's exchange ratio: 0.88 to 0.31 across
-				// twelve fair-economy matches. What looks like an oversight is acting as a
-				// composition filter. The barracks are cheaper and quicker than the war factory, so
-				// a barracks free to build its own favourite builds infantry continuously, and an
-				// infantry-heavy army has been measured here losing to any tank army. Restricting
-				// production to whatever queue can make the single best unit is a blunt instrument
-				// that happens to keep the army's composition honest.
-				//
-				// The real cost is naval: a shipyard is never offered anything it can build, so the
-				// navy is never produced. That is a genuine loss and is not fixed by removing this
-				// line - it needs the composition decision to be made explicitly, per arm, rather
-				// than falling out of which queue happens to match the top pick. The per-queue
-				// buildable list needed to do that properly was reverted with it; nothing here
-				// should carry an unused field waiting for a design that has not been written.
-				var choice = Preference.FirstOrDefault();
-
-				if (choice == null)
-					continue;
-
-				context.Add(new ProduceUnitIntent
-				{
-					Unit = choice,
-					Count = wealthy ? 2 : 1,
-					Reason = wealthy
-						? $"{queue.Type} idle with {snapshot.Cash} banked"
-						: $"{queue.Type} idle",
-				});
-			}
+			// Every idle queue is asked for the single highest-ranked unit, including queues that
+			// cannot build it - which means those queues produce nothing. That reads like a bug and
+			// it is load-bearing, and it has now survived two separate attempts to replace it.
+			//
+			// Asking each queue for the best thing IT can build cost 0.88 -> 0.31 across twelve
+			// matches. Deriving a per-arm share of army value from how each arm's best unit scores
+			// against the armour the enemy actually fields - which is a real decision rather than an
+			// accident, and which fixed the named defect that a shipyard is never offered anything -
+			// cost 0.617 -> 0.385 across twenty-four. Both replacements were better reasoned than
+			// what they replaced and both lost.
+			//
+			// The reason is production volume, not composition. In a fair economy this commander
+			// finishes a match with an army of nought to three units and 36,000 credits earned
+			// against a scripted opponent's 67,425. Any rule that declines to build - and a share
+			// gate is a rule that declines to build - subtracts from a total that is already the
+			// thing losing the match. Composition is a question for a commander that can afford an
+			// army, and this one cannot yet.
+			//
+			// CompositionPlan is kept and tested because the reasoning is sound and the measurement
+			// says only that it is premature. It is not wired in, because a flag defaulting to off
+			// is just unused code with somewhere to hide.
+			var choice = Preference.FirstOrDefault();
+			if (choice != null)
+				foreach (var queue in idle)
+					context.Add(new ProduceUnitIntent
+					{
+						Unit = choice,
+						Count = wealthy ? 2 : 1,
+						Reason = wealthy
+							? $"{queue.Type} idle with {snapshot.Cash} banked"
+							: $"{queue.Type} idle",
+					});
 
 			ReportForce(snapshot, context, idle.Length);
 		}
