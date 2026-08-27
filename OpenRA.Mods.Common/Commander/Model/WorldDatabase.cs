@@ -662,13 +662,24 @@ namespace OpenRA.Mods.Common.Commander.Model
 			var stale = All.Count(e => e.Status == RecordStatus.Stale);
 
 			var damaged = Damaged().Count();
+
+			// The weakest structure we hold, printed beside the damaged count on purpose.
+			//
+			// "damaged 0" was reported at every sample of a match in which twenty buildings were
+			// lost, which is either true - buildings are repaired faster than the sweep can catch
+			// them - or a detection failure. The count alone cannot tell those apart, and a repair
+			// manager that never fires because it can never see damage would look exactly like a
+			// base that is never damaged.
+			var structures = Standing(Allegiance.Self).Where(e => e.IsStructure).ToArray();
+			var weakest = structures.Length == 0 ? 1f : structures.Min(e => e.HealthFraction);
 			var neglected = Neglected(60f).Count();
 			var passive = NotInAttackMode().Count();
 
 			return $"database: {Count} tracked, mine {mine} ({CountOf("harv")} harv / {CountOf("proc")} proc), " +
 				$"enemy {enemy} ({enemyStructures} structures), " +
 				$"enemy destroyed {destroyed}, rebuilt {EnemyRebuilds}, stale {stale}, " +
-				$"damaged {damaged}, unattended>60s {neglected}, not-attacking {passive}";
+				$"damaged {damaged} (weakest {weakest:P0}), unattended>60s {neglected}, " +
+				$"not-attacking {passive}";
 		}
 	}
 }

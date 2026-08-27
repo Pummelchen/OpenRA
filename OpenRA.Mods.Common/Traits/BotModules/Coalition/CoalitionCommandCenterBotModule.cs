@@ -954,6 +954,23 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			// A plan that names a place can act on it even when no enemy region has been identified
 			// by the blackboard - the search reasons over the region graph and the belief state, and
 			// has already decided the objective is worth taking.
+			// The chief's objective is consulted ONLY when nothing else has an opinion, and that is
+			// deliberate even though it looks like a defect.
+			//
+			// Perturbing MainEffortRegion to null produces a byte-identical match, because the
+			// blackboard identifies an enemy region in nearly every game and this condition then
+			// never fires. The staff scores every region on the board - what is worth taking,
+			// discounted by what is standing on it - and that answer is discarded in favour of
+			// "wherever we last saw them".
+			//
+			// Letting the chief win while it is driving was measured across twenty-four matches:
+			// 0.658 -> 0.395, with losses rising from 193 to 266 and the Normal matchup collapsing
+			// from 0.43 to 0.06. The crude heuristic is simply better than the careful scoring, so
+			// the disconnection is load-bearing until the scoring is worth connecting.
+			//
+			// It is not, however, harmless: the chief believes it is choosing an objective, reports
+			// one to the log every cycle, and reasons about force ratios against it. Anyone reading
+			// that output is reading a decision the army never received.
 			if (plannedObjective.HasValue && offensiveRegion < 0)
 				offensiveRegion = Array.IndexOf(Blackboard.Regions, Blackboard.RegionOf(plannedObjective.Value));
 

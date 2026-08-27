@@ -276,7 +276,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			{
 				// Standing down returns the operatives to normal behaviour. Without this they would
 				// hold fire for the rest of the match, having been told to be quiet once.
-				foreach (var type in operatives)
+				//
+				// Only for types actually held. Ordering every operative type in the game to stand
+				// down whether or not one exists issued 162 orders in a single match that the game
+				// could not act on, because the executor walks OUR units looking for that type and
+				// finds none. It cost nothing but it made a real channel look like a dead one in
+				// the audit, and a diagnostic that cries wolf is worse than no diagnostic.
+				foreach (var type in operatives.Where(o => snapshot.Units.GetValueOrDefault(o) > 0))
 					context.Add(new CovertTransitIntent
 					{
 						OperativeType = type,

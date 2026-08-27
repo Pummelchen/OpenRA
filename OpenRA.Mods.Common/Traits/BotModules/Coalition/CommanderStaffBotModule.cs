@@ -95,7 +95,43 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		float peakOwnBase;
 
 		/// <summary>The chief's standing orders, for the executing modules to read.</summary>
-		public Directive Directive => staff.Directive;
+		public Directive Directive => Perturb(staff.Directive);
+
+		/// <summary>
+		/// Fields to blank before anyone reads them, named in <c>OPENRA_PERTURB_DIRECTIVE</c>.
+		/// </summary>
+		/// <remarks>
+		/// The other half of the channel audit. Intents can be severed one at a time by dropping
+		/// them; a directive is one object read by several consumers, so the equivalent is to
+		/// flatten one field and see whether the match changes. If it does not, nobody was reading
+		/// it - which is exactly what had been true of ReserveFraction, through a conversion bug
+		/// that no amount of reading the call site revealed.
+		/// </remarks>
+		static readonly HashSet<string> PerturbedFields =
+			new((Environment.GetEnvironmentVariable("OPENRA_PERTURB_DIRECTIVE") ?? "")
+				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+				StringComparer.OrdinalIgnoreCase);
+
+		static Directive Perturb(Directive directive)
+		{
+			if (PerturbedFields.Count == 0 || directive == null)
+				return directive;
+
+			return new Directive
+			{
+				Stance = PerturbedFields.Contains("Stance") ? Stance.Defend : directive.Stance,
+				MainEffortRegion = PerturbedFields.Contains("MainEffortRegion")
+					? null : directive.MainEffortRegion,
+				FeintRegion = PerturbedFields.Contains("FeintRegion") ? null : directive.FeintRegion,
+				ReserveFraction = PerturbedFields.Contains("ReserveFraction")
+					? 0.5f : directive.ReserveFraction,
+				AuthoriseSpecialOperations = !PerturbedFields.Contains("AuthoriseSpecialOperations")
+					&& directive.AuthoriseSpecialOperations,
+				IssuedTick = directive.IssuedTick,
+				ValidUntilTick = directive.ValidUntilTick,
+				Rationale = directive.Rationale,
+			};
+		}
 
 		/// <summary>
 		/// The map cell the main effort is aimed at, if the chief has named one. Region centres

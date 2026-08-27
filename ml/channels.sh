@@ -6,6 +6,12 @@
 # that kind of decision - which means the decision was never reaching the game.
 #
 # One match, not twenty-four: this asks whether anything changed at all, not whether it improved.
+#
+# The probe match MUST exercise the channels being tested. The first version of this ran a
+# twenty-thousand tick game against the Normal bot that finished with buildings_lost=0 on both
+# sides - no building ever damaged, so the repair, relocate and attack-mode channels had nothing
+# to do and were reported as "never emitted" when the truth was "never needed". A rush at thirty
+# thousand ticks loses twenty buildings and puts every channel under load.
 set -u
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.dotnet:$PATH"
@@ -20,7 +26,7 @@ sed -i '' -e 's/^\(\t*\)InstantBuild: true/\1InstantBuild: false/' \
 
 run() {  # one match -> outcome fingerprint, plus how many intents were actually severed
   OPENRA_SUPPRESS_INTENTS="$1" ./utility.sh ra --simulate MAP=shattered-mountain BOTS=2 TEAMS=2 \
-    TICKS=20000 SEED=808 BOT_TYPES=ai,normal START_CASH=0 > /tmp/ch.$$ 2>&1
+    TICKS=30000 SEED=808 BOT_TYPES=ai,rush START_CASH=0 > /tmp/ch.$$ 2>&1
   FP=$(grep "team 1" /tmp/ch.$$ | grep -oE "kills_cost=[0-9]+ deaths_cost=[0-9]+ structures=[0-9]+")
   N=$(grep -oE "SUPPRESSED [A-Za-z]+ #[0-9]+" /tmp/ch.$$ | grep -oE "#[0-9]+" | tr -d '#' \
     | sort -n | tail -1)
