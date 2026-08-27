@@ -597,6 +597,31 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// Only production is acted on directly; movement and posture are read from the directive by
 		/// the modules that already own those, so this does not fight them for control.
 		/// </summary>
+		/// <summary>
+		/// Intent types to drop on purpose, named in <c>OPENRA_SUPPRESS_INTENTS</c>.
+		/// </summary>
+		/// <remarks>
+		/// <para>
+		/// A diagnostic, and it exists because reading the code was not enough. The chief's reserve
+		/// decision was converted wrongly and every value arrived as the same one; nothing about the
+		/// call site looked wrong, and it was found only when changing the number produced a
+		/// byte-identical match. On a deterministic harness that is proof of a disconnected channel.
+		/// </para>
+		/// <para>
+		/// This turns that accident into a method. Sever one channel, run one match, compare the
+		/// result: if the commander plays exactly the same game without a kind of decision, that
+		/// decision was never reaching the game. It needs ONE match rather than the twenty-four a
+		/// quality measurement needs, because it is asking whether anything changed at all rather
+		/// than whether things got better.
+		/// </para>
+		/// </remarks>
+		static readonly HashSet<string> SuppressedIntents =
+			new((Environment.GetEnvironmentVariable("OPENRA_SUPPRESS_INTENTS") ?? "")
+				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+				StringComparer.OrdinalIgnoreCase);
+
+		int suppressedCount;
+
 		void Apply(IBot bot, IReadOnlyList<IManagerIntent> intents)
 		{
 			var queues = bot.Player.PlayerActor.TraitsImplementing<ProductionQueue>()
@@ -605,6 +630,19 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 
 			foreach (var intent in intents)
 			{
+				if (SuppressedIntents.Count > 0 && SuppressedIntents.Contains(intent.GetType().Name))
+				{
+					// Counted, because "suppressing it changed nothing" has two very different
+					// causes: the channel is disconnected, or the channel was never used in this
+					// match and there was nothing to disconnect. Without the count those are
+					// indistinguishable, and reporting the second as the first would be a false
+					// alarm of exactly the kind this diagnostic exists to prevent.
+					suppressedCount++;
+					CoalitionTelemetry.Log(bot.Player.World,
+						$"SUPPRESSED {intent.GetType().Name} #{suppressedCount}");
+					continue;
+				}
+
 				switch (intent)
 				{
 					case ProduceUnitIntent produce:
