@@ -107,6 +107,10 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 		/// it - which is exactly what had been true of ReserveFraction, through a conversion bug
 		/// that no amount of reading the call site revealed.
 		/// </remarks>
+		/// <summary>Whether to print how far the believed enemy is from the truth. Diagnostic only.</summary>
+		static readonly bool LogBeliefError =
+			Environment.GetEnvironmentVariable("OPENRA_LOG_BELIEF_ERROR") == "1";
+
 		static readonly HashSet<string> PerturbedFields =
 			new((Environment.GetEnvironmentVariable("OPENRA_PERTURB_DIRECTIVE") ?? "")
 				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
@@ -565,6 +569,39 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			UpdateBelief(player, state, world.WorldTick);
 			belief.ApplyTo(state.Enemy);
 
+			// How wrong the belief is, measured against the world rather than argued about.
+			//
+			// Placed AFTER ApplyTo on purpose. The first version of this sat inside UpdateBelief and
+			// read state.Enemy before the belief had been copied into it, so it reported the raw
+			// observations and I mistook that for the commander's estimate.
+			//
+			// Ground truth is read ONLY to print this line. It is behind an environment variable, it
+			// touches no state the commander reads, and it must never be wired into a decision - the
+			// commander is not permitted to see through shroud, and a diagnostic that quietly became
+			// an oracle would be cheating.
+			if (LogBeliefError && world.WorldTick % 2500 == 0)
+			{
+				var believed = 0f;
+				for (var region = 0; region < state.Enemy.RegionCount; region++)
+					believed += state.Enemy.ArmyValueIn(region);
+
+				var actual = 0f;
+				foreach (var actor in world.Actors)
+				{
+					if (actor.Owner == player || actor.Owner.NonCombatant
+						|| actor.Owner.IsAlliedWith(player)
+						|| actor.IsDead || !actor.IsInWorld
+						|| actor.Info.HasTraitInfo<BuildingInfo>())
+						continue;
+
+					actual += actor.Info.TraitInfoOrDefault<ValuedInfo>()?.Cost ?? 0;
+				}
+
+				CoalitionTelemetry.Log(world,
+					$"Belief error: enemy army believed {believed:F0} actual {actual:F0} "
+					+ $"({(actual > 0f ? believed / actual : 0f):P0} of truth), ours {state.Self.ArmyValue():F0}");
+			}
+
 			var resources = player.PlayerActor.TraitOrDefault<PlayerResources>();
 
 			var structures = new Dictionary<string, int>();
@@ -613,6 +650,18 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 			for (var region = 0; region < graph.Regions.Length; region++)
 			{
 				var r = graph.Regions[region];
+				// One cell - the centre - decides whether the whole region counts as observed.
+				//
+				// This is crude and it is load-bearing. Requiring half the region to be visible
+				// before believing what we see there is more honest and was measured at 0.686 ->
+				// 0.070, with sixteen buildings taken across twenty-four matches and none at all
+				// against the Normal bot. The reason is the prior below: an unobserved region is
+				// topped up to a mirror of our own army, so a commander that rarely marks anything
+				// observed believes every objective is defended by a force the size of its own and
+				// stops attacking altogether.
+				//
+				// So the coarse test is what makes the belief usable at all. Tightening it without
+				// first fixing what fills the gaps just starves the commander of anywhere to go.
 				var cell = MapRegions.ToCell(map, r.CentreX, r.CentreY);
 				if (!self.Shroud.IsVisible(cell))
 					continue;
