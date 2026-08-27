@@ -72,12 +72,44 @@ namespace OpenRA.Mods.Common.Commander.Staff
 			var theirArmy = 0f;
 			if (best >= 0)
 			{
+				// Counted once each. A region can be both next to the objective and standing on our
+				// ground, and counting it twice would understate the ratio rather than overstate
+				// it - the opposite error, but an error.
+				var counted = new HashSet<int> { best };
 				theirArmy = state.Enemy.ArmyValueIn(best);
+
 				if (snapshot.Graph != null)
 					foreach (var neighbour in snapshot.Graph.Neighbours(best))
-						theirArmy += state.Enemy.ArmyValueIn(neighbour);
+						if (counted.Add(neighbour))
+							theirArmy += state.Enemy.ArmyValueIn(neighbour);
+
+				// And whatever of theirs is standing in OUR base.
+				//
+				// That force was excluded, which inflated the ratio at exactly the wrong moment: an
+				// opponent who commits its army to raiding us empties its own ground, so its base
+				// reads undefended and this manager reports a commanding advantage while we are
+				// being overrun. The raiding force is the least hypothetical enemy on the map and
+				// it can turn round and defend, so it belongs in the count of what an assault has
+				// to beat.
+				for (var region = 0; region < state.RegionCount; region++)
+					if (state.Self.StructuresIn(region) > 0f && counted.Add(region))
+						theirArmy += state.Enemy.ArmyValueIn(region);
 			}
 
+			// AND THE GATE THIS FEEDS HAS NEVER ONCE CLOSED.
+			//
+			// Counting the raiding force above lowered the reported ratio by about a third, from a
+			// 4.88-7.36 spread to 2.43-5.19 over a thirty-thousand tick match. The outcome was
+			// byte-identical across twenty-four matches, because every one of nineteen samples is
+			// still above the 1.5 line and the readiness never leaves Surplus. The chief's
+			// "outnumbered" test therefore cannot fire, and has not been declining assaults.
+			//
+			// The number is kept because it is now less wrong and it is read by people. It is not
+			// worth gating on, and the thresholds are deliberately NOT being tuned to make it bind:
+			// a ratio that says we are two to five times stronger throughout a match we lose badly
+			// is not measuring strength, and calibrating decisions against it would be fitting to a
+			// broken instrument. What it needs is a believed-enemy estimate that tracks reality,
+			// which is a larger job than a threshold.
 			var ratio = theirArmy <= 0f ? 999f : ourArmy / theirArmy;
 
 			context.Report(new ManagerReport
