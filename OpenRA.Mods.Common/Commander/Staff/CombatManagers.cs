@@ -121,6 +121,7 @@ namespace OpenRA.Mods.Common.Commander.Staff
 
 			var worst = -1;
 			var worstThreat = 0f;
+			var totalThreat = 0f;
 			for (var region = 0; region < state.RegionCount; region++)
 			{
 				// Somewhere of ours with something of theirs standing on it.
@@ -128,6 +129,13 @@ namespace OpenRA.Mods.Common.Commander.Staff
 					continue;
 
 				var threat = state.Enemy.ArmyValueIn(region);
+
+				// Totalled as well as ranked. The test below used the single worst region, so an
+				// attack spread across two parts of the base counted as whichever half was larger
+				// and a commander being overrun on both sides could report itself Healthy. The
+				// region is still tracked separately because a defence has to go somewhere.
+				totalThreat += threat;
+
 				if (threat > worstThreat)
 				{
 					worstThreat = threat;
@@ -144,21 +152,22 @@ namespace OpenRA.Mods.Common.Commander.Staff
 				Manager = Name,
 				Readiness =
 					integrity < 0.4f ? Readiness.Critical
-					: worstThreat > ThreatCredits || integrity < 0.75f ? Readiness.Strained
+					: totalThreat > ThreatCredits || integrity < 0.75f ? Readiness.Strained
 					: Readiness.Healthy,
 				Headline = worst < 0
 					? $"base intact at {integrity:P0}, nothing in our ground"
-					: $"{worstThreat:F0} credits of enemy in R{worst}, base at {integrity:P0} of peak",
+					: $"{totalThreat:F0} credits of enemy on our ground ({worstThreat:F0} worst, R{worst}), "
+						+ $"base at {integrity:P0} of peak",
 				RegionOfInterest = worst >= 0 ? worst : null,
 			});
 
-			if (worstThreat > ThreatCredits && worst >= 0)
+			if (totalThreat > ThreatCredits && worst >= 0)
 			{
 				context.Add(new DefendIntent
 				{
 					Region = worst,
-					Urgency = Math.Clamp(worstThreat / (ThreatCredits * 4f), 0f, 1f),
-					Reason = $"{worstThreat:F0} credits of enemy standing on our structures",
+					Urgency = Math.Clamp(totalThreat / (ThreatCredits * 4f), 0f, 1f),
+					Reason = $"{totalThreat:F0} credits of enemy standing on our structures",
 				});
 			}
 		}
