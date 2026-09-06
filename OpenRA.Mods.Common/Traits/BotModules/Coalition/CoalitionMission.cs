@@ -733,19 +733,50 @@ namespace OpenRA.Mods.Common.Traits.BotModules.Coalition
 				.OrderByDescending(m => m.Priority)
 				.ToArray();
 
-			var attack = active.FirstOrDefault(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
+			// A mission nobody can carry out does not get to occupy the slot.
+			//
+			// Each directive slot took the highest-priority mission of its family whether or not a
+			// force had been allocated to it, and a mission with an empty owner list is one that
+			// SyncForceAssignments could not allocate. The brain then reads a present-but-empty
+			// list as "no coalition member may execute this" and nulls the target - so the
+			// unexecutable mission did not merely fail, it displaced the executable one behind it
+			// and blanked the whole slot.
+			//
+			// The defensive case was the expensive one. EmergencyReinforcement is created at
+			// priority 95, above Defend at 80, and is one of eight types missing from the force
+			// switch in SyncForceAssignments. So the moment the coalition decided a base needed
+			// relief, it took the "counter" slot with no force, the brain saw an empty owner list,
+			// and every ally dropped from "defend" to "build" - base defence switched itself off at
+			// exactly the moment it was called for. The same mechanism silenced the attack slot
+			// whenever an Exploitation mission outranked a live Attack.
+			//
+			// Preferring an executable mission is the narrow fix: it restores the slot to whoever
+			// can actually act, and leaves the eight unassignable types to be given forces (or
+			// removed) as a separate, separately measured change.
+			//
+			// A PREFERENCE, not a requirement. Falling back to the unassigned mission keeps two
+			// things working: a caller that builds a directive without having run the arbiter at
+			// all - which is what the directive-shape tests do, and what a legacy plan looks like -
+			// and the retreat flag, which is deliberately set from mission state rather than from
+			// ownership. The bug being fixed is displacement of an executable mission by an
+			// unexecutable one, so only that case changes.
+			CoalitionMission Executable(Func<CoalitionMission, bool> match) =>
+				active.FirstOrDefault(m => match(m) && m.AssignedForces.Count > 0)
+					?? active.FirstOrDefault(match);
+
+			var attack = Executable(m => IsOffensive(m.Type) && m.Type != MissionType.AirStrike
 				&& m.Type != MissionType.NavalStrike && m.Type != MissionType.NavalBlockade
 				&& m.Type != MissionType.SupportPowerStrike);
-			var feint = active.FirstOrDefault(m => m.Type == MissionType.Feint || m.Type == MissionType.Demonstration
+			var feint = Executable(m => m.Type == MissionType.Feint || m.Type == MissionType.Demonstration
 				|| m.Type == MissionType.FakeBuildup);
-			var defend = active.FirstOrDefault(m => IsDefensive(m.Type));
-			var recon = active.FirstOrDefault(m => IsRecon(m.Type));
-			var bait = active.FirstOrDefault(m => m.Type == MissionType.Bait);
-			var transport = active.FirstOrDefault(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps || m.Type == MissionType.DecoyTransport);
-			var domainStrike = active.FirstOrDefault(m => m.Type == MissionType.AirStrike
+			var defend = Executable(m => IsDefensive(m.Type));
+			var recon = Executable(m => IsRecon(m.Type));
+			var bait = Executable(m => m.Type == MissionType.Bait);
+			var transport = Executable(m => m.Type == MissionType.Transport || m.Type == MissionType.SpecialOps || m.Type == MissionType.DecoyTransport);
+			var domainStrike = Executable(m => m.Type == MissionType.AirStrike
 				|| m.Type == MissionType.NavalStrike || m.Type == MissionType.NavalBlockade);
-			var pincer = active.FirstOrDefault(m => m.Type == MissionType.Pincer);
-			var supportPower = active.FirstOrDefault(m => m.Type == MissionType.SupportPowerStrike);
+			var pincer = Executable(m => m.Type == MissionType.Pincer);
+			var supportPower = Executable(m => m.Type == MissionType.SupportPowerStrike);
 			var retreat = forceRetreat || active.Any(m => m.Type == MissionType.Retreat || m.Phase == MissionPhase.Withdrawal);
 
 			var sb = new StringBuilder();
