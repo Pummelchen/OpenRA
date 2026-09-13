@@ -9,6 +9,8 @@
 
 A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not described here is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
+> **Modified work.** Changed by **André Borchert** between 2026-06-26 and 2026-09-13. Copyright (c) 2026 André Borchert for this fork's modifications and additions; the engine remains under the GNU GPL v3 — see [COPYING](COPYING). Changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
+
 ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
 
 ## The concept
