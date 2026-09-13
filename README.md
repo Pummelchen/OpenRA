@@ -68,3 +68,7 @@ specifically its offensive execution.
 ## License
 
 Same as upstream: GPL-3.0-or-later — see [COPYING](https://github.com/Pummelchen/OpenRA/blob/main/COPYING).
+
+## Contact
+
+Questions, bug reports and suggestions are always welcome. You can contact André Borchert by email at [0xa0b1@gmail.com](mailto:0xa0b1@gmail.com).
