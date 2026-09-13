@@ -2,6 +2,11 @@
 
 # OpenRA — AI Mod - Extreme LLM Edition
 
+[![Stars](https://img.shields.io/github/stars/Pummelchen/OpenRA?style=flat-square&logo=github&label=Stars&color=e3b341)](https://github.com/Pummelchen/OpenRA/stargazers)
+[![Profile Visitors](https://komarev.com/ghpvc/?username=Pummelchen&label=Profile%20Visitors&color=blueviolet&style=flat-square)](https://github.com/Pummelchen)
+[![Last Commit](https://img.shields.io/github/last-commit/Pummelchen/OpenRA?style=flat-square&logo=git&label=Last%20Commit&color=2ea44f)](https://github.com/Pummelchen/OpenRA/commits/main)
+[![Contact](https://img.shields.io/badge/Contact-0xa0b1%40gmail.com-blue?style=flat-square&logo=gmail&logoColor=white)](mailto:0xa0b1@gmail.com)
+
 A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not described here is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
 ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
