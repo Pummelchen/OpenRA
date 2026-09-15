@@ -180,40 +180,15 @@ Leave previous releases' notes and performance tables alone.
 requests, cherry-picks or patches against `OpenRA/OpenRA`; nothing developed here
 is intended for the upstream project.
 
-This repository is still a GitHub **fork** of `OpenRA/OpenRA`, and a fork is
-exactly the configuration that invites contribution back — so the fork
-relationship should be severed. Detaching is a **manual GitHub action, not an API
-one**; there is no REST endpoint for it.
+This repository is a GitHub fork of `OpenRA/OpenRA` and is **deliberately left as
+one** — do not detach it from the fork network. Leaving is permanent, and the
+standalone repository would not retain its wiki, issues, pull requests, stars,
+watchers or comments; the wiki alone holds 5 pages across 30 commits. The fork
+relationship is inert: nothing reaches upstream unless someone explicitly pushes it
+there, and the rule above already forbids that.
 
-This repository **qualifies for the self-service path**: it is public, ~243 MB
-(under the 1 GB limit), and has no child forks.
-
-> **Settings → General → Danger Zone → Leave fork network**
-
-Before clicking, know what is discarded. Leaving the fork network is
-**permanent** — the repository cannot be reconnected — and the standalone
-repository **does not retain its wiki, issues, pull requests, stars, watchers,
-comments or child forks**. Git commits and tags are preserved.
-
-- **Wiki: 5 pages across 30 commits** (`Home`, `Goals`, `Architecture`,
-  `Gameplay`, `_Sidebar`) — the only real loss here. Backed up before detaching.
-- Releases: none. Open issues and pull requests: none.
-
-### Backups taken before detaching
-
-Held outside the repository at `~/Downloads/wiki-backups/`:
-
-| Path | Contents |
-| --- | --- |
-| `OpenRA.wiki.git` | bare mirror — full 30-commit wiki history |
-| `OpenRA.export/` | the 5 pages as plain Markdown |
-| `OpenRA.wiki-backup.tar.gz` | the same, archived |
-| `metadata/OpenRA.threads.md` | all 4 issues with comments |
-| `metadata/OpenRA.issues.json`, `metadata/OpenRA.releases.json` | raw API payloads |
-
-Because a wiki does not survive detachment, its content belongs **in the
-repository** if it is to outlive the move: commit the exported Markdown under
-`docs/wiki/` and keep the mirror as history.
-
-Until it is detached, this repository is a downstream of upstream's and no release
-process here should pretend otherwise.
+- **Identity** semantic version, not yet established.
+- **Releases** none expected while this is a downstream — upstream cuts OpenRA's
+  releases. If this repository ever ships artifacts of its own, they are its own
+  concern and this section must say so explicitly rather than borrowing upstream's
+  process.
