@@ -8,7 +8,7 @@
 
 ## Result
 
-| Classification | Original audit | After remediation |
+| Classification | Original audit | After remediation (2026-08-23) |
 |---|---:|---:|
 | Complete and tested | 637 | **802** |
 | Implemented but insufficiently tested | 153 | **1** |
@@ -17,6 +17,12 @@
 | **Total** | **804** | **804** |
 
 Implementation: 803 ✅ · 1 🟡 · 0 ❌ — Testing: 803 ✅ · 1 🟡 · **0 ❌**
+
+**The 802/804 figure above is superseded as of 2026-09-06.** It came from the 2026-08-23 audit,
+which checked implementation and coverage but not reachability. The 2026-09-06 re-audit applied the
+three-part rule in [AUDIT_METHOD.md](AUDIT_METHOD.md) — exists, reachable, covered — and puts the
+current state at **486 of 804 complete and tested**. Rows 187, 197, 260, 341 and 630 are marked 🟡
+(Partial) in the register below for that reason, with the earlier verdict kept in the Notes column.
 
 ### The two rows still open
 
@@ -45,8 +51,8 @@ net negative against its own defensive trading.
 
 | Check | Result |
 |---|---|
-| `dotnet build` (clean rebuild) | succeeded, **0 warnings, 0 errors** |
-| `dotnet test bin/OpenRA.Test.dll` | **972 passed, 2 skipped, 0 failed** (was 812) |
+| `dotnet build` (clean rebuild) | at `80d548c3c1`: succeeded, **0 warnings, 0 errors**; at HEAD `95963fcf24` (2026-09-16): succeeded, **238 warnings, 0 errors** |
+| `dotnet test bin/OpenRA.Test.dll` | at `80d548c3c1`: **966 passed, 2 skipped, 968 total** (up from 812); at HEAD `95963fcf24` (2026-09-16): **1250 passed, 2 skipped, 1252 total** |
 | `.venv-ai/bin/python ai/selfcheck.py` | passed — 11 scorers, 8 sweep axes, commander probes |
 | `ai/commander_eval.py` vs live Qwen3.5 4B | **8/8 probes**, confirmed over two runs |
 | Fixed-seed opponent matrix | 36 matches across three scout settings |
@@ -293,7 +299,7 @@ net negative against its own defensive trading.
 | 184 | Frontal assault mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 185 | Flanking mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 186 | Pincer/double-envelopment | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
-| 187 | Exploitation mission | ✅ | ✅ | `MissionType.Exploitation`, `CoalitionCommandCenterBotModule` breach follow-up | `DoctrineMissionTest` | **Closed.** `MissionType.Exploitation` is now a first-class type starting in `MissionPhase.Exploitation`, created when a breakthrough actually opens a breach so the follow-on force is distinct from the breaching force. |
+| 187 | Exploitation mission | 🟡 | ✅ | `MissionType.Exploitation`, `CoalitionCommandCenterBotModule` breach follow-up | `DoctrineMissionTest` | **Partial (2026-09-06 re-audit).** Fails reachability — the cited code is not consulted by a running match; see [AUDIT_METHOD.md](AUDIT_METHOD.md). Superseded 2026-08-23 verdict: **Closed.** `MissionType.Exploitation` is now a first-class type starting in `MissionPhase.Exploitation`, created when a breakthrough actually opens a breach so the follow-on force is distinct from the breaching force. |
 | 188 | Base assault mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 189 | Siege mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 190 | Harassment mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
@@ -303,7 +309,7 @@ net negative against its own defensive trading.
 | 194 | Chokepoint/bridge seizure mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 195 | Naval blockade mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 | 196 | Coastal bombardment mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
-| 197 | Air-strike mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
+| 197 | Air-strike mission | 🟡 | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | **Partial (2026-09-06 re-audit).** Fails reachability — the cited code is not consulted by a running match; see [AUDIT_METHOD.md](AUDIT_METHOD.md). |
 | 198 | Coordinated mass-air attack | ✅ | ✅ | `WaveComposition` (used by `StrategicBrainBotModule.ComposeWave`) | `CombinedArmsTest`, `MissionScenarioTest` | **Closed.** The combined-arms property is now named and asserted rather than being something a wave happened to have. Artillery needs a *ground* screen (aircraft do not screen it), AA escorts need something to escort, and a mass air attack is a concentration rather than aircraft trickling in. |
 | 199 | Support-power strike mission | ✅ | ✅ | `MissionType` enum (38 values) + per-type directives in `CoalitionMission.cs`, executed via `TacticalControllers` | `MissionLifecycleTest`, `ExpandedCoverageTest.NewOffensiveTypes` | — |
 
@@ -391,7 +397,7 @@ net negative against its own defensive trading.
 | 257 | Reserve movement synchronizes with breakthrough | ✅ | ✅ | `OperationSchedule` | `OperationScheduleTest`, `AcceptanceOutcomeTest.CombinedArmsSynchronized` | **Closed.** Components are scheduled backwards from one arrival time, so a slow column sets off before a fast one instead of every domain being ordered on the same tick and the gap merely recorded. |
 | 258 | System accounts for different travel times | ✅ | ✅ | `OperationSchedule` | `OperationScheduleTest`, `AcceptanceOutcomeTest.CombinedArmsSynchronized` | **Closed.** Components are scheduled backwards from one arrival time, so a slow column sets off before a fast one instead of every domain being ordered on the same tick and the gap merely recorded. |
 | 259 | Avoids one force arriving long before support | ✅ | ✅ | `OperationSchedule` | `OperationScheduleTest`, `AcceptanceOutcomeTest.CombinedArmsSynchronized` | **Closed.** Components are scheduled backwards from one arrival time, so a slow column sets off before a fast one instead of every domain being ordered on the same tick and the gap merely recorded. |
-| 260 | Synchronization error measured in telemetry | ✅ | ✅ | `OperationSchedule.SynchronizationError`, `CoalitionMatchMetrics.Synchronization` | `MissionScenarioTest.SynchronizationErrorIsRecorded` | **Closed.** Error is measured against the *planned* arrival rather than the launch tick. |
+| 260 | Synchronization error measured in telemetry | 🟡 | ✅ | `OperationSchedule.SynchronizationError`, `CoalitionMatchMetrics.Synchronization` | `MissionScenarioTest.SynchronizationErrorIsRecorded` | **Partial (2026-09-06 re-audit).** Fails reachability — [AUDIT_METHOD.md](AUDIT_METHOD.md) records that `OperationSchedule` has no production caller and `RecordSyncError` is defined twice with no production call site, so the metric is structurally always zero. Superseded 2026-08-23 verdict: **Closed.** Error is measured against the *planned* arrival rather than the launch tick. |
 | 261 | Time-on-target has automated scenario tests | ✅ | ✅ | `OperationSchedule` | `OperationScheduleTest`, `AcceptanceOutcomeTest.CombinedArmsSynchronized` | **Closed.** Components are scheduled backwards from one arrival time, so a slow column sets off before a fast one instead of every domain being ordered on the same tick and the gap merely recorded. |
 
 ### §Deception Framework  <span>(262–276)</span>
@@ -497,7 +503,7 @@ net negative against its own defensive trading.
 | 338 | Posture affects acceptable combat risk | ✅ | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | — |
 | 339 | Posture affects reserve requirements | ✅ | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | — |
 | 340 | Posture affects target-selection weights | ✅ | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | — |
-| 341 | Different theaters with different postures | ✅ | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | — |
+| 341 | Different theaters with different postures | 🟡 | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | **Partial (2026-09-06 re-audit).** Fails reachability — the cited code is not consulted by a running match; see [AUDIT_METHOD.md](AUDIT_METHOD.md). |
 | 342 | Commander can change posture | ✅ | ✅ | `StrategicPosture` enum (13 postures + None), `StrategicPosture` policy, per-region posture on `CoalitionRegion` | `PostureSelectionTest`, `ExpandedCoverageTest.StrategicPosturesComplete` | — |
 
 ### §Main Effort & Force Concentration  <span>(343–350)</span>
@@ -896,7 +902,7 @@ net negative against its own defensive trading.
 | # | Requirement | Impl | Test | Code | Tests | Notes |
 |---|---|:--:|:--:|---|---|---|
 | 629 | Command-quality configurable independently | ✅ | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | — |
-| 630 | Reaction speed configurable independently | ✅ | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | — |
+| 630 | Reaction speed configurable independently | 🟡 | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | **Partial (2026-09-06 re-audit).** Fails reachability — the cited code is not consulted by a running match; see [AUDIT_METHOD.md](AUDIT_METHOD.md). |
 | 631 | Economic bonus configurable independently | ✅ | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | — |
 | 632 | Intelligence/fog advantage configurable independently | ✅ | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | — |
 | 633 | Micro precision configurable independently | ✅ | ✅ | `CoalitionDifficulty`, `mods/ra/rules/ai.yaml` (Difficulty/MicroPrecision/Intelligence/ReserveFraction), `HeadlessSkirmish.CommanderIntelligence` | `DifficultyTest`, `HeadlessSkirmishTest.OpponentModelClassifiesScriptedOpponent` | — |

@@ -21,7 +21,7 @@ by side effect regresses silently.
 | 1 | Wave composition contract | 198, 228–233, 237, 350 | 9 |
 | 2 | Operation sequencing & time-on-target | 234–236, 253–259, 261 | 11 |
 | 3 | Multi-threat dispersion | 277–284 | 8 |
-| 4 | Special-operations planning | 286–301 | 15 |
+| 4 | Special-operations planning | 286–301 | 16 |
 | 5 | Main effort & concentration | 343–349 | 7 |
 | 6 | Expansion & economic policy | 407–412 | 6 |
 | 7 | Reserve & combined-arms integration | 238, 239, 260 | 3 |
@@ -45,7 +45,10 @@ by side effect regresses silently.
 
 ## Outcome
 
-All twelve phases executed. **802 of 804 complete and tested**, up from 637; 0 missing, 0 untested.
+All twelve phases executed. At 2026-08-23 the two-part audit recorded **802 of 804 complete and
+tested**, up from 637; 0 missing, 0 untested. That figure was superseded on 2026-09-06: the
+three-part re-audit in [AUDIT_METHOD.md](AUDIT_METHOD.md) — exists, reachable, covered — puts the
+current state at **486 of 804 complete and tested**.
 
 | Phase | Requirements | Result |
 |---|---|---|
