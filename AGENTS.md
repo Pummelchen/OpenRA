@@ -32,9 +32,10 @@ or prepare a patch against `OpenRA/OpenRA`.** In a fork `gh` silently defaults t
 `repos/Pummelchen/OpenRA/...` API path. The repository is deliberately left as a
 fork.
 
-`main` has **diverged** from upstream: `compare/OpenRA:bleed...Pummelchen:main`
-reports 222 commits ahead and 53 behind, and the clone has **no `upstream` remote** —
-only `origin`. Syncing means adding that remote yourself.
+`main` has **diverged** from upstream — hundreds of commits ahead and tens behind,
+and the clone has **no `upstream` remote**, only `origin`. Read the current numbers
+with `gh api repos/Pummelchen/OpenRA/compare/OpenRA:bleed...Pummelchen:main` rather
+than trusting a figure written here; syncing means adding that remote yourself.
 
 ## Layout
 
