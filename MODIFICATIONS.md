@@ -4,7 +4,7 @@ This repository is a **modified fork** of [OpenRA](https://github.com/OpenRA/Ope
 tracking upstream `bleed`. It is not the upstream project.
 
 - **Modified by:** André Borchert
-- **Modification dates:** 2026-06-26 through 2026-09-13
+- **Modification dates:** 2026-06-26 through 2026-09-16
 - **Copyright:** Copyright (c) 2026 André Borchert, for the modifications and
   additions made in this fork.
 
@@ -22,12 +22,15 @@ prominent notices stating that it was modified and giving a relevant date.
 
 ## Scope of the changes
 
-Measured against upstream `OpenRA:bleed`:
+Measured against upstream `OpenRA:bleed` on 2026-09-16, at fork `main` `95963fcf24` (re-measure with
+`gh api repos/Pummelchen/OpenRA/compare/OpenRA:bleed...Pummelchen:main` and, after fetching
+upstream, `git diff --name-status $(git merge-base upstream/bleed HEAD) HEAD`):
 
 | | |
 |---|---|
-| Commits ahead | 216 |
-| Files added | 230 |
+| Commits ahead | 224 |
+| Commits behind | 53 |
+| Files added | 235 |
 | Files modified | 46 |
 | Files removed | 3 |
 

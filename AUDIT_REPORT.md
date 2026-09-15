@@ -8,7 +8,7 @@ An independent audit, followed by remediation of every finding.
 
 ## Result
 
-| Classification | Original | After remediation |
+| Classification | Original | After remediation (2026-08-23) |
 |---|---:|---:|
 | Complete and tested | 637 | **802** / 804 |
 | Implemented but insufficiently tested | 153 | **1** / 804 |
@@ -17,7 +17,17 @@ An independent audit, followed by remediation of every finding.
 
 Implementation: 803 ✅ · 1 🟡 · 0 ❌ — Testing: 803 ✅ · 1 🟡 · **0 ❌**
 
-Suite: **972 passed, 2 skipped, 0 failed** (was 812). Clean rebuild: 0 warnings.
+Suite: at `80d548c3c1` **966 passed, 2 skipped, 968 total** (up from 812), clean rebuild 0 warnings;
+at HEAD `95963fcf24` (2026-09-16) **1250 passed, 2 skipped, 1252 total**, clean rebuild 238 warnings,
+0 errors.
+
+**The 802/804 figure above is superseded as of 2026-09-06.** It came from this 2026-08-23 audit,
+which checked that a capability *exists* and *is covered* but not that it is *reachable* from a
+running match. The 2026-09-06 re-audit applied the three-part rule in
+[AUDIT_METHOD.md](AUDIT_METHOD.md) — exists, reachable, covered — and puts the current state at
+**486 of 804 complete and tested**. Rows 187, 197, 260, 341 and 630 are among those reclassified as
+Partial because their cited code has no production caller; `AUDIT_TABLE.md` marks them accordingly.
+The 802 figure is kept here as the record of what the earlier, weaker rule measured.
 
 ## The two rows still open
 

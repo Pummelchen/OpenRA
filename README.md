@@ -9,7 +9,7 @@
 
 A fork of the [OpenRA](https://github.com/OpenRA/OpenRA) real-time strategy engine, tracking upstream `bleed`. Everything not described here is unchanged upstream code — see the [upstream repository](https://github.com/OpenRA/OpenRA) for the project overview, build instructions, and gameplay information.
 
-> **Modified work.** Changed by **André Borchert** between 2026-06-26 and 2026-09-13. Copyright (c) 2026 André Borchert for this fork's modifications and additions; the engine remains under the GNU GPL v3 — see [COPYING](COPYING). Changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
+> **Modified work.** Changed by **André Borchert** between 2026-06-26 and 2026-09-16. Copyright (c) 2026 André Borchert for this fork's modifications and additions; the engine remains under the GNU GPL v3 — see [COPYING](COPYING). Changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
 
 ![Continuous Integration](https://github.com/Pummelchen/OpenRA/actions/workflows/ci.yml/badge.svg)
 
@@ -47,9 +47,17 @@ The AI respects fog of war: exact enemy positions require current allied visibil
 The project's design goals, architecture, and what the skilled human player can expect are described in the [project wiki](https://github.com/Pummelchen/OpenRA/wiki). The C#↔LLM interface contract lives in [`ai/COMMAND_API.md`](ai/COMMAND_API.md).
 
 The 804-requirement source/test audit and its remediation are recorded in
-[`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`AUDIT_TABLE.md`](AUDIT_TABLE.md): **802 of 804 complete
-and tested** (up from 637), 1 partial, 0 missing, 0 untested. The test suite runs 972 assertions;
-the LLM commander scores 8/8 on behavioural probes against a live model.
+[`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`AUDIT_TABLE.md`](AUDIT_TABLE.md), and the method for
+re-running it in [`AUDIT_METHOD.md`](AUDIT_METHOD.md). The 2026-08-23 audit recorded **802 of 804
+complete and tested** (up from 637), 1 partial, 0 missing, 0 untested — it checked implementation
+and coverage but not reachability. The 2026-09-06 re-audit under the stricter three-part rule
+(exists, reachable, covered) puts the current state at **486 of 804 complete and tested**. At HEAD
+`95963fcf24` (2026-09-16) the test suite runs 1252 tests: 1250 passed, 2 skipped; the LLM commander
+scores 8/8 on behavioural probes against a live model.
+
+The commander's design is described in
+[`COMMANDER_ARCHITECTURE.md`](COMMANDER_ARCHITECTURE.md); its superseding re-plan is
+[`COMMANDER_PLAN.md`](COMMANDER_PLAN.md).
 
 Two requirements remain open, and both are stated plainly rather than rounded up:
 
