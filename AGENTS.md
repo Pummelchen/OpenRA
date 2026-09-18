@@ -164,6 +164,10 @@ changing or closing a row.
   `CHANGELOG.md` and the closing commit; the open row links to the evidence.
 - **Update a row the moment its state changes**, and read the table top to bottom
   before starting work — the top Open row is the default next task.
+- **One deliberate exception:** the tracker also carries a single link to the repository's
+  804-requirement audit register (`AUDIT_TABLE.md`, with `AUDIT_REPORT.md` and `AUDIT_METHOD.md`).
+  That line is intentional — it keeps the full checklist reachable from the table — and must not
+  be removed as standard drift.
 
 ## Releasing
 
